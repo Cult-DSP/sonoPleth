@@ -24,13 +24,15 @@ else
     python3 -m venv sonoPleth
     echo "✓ Virtual environment created"
 fi
+
+# Fix activation script permissions
+chmod +x sonoPleth/bin/activate 2>/dev/null || true
 echo ""
 
-# Step 2: Activate virtual environment and install Python dependencies
+# Step 2: Install Python dependencies (using venv's Python directly)
 echo "Step 2: Installing Python dependencies..."
-source sonoPleth/bin/activate
 
-if pip install -r requirements.txt; then
+if sonoPleth/bin/pip install -r requirements.txt; then
     echo "✓ Python dependencies installed"
 else
     echo "✗ Error installing Python dependencies"
@@ -40,7 +42,7 @@ echo ""
 
 # Step 3: Setup C++ tools using Python script
 echo "Step 3: Setting up C++ tools (bwfmetaedit, allolib, VBAP renderer)..."
-if python3 -c "from src.configCPP import setupCppTools; exit(0 if setupCppTools() else 1)"; then
+if sonoPleth/bin/python -c "from utils.configCPP import setupCppTools; exit(0 if setupCppTools() else 1)"; then
     echo "✓ C++ tools setup complete"
 else
     echo "⚠ Warning: C++ tools setup had issues, but continuing..."
@@ -65,11 +67,17 @@ echo "============================================================"
 echo "✓ Initialization complete!"
 echo "============================================================"
 echo ""
-echo "To activate the virtual environment in the future, run:"
-echo "  source sonoPleth/bin/activate"
+echo "Activating virtual environment..."
+source sonoPleth/bin/activate
 echo ""
-echo "To run the pipeline:"
-echo "  python3 runPipeline.py <sourceADMFile> [sourceSpeakerLayout]"
+echo "✓ Virtual environment activated!"
+echo ""
+echo "You can now run:"
+echo "  python utils/getExamples.py          # Download example files"
+echo "  python runPipeline.py <file.wav>     # Run the pipeline"
+echo ""
+echo "To reactivate the environment later, run:"
+echo "  source activate.sh"
 echo ""
 echo "If you encounter dependency errors, delete .init_complete and re-run:"
 echo "  rm .init_complete && ./init.sh"

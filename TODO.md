@@ -15,6 +15,8 @@
 
 * change everything to be stable build and git submodules instead of libraries?
 
+- only clone parts of submodules / libs that we are actually using?
+
 -make notebook
 
 # Less Immediate

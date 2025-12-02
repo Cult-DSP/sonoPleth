@@ -6,7 +6,9 @@ with mapping to the AlloSphere speaker layout.
 
 ## Quick Start
 
-### 1. Clone and Initialize
+### First Time Setup
+
+Run this **once** to set up everything:
 
 ```bash
 git clone https://github.com/lucianpar/sonoPleth.git
@@ -21,8 +23,11 @@ The `init.sh` script will:
 - Install `bwfmetaedit` (via Homebrew)
 - Initialize git submodules (AlloLib)
 - Build the VBAP renderer
+- Activate the virtual environment automatically
 
-### 2. Get Example Files
+After `init.sh` completes, you'll see `(sonoPleth)` in your terminal prompt and you're ready to go!
+
+### Get Example Files
 
 ```bash
 python utils/getExamples.py
@@ -30,14 +35,20 @@ python utils/getExamples.py
 
 This downloads example Atmos ADM files for testing.
 
-### 3. Run the Pipeline
+### Run the Pipeline
 
 ```bash
-# Default mode
+python runPipeline.py sourceData/driveExample1.wav
+```
+
+**Command options:**
+
+```bash
+# Default mode (uses example file)
 python runPipeline.py
 
 # With custom ADM file
-python runPipeline.py path/to/atmos_file.wav
+python runPipeline.py path/to/your_file.wav
 
 # Full options
 python runPipeline.py <adm_wav_file> <speaker_layout.json> <true|false>
@@ -47,9 +58,40 @@ python runPipeline.py <adm_wav_file> <speaker_layout.json> <true|false>
 
 - `adm_wav_file` - Path to ADM BWF WAV file (Atmos master)
 - `speaker_layout.json` - Speaker layout JSON (default: `vbapRender/allosphere_layout.json`)
-- `true|false` - Create PDF analysis of render (default: `true`) -- recommended
+- `true|false` - Create PDF analysis of render (default: `true`)
+
+---
+
+## Opening a New Terminal Session
+
+**IMPORTANT:** If you close your terminal and come back later, you need to reactivate the virtual environment:
+
+```bash
+cd sonoPleth
+source activate.sh
+```
+
+You'll know the virtual environment is active when you see `(sonoPleth)` at the start of your terminal prompt.
+
+**Why?** Virtual environments only last for your current terminal session. This is standard Python practice and keeps your system Python clean and isolated from project dependencies.
+
+---
 
 ## Troubleshooting
+
+### "ModuleNotFoundError" or "command not found: python"
+
+**Problem:** The virtual environment is not active.
+
+**Solution:** Run this in your terminal:
+
+```bash
+source activate.sh
+```
+
+Check that you see `(sonoPleth)` in your prompt. If you don't see it, the venv is not active.
+
+### Dependency or build errors
 
 If you encounter dependency errors:
 
@@ -65,22 +107,23 @@ If `init.sh` fails, you can set up manually:
 ```bash
 # 1. Create virtual environment
 python3 -m venv sonoPleth
-source sonoPleth/bin/activate
 
 # 2. Install Python dependencies
-pip install -r requirements.txt
+sonoPleth/bin/pip install -r requirements.txt
 
 # 3. Install bwfmetaedit
 brew install bwfmetaedit
 
 # 4. Initialize submodules and build renderer
-python3 -c "from src.configCPP import setupCppTools; setupCppTools()"
+sonoPleth/bin/python -c "from utils.configCPP import setupCppTools; setupCppTools()"
 ```
 
 ## Utilities
 
-- `utils/deleteData.py` - Cleans processed data directory
+- `init.sh` - One-time setup script (creates venv, installs dependencies, builds C++ tools, activates venv)
+- `activate.sh` - Reactivates the virtual environment in new terminal sessions (use: `source activate.sh`)
 - `utils/getExamples.py` - Downloads example ADM files
+- `utils/deleteData.py` - Cleans processed data directory
 
 ## Pipeline Overview
 
