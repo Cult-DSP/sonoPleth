@@ -1,3 +1,5 @@
+Cult DSP — Open Spatial Audio Infrastructure  
+Lead Developer: Lucian Parisi
 # ADM Decoder Prototype
 
 This repository contains a Python prototype for exploring and decoding
