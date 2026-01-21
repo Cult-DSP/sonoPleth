@@ -17,6 +17,9 @@
 // 4. VBAP uses += to accumulate sources so call zeroOut before each block
 //
 // 5. must call audioIO.frame(0) before reading output samples
+//
+// 6. interpolateDir() must handle edge cases: empty keyframes, t outside range,
+//    degenerate directions - see implementation for NaN-safe version
 
 #pragma once
 
@@ -31,13 +34,42 @@
 #include "LayoutLoader.hpp"
 #include "WavUtils.hpp"
 
+// Render configuration options
+struct RenderConfig {
+    float masterGain = 0.25f;       // Output gain to prevent clipping (0.0-1.0)
+    std::string soloSource = "";    // If non-empty, only render this source
+    double t0 = -1.0;               // Start time in seconds (-1 = from beginning)
+    double t1 = -1.0;               // End time in seconds (-1 = to end)
+    bool debugDiagnostics = false;  // Enable per-block diagnostics logging
+    std::string debugOutputDir = "processedData/debug";  // Where to write debug files
+};
+
+// Render statistics for diagnostics
+struct RenderStats {
+    std::vector<float> channelRMS;      // RMS level per channel in dBFS
+    std::vector<float> channelPeak;     // Peak absolute value per channel
+    std::vector<int> channelNaNCount;   // NaN count per channel
+    std::vector<int> channelInfCount;   // Inf count per channel
+    int totalSamples = 0;
+    int numChannels = 0;
+    int numSources = 0;
+    double durationSec = 0.0;
+};
+
 class VBAPRenderer {
 public:
     VBAPRenderer(const SpeakerLayoutData &layout,
                  const SpatialData &spatial,
                  const std::map<std::string, MonoWavData> &sources);
 
+    // Main render with default config
     MultiWavData render();
+    
+    // Render with custom configuration
+    MultiWavData render(const RenderConfig &config);
+    
+    // Get statistics from last render (call after render())
+    RenderStats getLastRenderStats() const { return mLastStats; }
 
 private:
     SpeakerLayoutData mLayout;
@@ -52,7 +84,16 @@ private:
     std::vector<int> mVbapToDevice;
 
     float blockSize = 256.0f;
+    
+    // Statistics from last render
+    RenderStats mLastStats;
 
     // linear interpolation between spatial keyframes
     al::Vec3f interpolateDir(const std::vector<Keyframe> &kfs, double t);
+    
+    // Compute statistics on rendered output
+    void computeRenderStats(const MultiWavData &output);
+    
+    // Detect and fix keyframe time units (samples vs seconds)
+    void normalizeKeyframeTimes(double durationSec, size_t totalSamples, int sr);
 };

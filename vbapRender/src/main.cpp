@@ -12,6 +12,7 @@
 #include <iostream>
 #include <string>
 #include <filesystem>
+#include <cstdlib>
 
 #include "JSONLoader.hpp"
 #include "LayoutLoader.hpp"
@@ -20,27 +21,49 @@
 
 namespace fs = std::filesystem;
 
+void printUsage() {
+    std::cout << "sonoPleth VBAP Renderer\n\n";
+    std::cout << "Usage:\n"
+              << "  sonoPleth_vbap_render \\\n"
+              << "    --layout layout.json \\\n"
+              << "    --positions spatial.json \\\n"
+              << "    --sources <folder> \\\n"
+              << "    --out output.wav \\\n"
+              << "    [OPTIONS]\n\n";
+    std::cout << "Required:\n"
+              << "  --layout FILE       Speaker layout JSON file\n"
+              << "  --positions FILE    Spatial trajectory JSON file\n"
+              << "  --sources FOLDER    Folder containing mono source WAVs\n"
+              << "  --out FILE          Output multichannel WAV file\n\n";
+    std::cout << "Options:\n"
+              << "  --master_gain FLOAT Master gain (default: 0.25 for headroom)\n"
+              << "  --solo_source NAME  Render only the named source (for debugging)\n"
+              << "  --t0 SECONDS        Start time in seconds (default: 0)\n"
+              << "  --t1 SECONDS        End time in seconds (default: full duration)\n"
+              << "  --debug_dir DIR     Output debug diagnostics to directory\n"
+              << "  --help              Show this help message\n";
+}
+
 int main(int argc, char *argv[]) {
 
     // parse command line args
     // old version used positional args which was error prone
     // switched to flagged args for clarity
     if (argc < 9) {
-        std::cout << "Usage:\n"
-                  << "  sonoPleth_vbap_render "
-                  << "--layout layout.json "
-                  << "--positions spatial.json "
-                  << "--sources <folder> "
-                  << "--out output.wav\n";
+        printUsage();
         return 1;
     }
 
     fs::path layoutFile, positionsFile, sourcesFolder, outFile;
+    RenderConfig config;  // Uses sensible defaults: masterGain=0.25f, etc.
 
     for (int i = 1; i < argc; i++) {
         std::string arg = argv[i];
 
-        if (arg == "--layout") {
+        if (arg == "--help" || arg == "-h") {
+            printUsage();
+            return 0;
+        } else if (arg == "--layout") {
             layoutFile = argv[++i];
         } else if (arg == "--positions") {
             positionsFile = argv[++i];
@@ -48,6 +71,17 @@ int main(int argc, char *argv[]) {
             sourcesFolder = argv[++i];
         } else if (arg == "--out") {
             outFile = argv[++i];
+        } else if (arg == "--master_gain") {
+            config.masterGain = std::stof(argv[++i]);
+        } else if (arg == "--solo_source") {
+            config.soloSource = argv[++i];
+        } else if (arg == "--t0") {
+            config.t0 = std::stod(argv[++i]);
+        } else if (arg == "--t1") {
+            config.t1 = std::stod(argv[++i]);
+        } else if (arg == "--debug_dir") {
+            config.debugDiagnostics = true;
+            config.debugOutputDir = argv[++i];
         }
     }
 
@@ -69,7 +103,7 @@ int main(int argc, char *argv[]) {
     // this is where the degrees conversion and channel mapping fixes are critical
     std::cout << "Rendering...\n";
     VBAPRenderer renderer(layout, spatial, sources);
-    MultiWavData output = renderer.render();
+    MultiWavData output = renderer.render(config);
 
     // output has consecutive channels 0 to 53
     // if you need AlloSphere hardware channel numbers with gaps you can remap later
