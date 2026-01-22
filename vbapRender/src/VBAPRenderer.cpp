@@ -1,6 +1,7 @@
 #include "VBAPRenderer.hpp"
 #include <cmath>
 #include <iostream>
+#include <iomanip>
 #include <fstream>
 #include <algorithm>
 #include <numeric>
@@ -48,49 +49,87 @@ VBAPRenderer::VBAPRenderer(const SpeakerLayoutData &layout,
     mVBAP.compile();
 }
 
-al::Vec3f VBAPRenderer::interpolateDir(const std::vector<Keyframe> &kfs, double t) {
-    // Linear interpolation between keyframes for smooth spatial motion.
-    // Takes time in seconds and returns normalized direction vector.
-    //
-    // FIXED: Previous version left k1/k2 uninitialized if t was outside keyframe range,
-    // causing NaNs and unpredictable VBAP output (silence/cutouts/chaos).
-    // Now properly clamps to first/last keyframe and handles edge cases.
+// Reset per-render state (call at start of each render)
+void VBAPRenderer::resetPerRenderState() {
+    mLastGoodDir.clear();
+    mWarnedDegenerate.clear();
+    mFallbackCount.clear();
+}
+
+// Safe normalize: returns fallback if input is degenerate
+al::Vec3f VBAPRenderer::safeNormalize(const al::Vec3f& v) {
+    float mag = v.mag();
+    if (mag < 1e-6f || !std::isfinite(mag)) {
+        return al::Vec3f(0.0f, 1.0f, 0.0f);  // fallback: front
+    }
+    return v / mag;
+}
+
+// Main safe direction getter - wraps interpolation with fallback logic
+al::Vec3f VBAPRenderer::safeDirForSource(const std::string& name, 
+                                          const std::vector<Keyframe>& kfs, 
+                                          double t) {
+    // Get raw interpolated direction
+    al::Vec3f v = interpolateDirRaw(kfs, t);
+    float m2 = v.magSqr();
     
-    // Safe fallback if no keyframes
-    if (kfs.empty()) {
-        std::cerr << "Warning: interpolateDir called with empty keyframes, using fallback direction\n";
-        return al::Vec3f(0.0f, 1.0f, 0.0f);  // safe default: front
+    // Check for degenerate direction
+    if (!finite3(v) || !std::isfinite(m2) || m2 < 1e-8f) {
+        // Increment fallback counter
+        mFallbackCount[name]++;
+        
+        // Warn once per source
+        if (mWarnedDegenerate.find(name) == mWarnedDegenerate.end()) {
+            std::cerr << "Warning: degenerate direction for source '" << name 
+                      << "' at t=" << t << "s";
+            if (!kfs.empty()) {
+                std::cerr << " (keyframes: " << kfs.size() 
+                          << ", first=[" << kfs.front().x << "," << kfs.front().y << "," << kfs.front().z << "]"
+                          << " at t=" << kfs.front().time << ")";
+            }
+            std::cerr << ", using last-good/fallback\n";
+            mWarnedDegenerate.insert(name);
+        }
+        
+        // Try last-good direction for this source
+        auto it = mLastGoodDir.find(name);
+        if (it != mLastGoodDir.end()) {
+            return it->second;
+        }
+        
+        // Global fallback: front direction
+        return al::Vec3f(0.0f, 1.0f, 0.0f);
     }
     
-    // Single keyframe - just return its direction
+    // Valid direction - normalize and store as last-good
+    al::Vec3f normalized = v.normalize();
+    mLastGoodDir[name] = normalized;
+    return normalized;
+}
+
+// Raw interpolation - may return invalid vectors (caller must validate)
+al::Vec3f VBAPRenderer::interpolateDirRaw(const std::vector<Keyframe> &kfs, double t) {
+    // Returns interpolated Cartesian direction from keyframes.
+    // Does NOT validate output - use safeDirForSource() for safe access.
+    
+    // Empty keyframes - return zero vector (will trigger fallback)
+    if (kfs.empty()) {
+        return al::Vec3f(0.0f, 0.0f, 0.0f);
+    }
+    
+    // Single keyframe - return its direction directly
     if (kfs.size() == 1) {
-        al::Vec3f v(kfs[0].x, kfs[0].y, kfs[0].z);
-        float mag = v.mag();
-        if (mag < 1e-6f || !std::isfinite(mag)) {
-            std::cerr << "Warning: degenerate single keyframe direction, using fallback\n";
-            return al::Vec3f(0.0f, 1.0f, 0.0f);
-        }
-        return v.normalize();
+        return al::Vec3f(kfs[0].x, kfs[0].y, kfs[0].z);
     }
     
     // Clamp to first keyframe if before all keyframes
     if (t <= kfs.front().time) {
-        al::Vec3f v(kfs.front().x, kfs.front().y, kfs.front().z);
-        float mag = v.mag();
-        if (mag < 1e-6f || !std::isfinite(mag)) {
-            return al::Vec3f(0.0f, 1.0f, 0.0f);
-        }
-        return v.normalize();
+        return al::Vec3f(kfs.front().x, kfs.front().y, kfs.front().z);
     }
     
     // Clamp to last keyframe if after all keyframes
     if (t >= kfs.back().time) {
-        al::Vec3f v(kfs.back().x, kfs.back().y, kfs.back().z);
-        float mag = v.mag();
-        if (mag < 1e-6f || !std::isfinite(mag)) {
-            return al::Vec3f(0.0f, 1.0f, 0.0f);
-        }
-        return v.normalize();
+        return al::Vec3f(kfs.back().x, kfs.back().y, kfs.back().z);
     }
     
     // Find the keyframe segment containing time t
@@ -107,32 +146,44 @@ al::Vec3f VBAPRenderer::interpolateDir(const std::vector<Keyframe> &kfs, double 
     // Handle degenerate time segments (dt <= 0)
     double dt = k2->time - k1->time;
     if (dt <= 1e-9) {
-        al::Vec3f v(k1->x, k1->y, k1->z);
-        float mag = v.mag();
-        if (mag < 1e-6f || !std::isfinite(mag)) {
-            return al::Vec3f(0.0f, 1.0f, 0.0f);
-        }
-        return v.normalize();
+        return al::Vec3f(k2->x, k2->y, k2->z);
     }
     
     // Linear interpolation
     double u = (t - k1->time) / dt;
     u = std::max(0.0, std::min(1.0, u));  // clamp u to [0,1] for safety
     
-    al::Vec3f v(
+    return al::Vec3f(
         (1.0 - u) * k1->x + u * k2->x,
         (1.0 - u) * k1->y + u * k2->y,
         (1.0 - u) * k1->z + u * k2->z
     );
-    
-    // Validate and normalize
-    float mag = v.mag();
-    if (mag < 1e-6f || !std::isfinite(mag)) {
-        std::cerr << "Warning: interpolation produced degenerate direction at t=" << t << "\n";
-        return al::Vec3f(0.0f, 1.0f, 0.0f);
+}
+
+// Print end-of-render fallback summary
+void VBAPRenderer::printFallbackSummary(int totalBlocks) {
+    if (mFallbackCount.empty()) {
+        std::cout << "  Direction fallbacks: none (all sources had valid directions)\n";
+        return;
     }
     
-    return v.normalize();
+    // Sort sources by fallback count (descending)
+    std::vector<std::pair<std::string, int>> sorted(mFallbackCount.begin(), mFallbackCount.end());
+    std::sort(sorted.begin(), sorted.end(), 
+              [](const auto& a, const auto& b) { return a.second > b.second; });
+    
+    std::cout << "  Direction fallbacks by source:\n";
+    int totalFallbacks = 0;
+    for (const auto& [name, count] : sorted) {
+        float pct = 100.0f * count / totalBlocks;
+        std::cout << "    " << name << ": " << count << " blocks (" 
+                  << std::fixed << std::setprecision(1) << pct << "%)\n";
+        totalFallbacks += count;
+        
+        // Copy to stats
+        mLastStats.sourceFallbackCount[name] = count;
+    }
+    mLastStats.totalFallbackBlocks = totalFallbacks;
 }
 
 // Detect if keyframe times are in samples instead of seconds and convert
@@ -215,6 +266,9 @@ MultiWavData VBAPRenderer::render(const RenderConfig &config) {
     }
     
     double durationSec = (double)totalSamples / sr;
+    
+    // Reset per-render tracking state
+    resetPerRenderState();
     
     // Detect and fix keyframe time units (samples vs seconds)
     normalizeKeyframeTimes(durationSec, totalSamples, sr);
@@ -317,8 +371,9 @@ MultiWavData VBAPRenderer::render(const RenderConfig &config) {
             }
             
             // get spatial direction for this source at current time
+            // safeDirForSource handles degenerate directions with rate-limited warnings
             double timeSec = (double)blockStart / (double)sr;
-            al::Vec3f dir = interpolateDir(kfs, timeSec);
+            al::Vec3f dir = safeDirForSource(name, kfs, timeSec);
             
             // FIXED: Reset frame cursor before each renderBuffer call
             // AudioIOData has internal frame state that may persist across calls
@@ -404,6 +459,9 @@ MultiWavData VBAPRenderer::render(const RenderConfig &config) {
     std::cout << "  Near-silent channels (< -85 dBFS): " << silentChannels << "/" << numSpeakers << "\n";
     std::cout << "  Clipping channels (peak > 1.0): " << clippingChannels << "\n";
     std::cout << "  Channels with NaN: " << nanChannels << "\n";
+    
+    // Print fallback summary (shows which sources had degenerate directions)
+    printFallbackSummary(blocksProcessed);
     
     // Write statistics to JSON if diagnostics enabled
     if (config.debugDiagnostics) {

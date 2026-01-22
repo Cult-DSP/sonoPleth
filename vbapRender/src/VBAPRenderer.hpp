@@ -26,6 +26,8 @@
 #include <map>
 #include <string>
 #include <vector>
+#include <unordered_map>
+#include <unordered_set>
 #include <al/math/al_Vec.hpp>
 #include <al/sound/al_Vbap.hpp>
 #include <al/io/al_AudioIOData.hpp>
@@ -54,6 +56,10 @@ struct RenderStats {
     int numChannels = 0;
     int numSources = 0;
     double durationSec = 0.0;
+    
+    // Per-source fallback statistics
+    std::unordered_map<std::string, int> sourceFallbackCount;
+    int totalFallbackBlocks = 0;
 };
 
 class VBAPRenderer {
@@ -87,13 +93,37 @@ private:
     
     // Statistics from last render
     RenderStats mLastStats;
+    
+    // Per-source direction tracking for safe fallback
+    // These are reset at start of each render
+    std::unordered_map<std::string, al::Vec3f> mLastGoodDir;
+    std::unordered_set<std::string> mWarnedDegenerate;
+    std::unordered_map<std::string, int> mFallbackCount;
 
-    // linear interpolation between spatial keyframes
-    al::Vec3f interpolateDir(const std::vector<Keyframe> &kfs, double t);
+    // Helper: check if all components are finite
+    static bool finite3(const al::Vec3f& v) {
+        return std::isfinite(v.x) && std::isfinite(v.y) && std::isfinite(v.z);
+    }
+    
+    // Helper: compute unit direction from Cartesian (safe, validates output)
+    static al::Vec3f safeNormalize(const al::Vec3f& v);
+    
+    // Get safe direction for a source, using last-good or fallback if invalid
+    // This is the main entry point for direction computation in the render loop
+    al::Vec3f safeDirForSource(const std::string& name, const std::vector<Keyframe>& kfs, double t);
+
+    // linear interpolation between spatial keyframes (raw, may return invalid)
+    al::Vec3f interpolateDirRaw(const std::vector<Keyframe> &kfs, double t);
     
     // Compute statistics on rendered output
     void computeRenderStats(const MultiWavData &output);
     
     // Detect and fix keyframe time units (samples vs seconds)
     void normalizeKeyframeTimes(double durationSec, size_t totalSamples, int sr);
+    
+    // Reset per-render state (call at start of render)
+    void resetPerRenderState();
+    
+    // Print end-of-render fallback summary
+    void printFallbackSummary(int totalBlocks);
 };

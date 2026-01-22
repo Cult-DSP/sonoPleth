@@ -111,22 +111,31 @@ The `--positions` file defines source trajectories:
   "sampleRate": 48000,
   "sources": {
     "source_1": [
-      {"time": 0.0, "azimuth": 0.0, "elevation": 0.0, "distance": 1.0},
-      {"time": 5.0, "azimuth": 1.57, "elevation": 0.5, "distance": 1.0}
+      {"time": 0.0, "cart": [0.0, 1.0, 0.0]},
+      {"time": 5.0, "cart": [1.0, 0.0, 0.0]}
     ],
     "source_2": [
-      {"time": 0.0, "azimuth": -0.785, "elevation": 0.0, "distance": 1.0}
+      {"time": 0.0, "cart": [-0.707, 0.707, 0.0]}
     ]
   }
 }
 ```
 
 - **time**: Keyframe time in seconds
-- **azimuth**: Horizontal angle in radians (-π to π)
-- **elevation**: Vertical angle in radians (-π/2 to π/2)
-- **distance**: Normalized distance (typically 1.0)
+- **cart**: Cartesian direction vector [x, y, z] (will be normalized)
 
 Positions are linearly interpolated between keyframes.
+
+### Keyframe Sanitation
+
+The loader automatically sanitizes keyframes:
+
+1. **Sorting**: Keyframes are sorted by time (ascending)
+2. **Deduplication**: Multiple keyframes at same time are collapsed (keeps last)
+3. **Validation**: NaN/Inf values cause keyframe to be dropped
+4. **Zero direction fix**: `[0,0,0]` vectors are replaced with front `[0,1,0]`
+
+Warnings are printed for any sanitation actions.
 
 ## Speaker Layout JSON Format
 
@@ -241,7 +250,10 @@ speaker.elevation = s.elevation * 180.0f / M_PI;
 
 **Cause**: NaN values from interpolation causing VBAP to malfunction.
 
-**Fix**: The updated `interpolateDir()` handles all edge cases and validates output.
+**Fix**: The updated direction system handles all edge cases:
+- `safeDirForSource()` validates all directions before use
+- Invalid directions fall back to last-good or default (0,1,0)
+- Warnings are rate-limited (once per source, not per block)
 
 ### Missing sources / tracks
 
@@ -260,6 +272,21 @@ speaker.elevation = s.elevation * 180.0f / M_PI;
 **Cause**: Using `+=` instead of `=` when copying rendered samples.
 
 **Fix**: Output copy uses assignment: `out.samples[ch][i] = sample`
+
+### Warning spam about degenerate directions
+
+**Cause**: Previous versions warned on every block with bad direction data.
+
+**Fix**: New `safeDirForSource()` system:
+- Warns only **once per source** (not per block)
+- Uses last-good direction if available
+- Prints fallback summary at end of render showing affected sources
+
+### Zero-length direction vectors
+
+**Cause**: Keyframes with `cart: [0, 0, 0]` (often from distance=0 being applied to coordinates).
+
+**Fix**: JSONLoader now detects zero directions at load time and replaces with front (0,1,0).
 
 ## Building
 
