@@ -65,6 +65,70 @@ al::Vec3f VBAPRenderer::safeNormalize(const al::Vec3f& v) {
     return v / mag;
 }
 
+// Spherical linear interpolation between two unit vectors
+// Returns smooth interpolation on the unit sphere from a (t=0) to b (t=1)
+al::Vec3f VBAPRenderer::slerpDir(const al::Vec3f& a, const al::Vec3f& b, float t) {
+    // Clamp t to [0,1]
+    t = std::max(0.0f, std::min(1.0f, t));
+    
+    // Compute cosine of angle between directions
+    float dot = a.dot(b);
+    
+    // Clamp to handle numerical errors
+    dot = std::max(-1.0f, std::min(1.0f, dot));
+    
+    // If vectors are very close, use linear interpolation to avoid division by zero
+    if (dot > 0.9995f) {
+        al::Vec3f result = a + t * (b - a);
+        return safeNormalize(result);
+    }
+    
+    // If vectors are nearly opposite, pick a perpendicular axis
+    if (dot < -0.9995f) {
+        // Find a perpendicular vector
+        al::Vec3f perp = (std::abs(a.x) < 0.9f) ? al::Vec3f(1,0,0) : al::Vec3f(0,1,0);
+        perp = (a.cross(perp)).normalize();
+        // Rotate around perpendicular axis
+        float theta = M_PI * t;
+        return a * std::cos(theta) + perp * std::sin(theta);
+    }
+    
+    // Standard SLERP formula
+    float theta = std::acos(dot);
+    float sinTheta = std::sin(theta);
+    
+    float wa = std::sin((1.0f - t) * theta) / sinTheta;
+    float wb = std::sin(t * theta) / sinTheta;
+    
+    return a * wa + b * wb;
+}
+
+// Compute VBAP gains for a direction by injecting a unit sample
+// This uses AlloLib's VBAP implementation to get the speaker gains
+void VBAPRenderer::computeVBAPGains(const al::Vec3f& dir, std::vector<float>& gains) {
+    int numSpeakers = mLayout.speakers.size();
+    gains.resize(numSpeakers, 0.0f);
+    
+    // Use a small AudioIOData buffer with a unit sample to extract gains
+    al::AudioIOData tempAudio;
+    tempAudio.framesPerBuffer(1);
+    tempAudio.framesPerSecond(mSpatial.sampleRate);
+    tempAudio.channelsIn(0);
+    tempAudio.channelsOut(numSpeakers);
+    tempAudio.zeroOut();
+    
+    // Render a single unit sample at the given direction
+    float unitSample = 1.0f;
+    tempAudio.frame(0);
+    mVBAP.renderBuffer(tempAudio, dir, &unitSample, 1);
+    
+    // Extract gains from output channels
+    tempAudio.frame(0);
+    for (int ch = 0; ch < numSpeakers; ch++) {
+        gains[ch] = tempAudio.out(ch, 0);
+    }
+}
+
 // Main safe direction getter - wraps interpolation with fallback logic
 al::Vec3f VBAPRenderer::safeDirForSource(const std::string& name, 
                                           const std::vector<Keyframe>& kfs, 
@@ -292,6 +356,7 @@ MultiWavData VBAPRenderer::render(const RenderConfig &config) {
               << (double)renderSamples / sr << " sec) to " 
               << numSpeakers << " speakers from " << mSources.size() << " sources\n";
     std::cout << "  Master gain: " << config.masterGain << "\n";
+    std::cout << "  Render resolution: " << config.renderResolution << " (block size: " << config.blockSize << ")\n";
     
     if (!config.soloSource.empty()) {
         std::cout << "  SOLO MODE: Only rendering source '" << config.soloSource << "'\n";
@@ -302,140 +367,24 @@ MultiWavData VBAPRenderer::render(const RenderConfig &config) {
     }
 
     // output uses consecutive channels 0 to numSpeakers-1
-    // this is simpler than trying to maintain the AlloSphere hardware channel gaps
-    // if you need to remap to hardware channels later just create a channel routing map
     MultiWavData out;
     out.sampleRate = sr;
     out.channels = numSpeakers;
     out.samples.resize(numSpeakers);
     for (auto &c : out.samples) c.resize(renderSamples, 0.0f);
 
-    // CRITICAL: must call framesPerBuffer BEFORE channelsOut
-    // otherwise AudioIOData throws assertion failures about buffer size not being set
-    // the AlloLib API is picky about initialization order
-    const int bufferSize = 512;
-    al::AudioIOData audioIO;
-    audioIO.framesPerBuffer(bufferSize);
-    audioIO.framesPerSecond(sr);
-    audioIO.channelsIn(0);
-    audioIO.channelsOut(numSpeakers);
-    
-    std::vector<float> sourceBuffer(bufferSize, 0.0f);  // initialize to zero
-    
-    // Optional debug logging
-    std::ofstream blockLog;
-    if (config.debugDiagnostics) {
-        fs::create_directories(config.debugOutputDir);
-        blockLog.open(config.debugOutputDir + "/block_stats.log");
-        blockLog << "block,time_sec,peak,nonfinite_count,active_speakers\n";
+    // Dispatch to appropriate render resolution
+    if (config.renderResolution == "block") {
+        renderPerBlock(out, config, startSample, endSample);
+    } else if (config.renderResolution == "sample") {
+        renderPerSample(out, config, startSample, endSample);
+    } else {
+        // Default to "smooth" mode
+        renderSmooth(out, config, startSample, endSample);
     }
     
-    int blocksProcessed = 0;
-    for (size_t blockStart = startSample; blockStart < endSample; blockStart += bufferSize) {
-        size_t blockEnd = std::min(endSample, blockStart + bufferSize);
-        size_t blockLen = blockEnd - blockStart;
-        size_t outBlockStart = blockStart - startSample;  // offset into output buffer
-        
-        if (blocksProcessed % 1000 == 0) {
-            std::cout << "  Block " << blocksProcessed << " (" 
-                      << (int)(100.0 * (blockStart - startSample) / renderSamples) << "%)\n" << std::flush;
-        }
-        blocksProcessed++;
-        
-        // zero out the audio buffer before accumulating sources
-        // VBAP uses += to accumulate multiple sources into the same speakers
-        audioIO.zeroOut();
-        
-        int sourceIdx = 0;
-        for (auto &[name, kfs] : mSpatial.sources) {
-            // Solo mode: skip sources that aren't the solo target
-            if (!config.soloSource.empty() && name != config.soloSource) {
-                continue;
-            }
-            
-            // Check if source exists in loaded sources
-            auto srcIt = mSources.find(name);
-            if (srcIt == mSources.end()) {
-                continue;  // Source not found, skip
-            }
-            const MonoWavData &src = srcIt->second;
-            
-            // FIXED: Zero entire buffer first to prevent stale tail data
-            // from entering VBAP if it reads beyond blockLen
-            std::fill(sourceBuffer.begin(), sourceBuffer.end(), 0.0f);
-            
-            // copy source samples into buffer for this block
-            for (size_t i = 0; i < blockLen; i++) {
-                size_t globalIdx = blockStart + i;
-                sourceBuffer[i] = (globalIdx < src.samples.size()) ? src.samples[globalIdx] : 0.0f;
-            }
-            
-            // get spatial direction for this source at current time
-            // safeDirForSource handles degenerate directions with rate-limited warnings
-            double timeSec = (double)blockStart / (double)sr;
-            al::Vec3f dir = safeDirForSource(name, kfs, timeSec);
-            
-            // FIXED: Reset frame cursor before each renderBuffer call
-            // AudioIOData has internal frame state that may persist across calls
-            audioIO.frame(0);
-            
-            // renderBuffer finds the best speaker triplet for this direction
-            // calculates VBAP gains and mixes the source into the output channels
-            // this accumulates into audioIO so multiple sources can overlap
-            mVBAP.renderBuffer(audioIO, dir, sourceBuffer.data(), blockLen);
-            sourceIdx++;
-        }
-        
-        // copy the rendered audio from AudioIOData into our output buffer
-        // must call frame(0) to reset the read position before accessing samples
-        audioIO.frame(0);
-        
-        // Per-block diagnostics (rate-limited)
-        float blockPeak = 0.0f;
-        int nonfiniteCount = 0;
-        int activeSpeakers = 0;
-        
-        for (size_t i = 0; i < blockLen; i++) {
-            for (int ch = 0; ch < numSpeakers; ch++) {
-                float sample = audioIO.out(ch, i);
-                
-                // Check for non-finite values
-                if (!std::isfinite(sample)) {
-                    nonfiniteCount++;
-                    sample = 0.0f;  // Sanitize
-                }
-                
-                // Apply master gain to prevent clipping
-                sample *= config.masterGain;
-                
-                // Track peak for diagnostics
-                blockPeak = std::max(blockPeak, std::abs(sample));
-                
-                // FIXED: Use assignment instead of accumulation
-                // Each sample index is written once per block, += was causing potential double-add
-                out.samples[ch][outBlockStart + i] = sample;
-            }
-        }
-        
-        // Count active speakers (RMS above threshold in this block)
-        if (config.debugDiagnostics && blocksProcessed % 200 == 0) {
-            for (int ch = 0; ch < numSpeakers; ch++) {
-                float chPeak = 0.0f;
-                for (size_t i = 0; i < blockLen; i++) {
-                    chPeak = std::max(chPeak, std::abs(out.samples[ch][outBlockStart + i]));
-                }
-                if (chPeak > 1e-6f) activeSpeakers++;
-            }
-            
-            double timeSec = (double)blockStart / (double)sr;
-            blockLog << blocksProcessed << "," << timeSec << "," << blockPeak 
-                     << "," << nonfiniteCount << "," << activeSpeakers << "\n";
-        }
-    }
-    
-    if (blockLog.is_open()) {
-        blockLog.close();
-    }
+    // Calculate total blocks for fallback summary
+    int totalBlocks = (renderSamples + config.blockSize - 1) / config.blockSize;
     
     // Compute and store render statistics
     computeRenderStats(out);
@@ -461,16 +410,19 @@ MultiWavData VBAPRenderer::render(const RenderConfig &config) {
     std::cout << "  Channels with NaN: " << nanChannels << "\n";
     
     // Print fallback summary (shows which sources had degenerate directions)
-    printFallbackSummary(blocksProcessed);
+    printFallbackSummary(totalBlocks);
     
     // Write statistics to JSON if diagnostics enabled
     if (config.debugDiagnostics) {
+        fs::create_directories(config.debugOutputDir);
         std::ofstream statsFile(config.debugOutputDir + "/render_stats.json");
         statsFile << "{\n";
         statsFile << "  \"totalSamples\": " << mLastStats.totalSamples << ",\n";
         statsFile << "  \"durationSec\": " << mLastStats.durationSec << ",\n";
         statsFile << "  \"numChannels\": " << mLastStats.numChannels << ",\n";
         statsFile << "  \"numSources\": " << mLastStats.numSources << ",\n";
+        statsFile << "  \"renderResolution\": \"" << config.renderResolution << "\",\n";
+        statsFile << "  \"blockSize\": " << config.blockSize << ",\n";
         statsFile << "  \"overallPeak\": " << overallPeak << ",\n";
         statsFile << "  \"silentChannels\": " << silentChannels << ",\n";
         statsFile << "  \"clippingChannels\": " << clippingChannels << ",\n";
@@ -495,4 +447,183 @@ MultiWavData VBAPRenderer::render(const RenderConfig &config) {
     
     std::cout << "\n";
     return out;
+}
+
+// renderPerBlock: Direction computed once per block (fastest, may have stepping artifacts)
+void VBAPRenderer::renderPerBlock(MultiWavData &out, const RenderConfig &config,
+                                   size_t startSample, size_t endSample) {
+    int sr = mSpatial.sampleRate;
+    int numSpeakers = mLayout.speakers.size();
+    int bufferSize = config.blockSize;
+    size_t renderSamples = endSample - startSample;
+    
+    // Initialize AudioIOData for VBAP
+    al::AudioIOData audioIO;
+    audioIO.framesPerBuffer(bufferSize);
+    audioIO.framesPerSecond(sr);
+    audioIO.channelsIn(0);
+    audioIO.channelsOut(numSpeakers);
+    
+    std::vector<float> sourceBuffer(bufferSize, 0.0f);
+    
+    int blocksProcessed = 0;
+    for (size_t blockStart = startSample; blockStart < endSample; blockStart += bufferSize) {
+        size_t blockEnd = std::min(endSample, blockStart + bufferSize);
+        size_t blockLen = blockEnd - blockStart;
+        size_t outBlockStart = blockStart - startSample;
+        
+        if (blocksProcessed % 1000 == 0) {
+            std::cout << "  Block " << blocksProcessed << " (" 
+                      << (int)(100.0 * (blockStart - startSample) / renderSamples) << "%)\n" << std::flush;
+        }
+        blocksProcessed++;
+        
+        audioIO.zeroOut();
+        
+        for (auto &[name, kfs] : mSpatial.sources) {
+            if (!config.soloSource.empty() && name != config.soloSource) continue;
+            
+            auto srcIt = mSources.find(name);
+            if (srcIt == mSources.end()) continue;
+            const MonoWavData &src = srcIt->second;
+            
+            std::fill(sourceBuffer.begin(), sourceBuffer.end(), 0.0f);
+            for (size_t i = 0; i < blockLen; i++) {
+                size_t globalIdx = blockStart + i;
+                sourceBuffer[i] = (globalIdx < src.samples.size()) ? src.samples[globalIdx] : 0.0f;
+            }
+            
+            // Direction computed once at block start
+            double timeSec = (double)blockStart / (double)sr;
+            al::Vec3f dir = safeDirForSource(name, kfs, timeSec);
+            
+            audioIO.frame(0);
+            mVBAP.renderBuffer(audioIO, dir, sourceBuffer.data(), blockLen);
+        }
+        
+        // Copy output with gain
+        audioIO.frame(0);
+        for (size_t i = 0; i < blockLen; i++) {
+            for (int ch = 0; ch < numSpeakers; ch++) {
+                float sample = audioIO.out(ch, i);
+                if (!std::isfinite(sample)) sample = 0.0f;
+                out.samples[ch][outBlockStart + i] = sample * config.masterGain;
+            }
+        }
+    }
+}
+
+// renderSmooth: Direction interpolated within each block using SLERP
+void VBAPRenderer::renderSmooth(MultiWavData &out, const RenderConfig &config,
+                                 size_t startSample, size_t endSample) {
+    int sr = mSpatial.sampleRate;
+    int numSpeakers = mLayout.speakers.size();
+    int bufferSize = config.blockSize;
+    size_t renderSamples = endSample - startSample;
+    
+    // For smooth mode, we need per-sample gain interpolation
+    // We compute VBAP gains at block start and end, then interpolate
+    std::vector<float> gainsStart(numSpeakers);
+    std::vector<float> gainsEnd(numSpeakers);
+    std::vector<float> gainsInterp(numSpeakers);
+    
+    int blocksProcessed = 0;
+    for (size_t blockStart = startSample; blockStart < endSample; blockStart += bufferSize) {
+        size_t blockEnd = std::min(endSample, blockStart + bufferSize);
+        size_t blockLen = blockEnd - blockStart;
+        size_t outBlockStart = blockStart - startSample;
+        
+        if (blocksProcessed % 1000 == 0) {
+            std::cout << "  Block " << blocksProcessed << " (" 
+                      << (int)(100.0 * (blockStart - startSample) / renderSamples) << "%)\n" << std::flush;
+        }
+        blocksProcessed++;
+        
+        // For each source, compute interpolated gains across the block
+        for (auto &[name, kfs] : mSpatial.sources) {
+            if (!config.soloSource.empty() && name != config.soloSource) continue;
+            
+            auto srcIt = mSources.find(name);
+            if (srcIt == mSources.end()) continue;
+            const MonoWavData &src = srcIt->second;
+            
+            // Get directions at block boundaries
+            double timeStart = (double)blockStart / (double)sr;
+            double timeEnd = (double)blockEnd / (double)sr;
+            
+            al::Vec3f dirStart = safeDirForSource(name, kfs, timeStart);
+            al::Vec3f dirEnd = safeDirForSource(name, kfs, timeEnd);
+            
+            // Compute VBAP gains at both ends
+            computeVBAPGains(dirStart, gainsStart);
+            computeVBAPGains(dirEnd, gainsEnd);
+            
+            // Process each sample with interpolated gains
+            for (size_t i = 0; i < blockLen; i++) {
+                size_t globalIdx = blockStart + i;
+                float inputSample = (globalIdx < src.samples.size()) ? src.samples[globalIdx] : 0.0f;
+                
+                // Interpolate gains within block
+                float t = (blockLen > 1) ? (float)i / (float)(blockLen - 1) : 0.0f;
+                for (int ch = 0; ch < numSpeakers; ch++) {
+                    gainsInterp[ch] = gainsStart[ch] * (1.0f - t) + gainsEnd[ch] * t;
+                }
+                
+                // Accumulate into output
+                for (int ch = 0; ch < numSpeakers; ch++) {
+                    float sample = inputSample * gainsInterp[ch] * config.masterGain;
+                    if (!std::isfinite(sample)) sample = 0.0f;
+                    out.samples[ch][outBlockStart + i] += sample;
+                }
+            }
+        }
+    }
+}
+
+// renderPerSample: Direction computed at every sample (slowest, smoothest)
+void VBAPRenderer::renderPerSample(MultiWavData &out, const RenderConfig &config,
+                                    size_t startSample, size_t endSample) {
+    int sr = mSpatial.sampleRate;
+    int numSpeakers = mLayout.speakers.size();
+    size_t renderSamples = endSample - startSample;
+    
+    std::vector<float> gains(numSpeakers);
+    
+    // Progress reporting interval
+    size_t reportInterval = renderSamples / 100;
+    if (reportInterval < 1000) reportInterval = 1000;
+    
+    size_t samplesProcessed = 0;
+    for (size_t sampleIdx = startSample; sampleIdx < endSample; sampleIdx++) {
+        size_t outIdx = sampleIdx - startSample;
+        
+        if (samplesProcessed % reportInterval == 0) {
+            std::cout << "  Sample " << samplesProcessed << "/" << renderSamples 
+                      << " (" << (int)(100.0 * samplesProcessed / renderSamples) << "%)\n" << std::flush;
+        }
+        samplesProcessed++;
+        
+        double timeSec = (double)sampleIdx / (double)sr;
+        
+        for (auto &[name, kfs] : mSpatial.sources) {
+            if (!config.soloSource.empty() && name != config.soloSource) continue;
+            
+            auto srcIt = mSources.find(name);
+            if (srcIt == mSources.end()) continue;
+            const MonoWavData &src = srcIt->second;
+            
+            float inputSample = (sampleIdx < src.samples.size()) ? src.samples[sampleIdx] : 0.0f;
+            
+            // Compute direction at exact sample time
+            al::Vec3f dir = safeDirForSource(name, kfs, timeSec);
+            computeVBAPGains(dir, gains);
+            
+            // Accumulate into output
+            for (int ch = 0; ch < numSpeakers; ch++) {
+                float sample = inputSample * gains[ch] * config.masterGain;
+                if (!std::isfinite(sample)) sample = 0.0f;
+                out.samples[ch][outIdx] += sample;
+            }
+        }
+    }
 }

@@ -75,6 +75,9 @@ def runVBAPRender(
     render_instructions = str((project_root / render_instructions).resolve())
     speaker_layout = str((project_root / speaker_layout).resolve())
     output_file = str((project_root / output_file).resolve())
+    # Create output directory if it doesn't exist
+    output_dir = Path(output_file).parent
+    output_dir.mkdir(parents=True, exist_ok=True)
     
     # Check if inputs exist
     if not Path(source_folder).exists():

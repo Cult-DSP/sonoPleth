@@ -36,12 +36,18 @@ void printUsage() {
               << "  --sources FOLDER    Folder containing mono source WAVs\n"
               << "  --out FILE          Output multichannel WAV file\n\n";
     std::cout << "Options:\n"
-              << "  --master_gain FLOAT Master gain (default: 0.25 for headroom)\n"
-              << "  --solo_source NAME  Render only the named source (for debugging)\n"
-              << "  --t0 SECONDS        Start time in seconds (default: 0)\n"
-              << "  --t1 SECONDS        End time in seconds (default: full duration)\n"
-              << "  --debug_dir DIR     Output debug diagnostics to directory\n"
-              << "  --help              Show this help message\n";
+              << "  --master_gain FLOAT   Master gain (default: 0.5 for headroom)\n"
+              << "  --solo_source NAME    Render only the named source (for debugging)\n"
+              << "  --t0 SECONDS          Start time in seconds (default: 0)\n"
+              << "  --t1 SECONDS          End time in seconds (default: full duration)\n"
+              << "  --render_resolution MODE  Render resolution: block, smooth, or sample (default: smooth)\n"
+              << "  --block_size N        Block size in samples (default: 256)\n"
+              << "  --debug_dir DIR       Output debug diagnostics to directory\n"
+              << "  --help                Show this help message\n\n";
+    std::cout << "Render Resolutions:\n"
+              << "  block  - Direction computed once per block (fastest, may step)\n"
+              << "  smooth - Direction interpolated within blocks (recommended)\n"
+              << "  sample - Direction computed per sample (slowest, smoothest)\n";
 }
 
 int main(int argc, char *argv[]) {
@@ -82,6 +88,21 @@ int main(int argc, char *argv[]) {
         } else if (arg == "--debug_dir") {
             config.debugDiagnostics = true;
             config.debugOutputDir = argv[++i];
+        } else if (arg == "--render_resolution") {
+            std::string res = argv[++i];
+            if (res == "block" || res == "smooth" || res == "sample") {
+                config.renderResolution = res;
+            } else {
+                std::cerr << "Error: unknown render resolution '" << res << "'\n";
+                std::cerr << "Valid resolutions: block, smooth, sample\n";
+                return 1;
+            }
+        } else if (arg == "--block_size") {
+            config.blockSize = std::stoi(argv[++i]);
+            if (config.blockSize < 1 || config.blockSize > 8192) {
+                std::cerr << "Error: block_size must be between 1 and 8192\n";
+                return 1;
+            }
         }
     }
 

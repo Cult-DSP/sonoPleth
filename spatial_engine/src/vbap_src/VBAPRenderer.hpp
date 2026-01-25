@@ -38,12 +38,20 @@
 
 // Render configuration options
 struct RenderConfig {
-    float masterGain = 0.25f;       // Output gain to prevent clipping (0.0-1.0)
+    float masterGain = 0.5;       // Output gain to prevent clipping (0.0-1.0)
     std::string soloSource = "";    // If non-empty, only render this source
     double t0 = -1.0;               // Start time in seconds (-1 = from beginning)
     double t1 = -1.0;               // End time in seconds (-1 = to end)
     bool debugDiagnostics = false;  // Enable per-block diagnostics logging
     std::string debugOutputDir = "processedData/debug";  // Where to write debug files
+
+     // Render resolution (controls direction update frequency):
+    // - "block": direction computed once per block (fastest, may have stepping artifacts)
+    // - "smooth": direction interpolated within each block (good balance) -- ideal for testing right now
+    // - "sample": direction computed every sample (slowest, smoothest)
+
+    std::string renderResolution = "smooth";
+    int blockSize = 256;
 };
 
 // Render statistics for diagnostics
@@ -86,10 +94,10 @@ private:
     al::Vbap mVBAP;
     
     // not currently used but left here in case you need to remap channels later
-    // would map consecutive VBAP indices to AlloSphere hardware channels
+    // would map consecutive VBAP indices to AlloSphere hardware channels. currently done in https://github.com/lucianpar/54ChanPlayer on allosphere playback end
     std::vector<int> mVbapToDevice;
 
-    float blockSize = 256.0f;
+   
     
     // Statistics from last render
     RenderStats mLastStats;
@@ -126,4 +134,22 @@ private:
     
     // Print end-of-render fallback summary
     void printFallbackSummary(int totalBlocks);
+
+    // Render implementations
+    void renderPerBlock(MultiWavData &out, const RenderConfig &config,
+                        size_t startSample, size_t endSample);
+    
+    void renderSmooth(MultiWavData &out, const RenderConfig &config,
+                      size_t startSample, size_t endSample);
+    
+    void renderPerSample(MultiWavData &out, const RenderConfig &config,
+                         size_t startSample, size_t endSample);
+    
+    // Compute VBAP gains for a direction
+    void computeVBAPGains(const al::Vec3f& dir, std::vector<float>& gains);
+    
+    // Spherical linear interpolation between two directions
+    // t=0 returns 'a', t=1 returns 'b', intermediate values smoothly interpolate on sphere
+    static al::Vec3f slerpDir(const al::Vec3f& a, const al::Vec3f& b, float t);
 };
+
