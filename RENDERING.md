@@ -35,16 +35,16 @@ And produces:
 
 ## Key Files
 
-| File                                              | Purpose                           |
-| ------------------------------------------------- | --------------------------------- |
-| `spatial_engine/src/main.cpp`                     | CLI entry point, argument parsing |
-| `spatial_engine/src/vbap_src/VBAPRenderer.cpp`    | Core rendering logic              |
-| `spatial_engine/src/vbap_src/VBAPRenderer.hpp`    | Renderer class and config structs |
-| `spatial_engine/src/JSONLoader.cpp`               | Parses spatial trajectory JSON    |
-| `spatial_engine/src/LayoutLoader.cpp`             | Parses speaker layout JSON        |
-| `spatial_engine/src/WavUtils.cpp`                 | WAV I/O utilities                 |
-| `spatial_engine/speaker_layouts/*.json`           | Speaker layout configurations     |
-| `spatial_engine/vbapRender/CMakeLists.txt`        | CMake build configuration         |
+| File                                           | Purpose                           |
+| ---------------------------------------------- | --------------------------------- |
+| `spatial_engine/src/main.cpp`                  | CLI entry point, argument parsing |
+| `spatial_engine/src/vbap_src/VBAPRenderer.cpp` | Core rendering logic              |
+| `spatial_engine/src/vbap_src/VBAPRenderer.hpp` | Renderer class and config structs |
+| `spatial_engine/src/JSONLoader.cpp`            | Parses spatial trajectory JSON    |
+| `spatial_engine/src/LayoutLoader.cpp`          | Parses speaker layout JSON        |
+| `spatial_engine/src/WavUtils.cpp`              | WAV I/O utilities                 |
+| `spatial_engine/speaker_layouts/*.json`        | Speaker layout configurations     |
+| `spatial_engine/vbapRender/CMakeLists.txt`     | CMake build configuration         |
 
 ## CLI Usage
 

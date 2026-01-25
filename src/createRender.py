@@ -3,7 +3,7 @@ import os
 from pathlib import Path
 
 
-def deleteRenderOutput(output_file="processedData/spatial_render.wav"):
+def deleteRenderOutput(output_file="processedData/completedRenders/spatial_render.wav"):
     #also calls delete render 
     """
     Delete the rendered output file if it exists.
@@ -38,7 +38,7 @@ def runVBAPRender(
     source_folder="processedData/stageForRender",
     render_instructions="processedData/stageForRender/renderInstructions.json",
     speaker_layout="spatial_engine/speaker_layouts/allosphere_layout.json",
-    output_file="processedData/spatial_render.wav"
+    output_file="processedData/completedRenders/spatial_render.wav"
 ):
     """
     
