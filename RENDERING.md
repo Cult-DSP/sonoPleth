@@ -5,11 +5,13 @@ This document explains the VBAP (Vector Base Amplitude Panning) rendering system
 ## Overview
 
 The rendering pipeline takes:
+
 1. **Mono source audio files** - individual audio stems
 2. **Spatial trajectory data** - JSON with position keyframes over time
 3. **Speaker layout** - AlloSphere 54-speaker configuration
 
 And produces:
+
 - **54-channel WAV file** - each channel corresponds to one speaker
 
 ## Architecture
@@ -33,15 +35,16 @@ And produces:
 
 ## Key Files
 
-| File | Purpose |
-|------|---------|
-| `vbapRender/src/main.cpp` | CLI entry point, argument parsing |
-| `vbapRender/src/VBAPRenderer.cpp` | Core rendering logic |
-| `vbapRender/src/VBAPRenderer.hpp` | Renderer class and config structs |
-| `vbapRender/src/JSONLoader.cpp` | Parses spatial trajectory JSON |
-| `vbapRender/src/LayoutLoader.cpp` | Parses speaker layout JSON |
-| `vbapRender/src/WavUtils.cpp` | WAV I/O utilities |
-| `vbapRender/allosphere_layout.json` | AlloSphere 54-speaker positions |
+| File                                              | Purpose                           |
+| ------------------------------------------------- | --------------------------------- |
+| `spatial_engine/src/main.cpp`                     | CLI entry point, argument parsing |
+| `spatial_engine/src/vbap_src/VBAPRenderer.cpp`    | Core rendering logic              |
+| `spatial_engine/src/vbap_src/VBAPRenderer.hpp`    | Renderer class and config structs |
+| `spatial_engine/src/JSONLoader.cpp`               | Parses spatial trajectory JSON    |
+| `spatial_engine/src/LayoutLoader.cpp`             | Parses speaker layout JSON        |
+| `spatial_engine/src/WavUtils.cpp`                 | WAV I/O utilities                 |
+| `spatial_engine/speaker_layouts/*.json`           | Speaker layout configurations     |
+| `spatial_engine/vbapRender/CMakeLists.txt`        | CMake build configuration         |
 
 ## CLI Usage
 
@@ -56,22 +59,22 @@ And produces:
 
 ### Required Arguments
 
-| Flag | Description |
-|------|-------------|
-| `--layout FILE` | Speaker layout JSON (typically `allosphere_layout.json`) |
-| `--positions FILE` | Spatial trajectory JSON with source keyframes |
-| `--sources FOLDER` | Directory containing mono source WAV files |
-| `--out FILE` | Output multichannel WAV path |
+| Flag               | Description                                              |
+| ------------------ | -------------------------------------------------------- |
+| `--layout FILE`    | Speaker layout JSON (typically `allosphere_layout.json`) |
+| `--positions FILE` | Spatial trajectory JSON with source keyframes            |
+| `--sources FOLDER` | Directory containing mono source WAV files               |
+| `--out FILE`       | Output multichannel WAV path                             |
 
 ### Optional Arguments
 
-| Flag | Default | Description |
-|------|---------|-------------|
-| `--master_gain FLOAT` | 0.25 | Global gain (prevents clipping from VBAP sum) |
-| `--solo_source NAME` | (none) | Render only this source (for debugging) |
-| `--t0 SECONDS` | 0 | Start rendering at this time |
-| `--t1 SECONDS` | (end) | Stop rendering at this time |
-| `--debug_dir DIR` | (none) | Output diagnostics to this directory |
+| Flag                  | Default | Description                                   |
+| --------------------- | ------- | --------------------------------------------- |
+| `--master_gain FLOAT` | 0.25    | Global gain (prevents clipping from VBAP sum) |
+| `--solo_source NAME`  | (none)  | Render only this source (for debugging)       |
+| `--t0 SECONDS`        | 0       | Start rendering at this time                  |
+| `--t1 SECONDS`        | (end)   | Stop rendering at this time                   |
+| `--debug_dir DIR`     | (none)  | Output diagnostics to this directory          |
 
 ### Examples
 
@@ -111,12 +114,10 @@ The `--positions` file defines source trajectories:
   "sampleRate": 48000,
   "sources": {
     "source_1": [
-      {"time": 0.0, "cart": [0.0, 1.0, 0.0]},
-      {"time": 5.0, "cart": [1.0, 0.0, 0.0]}
+      { "time": 0.0, "cart": [0.0, 1.0, 0.0] },
+      { "time": 5.0, "cart": [1.0, 0.0, 0.0] }
     ],
-    "source_2": [
-      {"time": 0.0, "cart": [-0.707, 0.707, 0.0]}
-    ]
+    "source_2": [{ "time": 0.0, "cart": [-0.707, 0.707, 0.0] }]
   }
 }
 ```
@@ -144,8 +145,8 @@ The `--layout` file defines speaker positions:
 ```json
 {
   "speakers": [
-    {"id": 1, "azimuth": 0.0, "elevation": 0.0, "distance": 5.0},
-    {"id": 2, "azimuth": 0.1163, "elevation": 0.0, "distance": 5.0}
+    { "id": 1, "azimuth": 0.0, "elevation": 0.0, "distance": 5.0 },
+    { "id": 2, "azimuth": 0.1163, "elevation": 0.0, "distance": 5.0 }
   ]
 }
 ```
@@ -186,6 +187,7 @@ Render Statistics:
 ```
 
 If `--debug_dir` is specified, detailed stats are written to:
+
 - `render_stats.json` - Per-channel RMS and peak levels
 - `block_stats.log` - Per-block processing stats (sampled)
 
@@ -201,6 +203,7 @@ Direction is computed at each audio block's timestamp by linearly interpolating 
 4. Validate (NaN check, magnitude check)
 
 **Edge cases handled**:
+
 - No keyframes → default direction (0, 1, 0)
 - Single keyframe → use that position
 - Time before first keyframe → use first keyframe
@@ -216,9 +219,9 @@ For each audio block (512 samples):
    a. Fill source buffer with samples (zero-padded beyond source length)
    b. Compute direction vector at block time
    c. Call AlloLib's `mVBAP.renderBuffer()` which:
-      - Finds optimal speaker triplet for direction
-      - Calculates VBAP gains
-      - Mixes source into speaker channels
+   - Finds optimal speaker triplet for direction
+   - Calculates VBAP gains
+   - Mixes source into speaker channels
 3. Apply master gain
 4. Copy to output buffer
 
@@ -241,6 +244,7 @@ if (maxTime > durationSec * 10.0 && maxTime <= totalSamples * 1.1) {
 **Cause**: AlloLib expects speaker angles in **degrees**, not radians.
 
 **Fix**: Verify `LayoutLoader::loadLayout()` converts radians to degrees:
+
 ```cpp
 speaker.azimuth = s.azimuth * 180.0f / M_PI;
 speaker.elevation = s.elevation * 180.0f / M_PI;
@@ -251,6 +255,7 @@ speaker.elevation = s.elevation * 180.0f / M_PI;
 **Cause**: NaN values from interpolation causing VBAP to malfunction.
 
 **Fix**: The updated direction system handles all edge cases:
+
 - `safeDirForSource()` validates all directions before use
 - Invalid directions fall back to last-good or default (0,1,0)
 - Warnings are rate-limited (once per source, not per block)
@@ -278,6 +283,7 @@ speaker.elevation = s.elevation * 180.0f / M_PI;
 **Cause**: Previous versions warned on every block with bad direction data.
 
 **Fix**: New `safeDirForSource()` system:
+
 - Warns only **once per source** (not per block)
 - Uses last-good direction if available
 - Prints fallback summary at end of render showing affected sources
@@ -291,12 +297,19 @@ speaker.elevation = s.elevation * 180.0f / M_PI;
 ## Building
 
 ```bash
-cd vbapRender/build
+cd spatial_engine/vbapRender/build
 cmake ..
 make
 ```
 
 The executable is `sonoPleth_vbap_render` in the build directory.
+
+Or use the Python setup:
+
+```python
+from src.configCPP import setupCppTools
+setupCppTools()
+```
 
 ## Integration with Pipeline
 
@@ -304,8 +317,8 @@ The Python pipeline (`runPipeline.py`) calls the renderer via subprocess:
 
 ```python
 subprocess.run([
-    './vbapRender/build/sonoPleth_vbap_render',
-    '--layout', 'vbapRender/allosphere_layout.json',
+    './spatial_engine/vbapRender/build/sonoPleth_vbap_render',
+    '--layout', 'spatial_engine/speaker_layouts/allosphere_layout.json',
     '--positions', 'processedData/stageForRender/renderInstructions.json',
     '--sources', 'sourceData/',
     '--out', 'output.wav'
@@ -315,11 +328,13 @@ subprocess.run([
 ## Debugging Workflow
 
 1. **Solo a single source**:
+
    ```bash
    --solo_source "problematic_source" --debug_dir ./debug/
    ```
 
 2. **Render a short segment**:
+
    ```bash
    --t0 10.0 --t1 15.0
    ```
@@ -328,6 +343,7 @@ subprocess.run([
    Look for NaN channels, unexpected silence, or clipping.
 
 4. **Full gain for single source**:
+
    ```bash
    --solo_source "source" --master_gain 1.0
    ```

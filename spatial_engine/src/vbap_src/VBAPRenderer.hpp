@@ -32,9 +32,9 @@
 #include <al/sound/al_Vbap.hpp>
 #include <al/io/al_AudioIOData.hpp>
 
-#include "JSONLoader.hpp"
-#include "LayoutLoader.hpp"
-#include "WavUtils.hpp"
+#include "../JSONLoader.hpp"
+#include "../LayoutLoader.hpp"
+#include "../WavUtils.hpp"
 
 // Render configuration options
 struct RenderConfig {

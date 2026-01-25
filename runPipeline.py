@@ -119,7 +119,7 @@ if __name__ == "__main__":
     # CLI mode - parse arguments
     if len(sys.argv) >= 2:
         sourceADMFile = sys.argv[1]
-        sourceSpeakerLayout = sys.argv[2] if len(sys.argv) >= 3 else "vbapRender/allosphere_layout.json"
+        sourceSpeakerLayout = sys.argv[2] if len(sys.argv) >= 3 else "spatial_engine/speaker_layouts/allosphere_layout.json"
         createRenderAnalysis = True if len(sys.argv) < 4 else sys.argv[3].lower() in ['true', '1', 'yes']
         
         run_pipeline(sourceADMFile, sourceSpeakerLayout, createRenderAnalysis)
@@ -130,7 +130,7 @@ if __name__ == "__main__":
         print("\nRunning with default configuration...")
         
         sourceADMFile = "sourceData/driveExampleSpruce.wav"
-        sourceSpeakerLayout = "vbapRender/allosphere_layout.json"
+        sourceSpeakerLayout = "spatial_engine/speaker_layouts/allosphere_layout.json"
         createRenderAnalysis = True
         
         run_pipeline(sourceADMFile, sourceSpeakerLayout, createRenderAnalysis)

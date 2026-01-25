@@ -153,7 +153,7 @@ def initializeSubmodules(project_root=None):
         return False
 
 
-def buildVBAPRenderer(build_dir="vbapRender/build", source_dir="vbapRender"):
+def buildVBAPRenderer(build_dir="spatial_engine/vbapRender/build", source_dir="spatial_engine/vbapRender"):
     """
     Build the VBAP renderer using CMake.
     Only builds if executable doesn't exist (idempotent).

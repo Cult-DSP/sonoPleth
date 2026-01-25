@@ -37,7 +37,7 @@ def deleteRenderOutput(output_file="processedData/spatial_render.wav"):
 def runVBAPRender(
     source_folder="processedData/stageForRender",
     render_instructions="processedData/stageForRender/renderInstructions.json",
-    speaker_layout="vbapRender/allosphere_layout.json",
+    speaker_layout="spatial_engine/speaker_layouts/allosphere_layout.json",
     output_file="processedData/spatial_render.wav"
 ):
     """
@@ -62,7 +62,7 @@ def runVBAPRender(
     project_root = Path(__file__).parent.parent.resolve()
 
     deleteRenderOutput(output_file)
-    executable = project_root / "vbapRender" / "build" / "sonoPleth_vbap_render"
+    executable = project_root / "spatial_engine" / "vbapRender" / "build" / "sonoPleth_vbap_render"
     
     # Check if executable exists
     if not executable.exists():
