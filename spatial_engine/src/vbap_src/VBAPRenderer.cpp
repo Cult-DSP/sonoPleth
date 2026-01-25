@@ -15,7 +15,7 @@ VBAPRenderer::VBAPRenderer(const SpeakerLayoutData &layout,
     : mLayout(layout), mSpatial(spatial), mSources(sources),
       mSpeakers(), mVBAP(mSpeakers, true)
 
-      //note: might need to remap channels for sphere later? to account for gaps in channel numbering?
+      //note: might need to remap channels for sphere later? current adressed on the sphere side 
 {
     // CRITICAL FIX 1: AlloLib's al::Speaker expects angles in DEGREES not radians
     // The AlloSphere layout JSON stores angles in radians but al::Speaker internally
