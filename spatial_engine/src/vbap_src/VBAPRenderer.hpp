@@ -47,11 +47,11 @@ struct RenderConfig {
 
      // Render resolution (controls direction update frequency):
     // - "block": direction computed once per block (fastest, may have stepping artifacts)
-    // - "smooth": direction interpolated within each block (good balance) -- ideal for testing right now
+    // - "smooth": direction interpolated within each block (good balance) -- EXPERIMENTAL - MAY HAVE INTERPOLATION TRIANGLE ISSUES
     // - "sample": direction computed every sample (slowest, smoothest)
 
-    std::string renderResolution = "smooth";
-    int blockSize = 256;
+    std::string renderResolution = "block";
+    int blockSize = 64; // block size 64 is extremely high res and will render slowly, 256 is good for faster rendering.
 };
 
 // Render statistics for diagnostics

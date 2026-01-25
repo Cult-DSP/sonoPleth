@@ -380,7 +380,7 @@ MultiWavData VBAPRenderer::render(const RenderConfig &config) {
         renderPerSample(out, config, startSample, endSample);
     } else {
         // Default to "smooth" mode
-        renderSmooth(out, config, startSample, endSample);
+        renderSmooth(out, config, startSample, endSample); // POTENTIALLY DANGEROUS / BUGGY RIGHT NOW
     }
     
     // Calculate total blocks for fallback summary
