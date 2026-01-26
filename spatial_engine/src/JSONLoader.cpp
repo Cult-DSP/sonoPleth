@@ -29,6 +29,32 @@ SpatialData JSONLoader::loadSpatialInstructions(const std::string &path) {
 
     SpatialData d;
     d.sampleRate = j["sampleRate"];
+    
+    // Parse explicit timeUnit from JSON (default: "seconds")
+    // This replaces heuristic detection which was error-prone
+    std::string timeUnitStr = "seconds";
+    if (j.contains("timeUnit") && j["timeUnit"].is_string()) {
+        timeUnitStr = j["timeUnit"];
+    }
+    
+    double timeMultiplier = 1.0;  // Conversion factor to seconds
+    if (timeUnitStr == "seconds" || timeUnitStr == "s") {
+        d.timeUnit = TimeUnit::Seconds;
+        timeMultiplier = 1.0;
+        std::cout << "Time unit: seconds (no conversion)\n";
+    } else if (timeUnitStr == "samples" || timeUnitStr == "samp") {
+        d.timeUnit = TimeUnit::Samples;
+        timeMultiplier = 1.0 / (double)d.sampleRate;
+        std::cout << "Time unit: samples (converting to seconds with sr=" << d.sampleRate << ")\n";
+    } else if (timeUnitStr == "milliseconds" || timeUnitStr == "ms") {
+        d.timeUnit = TimeUnit::Milliseconds;
+        timeMultiplier = 0.001;
+        std::cout << "Time unit: milliseconds (converting to seconds)\n";
+    } else {
+        std::cerr << "Warning: unknown timeUnit '" << timeUnitStr << "', assuming seconds\n";
+        d.timeUnit = TimeUnit::Seconds;
+        timeMultiplier = 1.0;
+    }
 
     int totalDropped = 0;
     int totalSources = 0;
@@ -41,12 +67,12 @@ SpatialData JSONLoader::loadSpatialInstructions(const std::string &path) {
         for (auto &k : kflist) {
             Keyframe kf;
             
-            // Parse time (required)
+            // Parse time (required) and convert to seconds
             if (!k.contains("time") || !k["time"].is_number()) {
                 droppedForSource++;
                 continue;
             }
-            kf.time = k["time"];
+            kf.time = k["time"].get<double>() * timeMultiplier;
             
             // Parse cart coordinates (required)
             if (!k.contains("cart") || !k["cart"].is_array() || k["cart"].size() < 3) {

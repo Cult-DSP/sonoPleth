@@ -140,6 +140,44 @@ sonoPleth/bin/python -c "from utils.configCPP import setupCppTools; setupCppTool
 7. **VBAP Render** - Generate multichannel spatial audio using VBAP
 8. **Analyze Render** - Create PDF with dB analysis of each output channel
 
+## VBAP Renderer Options
+
+The VBAP renderer supports multiple render resolution modes:
+
+| Mode | Description | Recommended |
+|------|-------------|-------------|
+| `block` | Compute direction once per block (default, blockSize=64) | ✓ Yes |
+| `sample` | Compute direction for every sample (highest accuracy) | For critical work |
+| `smooth` | *Deprecated* - gain interpolation can cause artifacts | No |
+
+### Command Line Usage
+
+```bash
+./sonoPleth_vbap_render <input.json> <layout.json> <output.wav> [options]
+
+Options:
+  --render_resolution <mode>  Set render mode: block (recommended), sample, smooth
+  --block_size <n>            Set block size for block mode (default: 64)
+```
+
+### JSON Time Units
+
+The spatial trajectory JSON supports an explicit `timeUnit` field:
+
+```json
+{
+  "sampleRate": 48000,
+  "timeUnit": "seconds",
+  "sources": [...]
+}
+```
+
+Valid values: `"seconds"` (default), `"samples"`, `"milliseconds"`
+
+For detailed documentation, see:
+- [RENDERING.md](spatial_engine/vbapRender/RENDERING.md) - Full rendering documentation
+- [json_schema_info.md](spatial_engine/vbapRender/json_schema_info.md) - JSON schema reference
+
 ## Testing Files
 
 Example ADM files: https://zenodo.org/records/15268471

@@ -40,14 +40,15 @@ void printUsage() {
               << "  --solo_source NAME    Render only the named source (for debugging)\n"
               << "  --t0 SECONDS          Start time in seconds (default: 0)\n"
               << "  --t1 SECONDS          End time in seconds (default: full duration)\n"
-              << "  --render_resolution MODE  Render resolution: block, smooth, or sample (default: smooth)\n"
-              << "  --block_size N        Block size in samples (default: 256)\n"
+              << "  --render_resolution MODE  Render resolution: block or sample (default: block)\n"
+              << "  --block_size N        Block size in samples (default: 64, use 256 for faster renders)\n"
               << "  --debug_dir DIR       Output debug diagnostics to directory\n"
               << "  --help                Show this help message\n\n";
     std::cout << "Render Resolutions:\n"
-              << "  block  - Direction computed once per block (fastest, may step)\n"
-              << "  smooth - Direction interpolated within blocks (recommended)\n"
-              << "  sample - Direction computed per sample (slowest, smoothest)\n";
+              << "  block  - Direction computed at block center (RECOMMENDED)\n"
+              << "           Use small blockSize (32-64) for smooth motion\n"
+              << "  sample - Direction computed per sample (very slow, debugging only)\n"
+              << "  smooth - DEPRECATED: may cause artifacts, use 'block' instead\n";
 }
 
 int main(int argc, char *argv[]) {

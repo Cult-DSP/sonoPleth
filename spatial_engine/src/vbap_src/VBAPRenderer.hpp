@@ -45,13 +45,17 @@ struct RenderConfig {
     bool debugDiagnostics = false;  // Enable per-block diagnostics logging
     std::string debugOutputDir = "processedData/debug";  // Where to write debug files
 
-     // Render resolution (controls direction update frequency):
-    // - "block": direction computed once per block (fastest, may have stepping artifacts)
-    // - "smooth": direction interpolated within each block (good balance) -- EXPERIMENTAL - MAY HAVE INTERPOLATION TRIANGLE ISSUES
-    // - "sample": direction computed every sample (slowest, smoothest)
-
+    // Render resolution (controls direction update frequency):
+    // - "block": direction computed once per block center (RECOMMENDED)
+    //            Use small blockSize (32-64) for smooth motion, larger (256-512) for faster renders
+    // - "sample": direction computed every sample (slowest, smoothest - use for debugging only)
+    // 
+    // NOTE: "smooth" mode is DEPRECATED - it interpolates VBAP gains linearly which can cause
+    //       artifacts when the VBAP triangle changes within a block. Use "block" with small
+    //       blockSize instead.
+    
     std::string renderResolution = "block";
-    int blockSize = 64; // block size 64 is extremely high res and will render slowly, 256 is good for faster rendering.
+    int blockSize = 64;  // Recommended: 64 for quality, 256 for speed
 };
 
 // Render statistics for diagnostics

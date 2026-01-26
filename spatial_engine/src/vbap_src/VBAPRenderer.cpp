@@ -142,16 +142,23 @@ al::Vec3f VBAPRenderer::safeDirForSource(const std::string& name,
         // Increment fallback counter
         mFallbackCount[name]++;
         
-        // Warn once per source
+        // Warn once per source with detailed reason
         if (mWarnedDegenerate.find(name) == mWarnedDegenerate.end()) {
             std::cerr << "Warning: degenerate direction for source '" << name 
                       << "' at t=" << t << "s";
-            if (!kfs.empty()) {
-                std::cerr << " (keyframes: " << kfs.size() 
-                          << ", first=[" << kfs.front().x << "," << kfs.front().y << "," << kfs.front().z << "]"
-                          << " at t=" << kfs.front().time << ")";
+            
+            // Log the specific reason
+            if (!finite3(v)) {
+                std::cerr << " (reason: NaN/Inf in direction)";
+            } else if (m2 < 1e-8f) {
+                std::cerr << " (reason: near-zero magnitude " << std::sqrt(m2) << ")";
             }
-            std::cerr << ", using last-good/fallback\n";
+            
+            if (!kfs.empty()) {
+                std::cerr << " [keyframes: " << kfs.size() 
+                          << ", range: " << kfs.front().time << "s to " << kfs.back().time << "s]";
+            }
+            std::cerr << "\n";
             mWarnedDegenerate.insert(name);
         }
         
@@ -161,7 +168,36 @@ al::Vec3f VBAPRenderer::safeDirForSource(const std::string& name,
             return it->second;
         }
         
-        // Global fallback: front direction
+        // No last-good exists: use nearest keyframe direction instead of global front
+        // This provides a more sensible fallback that's related to the source's actual data
+        if (!kfs.empty()) {
+            al::Vec3f fallbackDir;
+            if (t <= kfs.front().time) {
+                // Before first keyframe: use first keyframe
+                fallbackDir = safeNormalize(al::Vec3f(kfs.front().x, kfs.front().y, kfs.front().z));
+            } else if (t >= kfs.back().time) {
+                // After last keyframe: use last keyframe
+                fallbackDir = safeNormalize(al::Vec3f(kfs.back().x, kfs.back().y, kfs.back().z));
+            } else {
+                // Within keyframe range: find nearest keyframe by time
+                double minDist = std::abs(t - kfs[0].time);
+                size_t nearestIdx = 0;
+                for (size_t i = 1; i < kfs.size(); i++) {
+                    double dist = std::abs(t - kfs[i].time);
+                    if (dist < minDist) {
+                        minDist = dist;
+                        nearestIdx = i;
+                    }
+                }
+                fallbackDir = safeNormalize(al::Vec3f(kfs[nearestIdx].x, kfs[nearestIdx].y, kfs[nearestIdx].z));
+            }
+            
+            // Store as last-good so future fallbacks use this
+            mLastGoodDir[name] = fallbackDir;
+            return fallbackDir;
+        }
+        
+        // Absolute last resort: global front direction (only if no keyframes at all)
         return al::Vec3f(0.0f, 1.0f, 0.0f);
     }
     
@@ -173,7 +209,9 @@ al::Vec3f VBAPRenderer::safeDirForSource(const std::string& name,
 
 // Raw interpolation - may return invalid vectors (caller must validate)
 al::Vec3f VBAPRenderer::interpolateDirRaw(const std::vector<Keyframe> &kfs, double t) {
-    // Returns interpolated Cartesian direction from keyframes.
+    // Returns interpolated direction from keyframes using SLERP.
+    // This avoids the near-zero vector problem that linear Cartesian interpolation has
+    // when keyframes are far apart on the sphere (chord through origin).
     // Does NOT validate output - use safeDirForSource() for safe access.
     
     // Empty keyframes - return zero vector (will trigger fallback)
@@ -181,19 +219,19 @@ al::Vec3f VBAPRenderer::interpolateDirRaw(const std::vector<Keyframe> &kfs, doub
         return al::Vec3f(0.0f, 0.0f, 0.0f);
     }
     
-    // Single keyframe - return its direction directly
+    // Single keyframe - return normalized direction
     if (kfs.size() == 1) {
-        return al::Vec3f(kfs[0].x, kfs[0].y, kfs[0].z);
+        return safeNormalize(al::Vec3f(kfs[0].x, kfs[0].y, kfs[0].z));
     }
     
     // Clamp to first keyframe if before all keyframes
     if (t <= kfs.front().time) {
-        return al::Vec3f(kfs.front().x, kfs.front().y, kfs.front().z);
+        return safeNormalize(al::Vec3f(kfs.front().x, kfs.front().y, kfs.front().z));
     }
     
     // Clamp to last keyframe if after all keyframes
     if (t >= kfs.back().time) {
-        return al::Vec3f(kfs.back().x, kfs.back().y, kfs.back().z);
+        return safeNormalize(al::Vec3f(kfs.back().x, kfs.back().y, kfs.back().z));
     }
     
     // Find the keyframe segment containing time t
@@ -210,18 +248,19 @@ al::Vec3f VBAPRenderer::interpolateDirRaw(const std::vector<Keyframe> &kfs, doub
     // Handle degenerate time segments (dt <= 0)
     double dt = k2->time - k1->time;
     if (dt <= 1e-9) {
-        return al::Vec3f(k2->x, k2->y, k2->z);
+        return safeNormalize(al::Vec3f(k2->x, k2->y, k2->z));
     }
     
-    // Linear interpolation
+    // Compute interpolation parameter
     double u = (t - k1->time) / dt;
     u = std::max(0.0, std::min(1.0, u));  // clamp u to [0,1] for safety
     
-    return al::Vec3f(
-        (1.0 - u) * k1->x + u * k2->x,
-        (1.0 - u) * k1->y + u * k2->y,
-        (1.0 - u) * k1->z + u * k2->z
-    );
+    // SLERP interpolation: normalize endpoints first, then interpolate on sphere
+    // This prevents near-zero vectors when keyframes are far apart
+    al::Vec3f a = safeNormalize(al::Vec3f(k1->x, k1->y, k1->z));
+    al::Vec3f b = safeNormalize(al::Vec3f(k2->x, k2->y, k2->z));
+    
+    return slerpDir(a, b, (float)u);
 }
 
 // Print end-of-render fallback summary
@@ -250,7 +289,8 @@ void VBAPRenderer::printFallbackSummary(int totalBlocks) {
     mLastStats.totalFallbackBlocks = totalFallbacks;
 }
 
-// Detect if keyframe times are in samples instead of seconds and convert
+// Legacy heuristic time unit detection - now just a safety net
+// Primary time unit handling is done in JSONLoader via explicit "timeUnit" field
 void VBAPRenderer::normalizeKeyframeTimes(double durationSec, size_t totalSamples, int sr) {
     for (auto &[name, kfs] : mSpatial.sources) {
         if (kfs.empty()) continue;
@@ -260,11 +300,13 @@ void VBAPRenderer::normalizeKeyframeTimes(double durationSec, size_t totalSample
             maxTime = std::max(maxTime, kf.time);
         }
         
-        // Heuristic: if maxTime > durationSec * 10 and maxTime <= totalSamples * 1.1,
-        // times are likely in samples, not seconds
+        // Safety net: detect obvious mismatches that JSONLoader might have missed
+        // This should rarely trigger if JSON has correct "timeUnit" field
         if (maxTime > durationSec * 10.0 && maxTime <= (double)totalSamples * 1.1) {
-            std::cout << "  [Time Unit Fix] Source '" << name << "': converting times from samples to seconds\n";
-            std::cout << "    maxTime=" << maxTime << " vs durationSec=" << durationSec << "\n";
+            std::cerr << "  WARNING: Source '" << name << "' times look like samples, not seconds!\n";
+            std::cerr << "    maxTime=" << maxTime << " vs durationSec=" << durationSec << "\n";
+            std::cerr << "    Add \"timeUnit\": \"samples\" to your JSON to fix this properly.\n";
+            std::cerr << "    Auto-converting for now...\n";
             for (auto &kf : kfs) {
                 kf.time /= (double)sr;
             }
@@ -365,7 +407,55 @@ MultiWavData VBAPRenderer::render(const RenderConfig &config) {
         std::cout << "  TIME WINDOW: " << (config.t0 >= 0.0 ? config.t0 : 0.0) 
                   << "s to " << (config.t1 >= 0.0 ? config.t1 : durationSec) << "s\n";
     }
-
+    
+    // Per-source diagnostics: check for silent sources and missing spatial data
+    std::cout << "\n  Source diagnostics:\n";
+    int silentSources = 0;
+    int missingSpatial = 0;
+    int missingAudio = 0;
+    
+    for (const auto& [name, kfs] : mSpatial.sources) {
+        auto srcIt = mSources.find(name);
+        if (srcIt == mSources.end()) {
+            std::cerr << "    WARNING: Source '" << name << "' has spatial data but no audio file!\n";
+            missingAudio++;
+            continue;
+        }
+        
+        // Compute input RMS for this source
+        const MonoWavData& src = srcIt->second;
+        double sumSq = 0.0;
+        size_t count = 0;
+        for (size_t i = startSample; i < endSample && i < src.samples.size(); i++) {
+            sumSq += (double)src.samples[i] * src.samples[i];
+            count++;
+        }
+        double rms = (count > 0) ? std::sqrt(sumSq / count) : 0.0;
+        float rmsDB = (rms > 1e-10) ? 20.0f * std::log10((float)rms) : -120.0f;
+        
+        if (rmsDB < -60.0f) {
+            std::cerr << "    WARNING: Source '" << name << "' is near-silent (RMS: " 
+                      << std::fixed << std::setprecision(1) << rmsDB << " dBFS)\n";
+            silentSources++;
+        }
+        
+        if (kfs.empty()) {
+            std::cerr << "    WARNING: Source '" << name << "' has no keyframes!\n";
+            missingSpatial++;
+        }
+    }
+    
+    // Check for audio files without spatial data
+    for (const auto& [name, wav] : mSources) {
+        if (mSpatial.sources.find(name) == mSpatial.sources.end()) {
+            std::cerr << "    WARNING: Audio file '" << name << "' has no spatial data (won't be rendered)!\n";
+        }
+    }
+    
+    if (silentSources == 0 && missingSpatial == 0 && missingAudio == 0) {
+        std::cout << "    All sources OK\n";
+    }
+    std::cout << "\n";
     // output uses consecutive channels 0 to numSpeakers-1
     MultiWavData out;
     out.sampleRate = sr;
@@ -377,10 +467,15 @@ MultiWavData VBAPRenderer::render(const RenderConfig &config) {
     if (config.renderResolution == "block") {
         renderPerBlock(out, config, startSample, endSample);
     } else if (config.renderResolution == "sample") {
+        std::cout << "  NOTE: 'sample' mode is very slow. Use 'block' with small blockSize for most cases.\n";
         renderPerSample(out, config, startSample, endSample);
+    } else if (config.renderResolution == "smooth") {
+        std::cerr << "  WARNING: 'smooth' mode is DEPRECATED and may cause artifacts.\n";
+        std::cerr << "           Use 'block' mode with --block_size 64 instead.\n";
+        renderSmooth(out, config, startSample, endSample);
     } else {
-        // Default to "smooth" mode
-        renderSmooth(out, config, startSample, endSample); // POTENTIALLY DANGEROUS / BUGGY RIGHT NOW
+        std::cerr << "  ERROR: Unknown render resolution '" << config.renderResolution << "', using 'block'\n";
+        renderPerBlock(out, config, startSample, endSample);
     }
     
     // Calculate total blocks for fallback summary
@@ -449,7 +544,7 @@ MultiWavData VBAPRenderer::render(const RenderConfig &config) {
     return out;
 }
 
-// renderPerBlock: Direction computed once per block (fastest, may have stepping artifacts)
+// renderPerBlock: Direction computed at block center (reduces stepping artifacts)
 void VBAPRenderer::renderPerBlock(MultiWavData &out, const RenderConfig &config,
                                    size_t startSample, size_t endSample) {
     int sr = mSpatial.sampleRate;
@@ -493,8 +588,8 @@ void VBAPRenderer::renderPerBlock(MultiWavData &out, const RenderConfig &config,
                 sourceBuffer[i] = (globalIdx < src.samples.size()) ? src.samples[globalIdx] : 0.0f;
             }
             
-            // Direction computed once at block start
-            double timeSec = (double)blockStart / (double)sr;
+            // Direction computed at block CENTER (reduces edge jitter and systematic bias)
+            double timeSec = (double)(blockStart + blockLen / 2) / (double)sr;
             al::Vec3f dir = safeDirForSource(name, kfs, timeSec);
             
             audioIO.frame(0);

@@ -68,13 +68,23 @@ And produces:
 
 ### Optional Arguments
 
-| Flag                  | Default | Description                                   |
-| --------------------- | ------- | --------------------------------------------- |
-| `--master_gain FLOAT` | 0.25    | Global gain (prevents clipping from VBAP sum) |
-| `--solo_source NAME`  | (none)  | Render only this source (for debugging)       |
-| `--t0 SECONDS`        | 0       | Start rendering at this time                  |
-| `--t1 SECONDS`        | (end)   | Stop rendering at this time                   |
-| `--debug_dir DIR`     | (none)  | Output diagnostics to this directory          |
+| Flag                       | Default   | Description                                        |
+| -------------------------- | --------- | -------------------------------------------------- |
+| `--master_gain FLOAT`      | 0.5       | Global gain (prevents clipping from VBAP sum)      |
+| `--solo_source NAME`       | (none)    | Render only this source (for debugging)            |
+| `--t0 SECONDS`             | 0         | Start rendering at this time                       |
+| `--t1 SECONDS`             | (end)     | Stop rendering at this time                        |
+| `--render_resolution MODE` | block     | Render mode: `block` (recommended) or `sample`     |
+| `--block_size N`           | 64        | Block size for direction updates (32-256)          |
+| `--debug_dir DIR`          | (none)    | Output diagnostics to this directory               |
+
+### Render Resolution Modes
+
+| Mode     | Description                                                  |
+| -------- | ------------------------------------------------------------ |
+| `block`  | **Recommended.** Direction computed at block center. Use small block size (32-64) for smooth motion. |
+| `sample` | Direction computed per sample. Very slow, use for debugging only. |
+| `smooth` | **DEPRECATED.** May cause artifacts. Use `block` instead.    |
 
 ### Examples
 
@@ -112,6 +122,7 @@ The `--positions` file defines source trajectories:
 ```json
 {
   "sampleRate": 48000,
+  "timeUnit": "seconds",
   "sources": {
     "source_1": [
       { "time": 0.0, "cart": [0.0, 1.0, 0.0] },
@@ -122,10 +133,24 @@ The `--positions` file defines source trajectories:
 }
 ```
 
-- **time**: Keyframe time in seconds
+- **sampleRate**: Sample rate in Hz (must match audio files)
+- **timeUnit**: Time unit for keyframes: `"seconds"` (default), `"samples"`, or `"milliseconds"`
+- **time**: Keyframe timestamp (in units specified by `timeUnit`)
 - **cart**: Cartesian direction vector [x, y, z] (will be normalized)
 
-Positions are linearly interpolated between keyframes.
+**See `json_schema_info.md` for complete schema documentation.**
+
+### Time Units
+
+Always specify `timeUnit` explicitly to avoid ambiguity:
+
+| Value          | Description                                      |
+| -------------- | ------------------------------------------------ |
+| `"seconds"`    | Default. Times are in seconds (e.g., `1.5`)      |
+| `"samples"`    | Times are sample indices (e.g., `48000` = 1 sec) |
+| `"milliseconds"` | Times are in ms (e.g., `1500` = 1.5 sec)       |
+
+Positions are interpolated using **spherical linear interpolation (SLERP)** between keyframes, which prevents artifacts when directions are far apart on the sphere.
 
 ### Keyframe Sanitation
 
@@ -159,12 +184,14 @@ The `RenderConfig` struct controls rendering behavior:
 
 ```cpp
 struct RenderConfig {
-    float masterGain = 0.25f;           // Prevent VBAP summation clipping
+    float masterGain = 0.5f;            // Prevent VBAP summation clipping
     std::string soloSource = "";        // Solo mode: only render this source
     double t0 = -1.0;                   // Start time (-1 = beginning)
     double t1 = -1.0;                   // End time (-1 = end)
     bool debugDiagnostics = false;      // Enable diagnostic output
     std::string debugOutputDir = "";    // Where to write diagnostics
+    std::string renderResolution = "block";  // "block" (recommended) or "sample"
+    int blockSize = 64;                 // Direction update interval (samples)
 };
 ```
 
@@ -172,7 +199,7 @@ struct RenderConfig {
 
 VBAP works by distributing each source's energy across 2-3 speakers. When multiple sources are rendered, their contributions **accumulate**. With many sources pointing at similar directions, this can cause clipping.
 
-The default `masterGain = 0.25f` provides ~12dB of headroom, which is sufficient for most productions. Adjust based on your source count and panning density.
+The default `masterGain = 0.5f` provides ~6dB of headroom. Adjust based on your source count and panning density.
 
 ## Render Statistics
 
@@ -193,31 +220,45 @@ If `--debug_dir` is specified, detailed stats are written to:
 
 ## Algorithm Details
 
-### Interpolation (`interpolateDir`)
+### Interpolation (`interpolateDirRaw` with SLERP)
 
-Direction is computed at each audio block's timestamp by linearly interpolating between spatial keyframes:
+Direction is computed at each audio block's **center** timestamp using **spherical linear interpolation (SLERP)**:
 
 1. Find bracketing keyframes k1 (before t) and k2 (after t)
-2. Interpolate azimuth, elevation, distance
-3. Convert to Cartesian unit vector
-4. Validate (NaN check, magnitude check)
+2. Normalize both keyframe directions to unit vectors
+3. Apply SLERP interpolation on the unit sphere
+4. Validate result (NaN check, magnitude check)
+
+**Why SLERP instead of linear interpolation?**
+
+Linear Cartesian interpolation can create near-zero vectors when keyframes are far apart on the sphere (the interpolated vector passes through the origin). SLERP stays on the unit sphere surface, preventing degenerate directions.
 
 **Edge cases handled**:
 
-- No keyframes → default direction (0, 1, 0)
-- Single keyframe → use that position
+- No keyframes → fallback direction from nearest keyframe
+- Single keyframe → use that position (normalized)
 - Time before first keyframe → use first keyframe
 - Time after last keyframe → use last keyframe
 - Zero-length keyframe interval → snap to k2
 
+### Safe Direction Fallback (`safeDirForSource`)
+
+If interpolation produces an invalid direction:
+
+1. Try **last-good direction** for this source
+2. If no last-good, use **nearest keyframe direction** (by time)
+3. As absolute last resort, use front direction (0, 1, 0)
+
+Warnings are rate-limited (once per source) with reason logged (NaN vs near-zero magnitude).
+
 ### VBAP Rendering
 
-For each audio block (512 samples):
+For each audio block (default 64 samples):
 
 1. Zero the output accumulator
 2. For each source:
    a. Fill source buffer with samples (zero-padded beyond source length)
-   b. Compute direction vector at block time
+   b. Compute direction vector at **block center** time (reduces edge bias)
    c. Call AlloLib's `mVBAP.renderBuffer()` which:
    - Finds optimal speaker triplet for direction
    - Calculates VBAP gains
@@ -225,17 +266,20 @@ For each audio block (512 samples):
 3. Apply master gain
 4. Copy to output buffer
 
-### Time Unit Detection
+### Time Unit Handling
 
-Some ADM parsers output keyframe times in **samples** instead of **seconds**. The renderer auto-detects this:
+**Primary method**: Explicit `timeUnit` field in JSON (see `json_schema_info.md`).
+
+**Legacy fallback**: If `timeUnit` is not specified, heuristic detection is attempted:
 
 ```cpp
-// If maxTime >> durationSec but matches sample count, convert
+// If maxTime >> durationSec but matches sample count, likely samples not seconds
 if (maxTime > durationSec * 10.0 && maxTime <= totalSamples * 1.1) {
-    // Convert from samples to seconds
-    for (auto &kf : keyframes) kf.time /= sampleRate;
+    // Auto-convert with WARNING
 }
 ```
+
+Always specify `timeUnit` in your JSON to avoid warnings and potential misdetection.
 
 ## Common Issues
 
