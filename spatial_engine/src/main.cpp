@@ -42,13 +42,20 @@ void printUsage() {
               << "  --t1 SECONDS          End time in seconds (default: full duration)\n"
               << "  --render_resolution MODE  Render resolution: block or sample (default: block)\n"
               << "  --block_size N        Block size in samples (default: 64, use 256 for faster renders)\n"
+              << "  --elevation_mode MODE Elevation handling: compress or clamp (default: compress)\n"
+              << "  --force_2d            Force 2D mode (flatten all elevations)\n"
               << "  --debug_dir DIR       Output debug diagnostics to directory\n"
               << "  --help                Show this help message\n\n";
     std::cout << "Render Resolutions:\n"
               << "  block  - Direction computed at block center (RECOMMENDED)\n"
               << "           Use small blockSize (32-64) for smooth motion\n"
               << "  sample - Direction computed per sample (very slow, debugging only)\n"
-              << "  smooth - DEPRECATED: may cause artifacts, use 'block' instead\n";
+              << "  smooth - DEPRECATED: may cause artifacts, use 'block' instead\n\n";
+    std::cout << "Elevation Modes:\n"
+              << "  compress - Map full elevation range to layout's speaker coverage (RECOMMENDED)\n"
+              << "             Preserves relative height differences, no signal loss\n"
+              << "  clamp    - Hard clip elevations to speaker bounds\n"
+              << "             May cause 'sticking' at top/bottom\n";
 }
 
 int main(int argc, char *argv[]) {
@@ -104,6 +111,19 @@ int main(int argc, char *argv[]) {
                 std::cerr << "Error: block_size must be between 1 and 8192\n";
                 return 1;
             }
+        } else if (arg == "--elevation_mode") {
+            std::string mode = argv[++i];
+            if (mode == "compress") {
+                config.elevationMode = ElevationMode::Compress;
+            } else if (mode == "clamp") {
+                config.elevationMode = ElevationMode::Clamp;
+            } else {
+                std::cerr << "Error: unknown elevation mode '" << mode << "'\n";
+                std::cerr << "Valid modes: compress, clamp\n";
+                return 1;
+            }
+        } else if (arg == "--force_2d") {
+            config.force2D = true;
         }
     }
 

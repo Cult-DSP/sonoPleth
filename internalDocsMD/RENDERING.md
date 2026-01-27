@@ -76,6 +76,8 @@ And produces:
 | `--t1 SECONDS`             | (end)     | Stop rendering at this time                        |
 | `--render_resolution MODE` | block     | Render mode: `block` (recommended) or `sample`     |
 | `--block_size N`           | 64        | Block size for direction updates (32-256)          |
+| `--elevation_mode MODE`    | compress  | Elevation handling: `compress` or `clamp`          |
+| `--force_2d`               | (off)     | Force 2D mode (flatten all elevations to z=0)      |
 | `--debug_dir DIR`          | (none)    | Output diagnostics to this directory               |
 
 ### Render Resolution Modes
@@ -85,6 +87,17 @@ And produces:
 | `block`  | **Recommended.** Direction computed at block center. Use small block size (32-64) for smooth motion. |
 | `sample` | Direction computed per sample. Very slow, use for debugging only. |
 | `smooth` | **DEPRECATED.** May cause artifacts. Use `block` instead.    |
+
+### Elevation Modes
+
+The speaker layout determines which elevation angles can be reproduced. Directions outside this range (e.g., directly up when the top speaker ring is at 60°) would otherwise be inaudible. The elevation mode controls how out-of-range directions are handled:
+
+| Mode       | Description                                                  |
+| ---------- | ------------------------------------------------------------ |
+| `compress` | **Recommended.** Maps full elevation range [-90°, +90°] to the layout's actual speaker coverage. Preserves relative height differences. No signal loss. |
+| `clamp`    | Hard clips elevations to speaker bounds. May cause "sticking" at top/bottom when sources are at extreme elevations. |
+
+**2D Layout Detection**: If the speaker layout has < 3° of elevation spread, it's automatically treated as 2D and all elevations are flattened to the horizontal plane. Use `--force_2d` to force this behavior for testing.
 
 ### Examples
 
@@ -113,6 +126,22 @@ And produces:
   --out segment.wav \
   --t0 10.0 --t1 20.0 \
   --master_gain 1.0
+
+# Use clamp mode for elevation handling
+./sonoPleth_vbap_render \
+  --layout allosphere_layout.json \
+  --positions renderInstructions.json \
+  --sources ./stems/ \
+  --out render_clamped.wav \
+  --elevation_mode clamp
+
+# Force 2D rendering (flatten all elevations)
+./sonoPleth_vbap_render \
+  --layout allosphere_layout.json \
+  --positions renderInstructions.json \
+  --sources ./stems/ \
+  --out render_2d.wav \
+  --force_2d
 ```
 
 ## Spatial Trajectory JSON Format
@@ -192,6 +221,13 @@ struct RenderConfig {
     std::string debugOutputDir = "";    // Where to write diagnostics
     std::string renderResolution = "block";  // "block" (recommended) or "sample"
     int blockSize = 64;                 // Direction update interval (samples)
+    ElevationMode elevationMode = ElevationMode::Compress;  // How to handle out-of-range elevations
+    bool force2D = false;               // Force 2D mode (flatten all elevations)
+};
+
+enum class ElevationMode {
+    Clamp,    // Hard clip elevation to layout bounds
+    Compress  // Map full sphere to layout's elevation range (recommended)
 };
 ```
 
@@ -211,7 +247,20 @@ Render Statistics:
   Near-silent channels (< -85 dBFS): 0/54
   Clipping channels (peak > 1.0): 0
   Channels with NaN: 0
+
+Direction Sanitization Summary:
+  Layout type: 3D
+  Elevation range: [-45.0°, 60.0°]
+  Clamped elevations: 0
+  Compressed elevations: 12847
+  Invalid/fallback directions: 0
 ```
+
+The **Direction Sanitization Summary** shows:
+- **Layout type**: Whether the layout is treated as 2D or 3D
+- **Elevation range**: The min/max speaker elevations detected from the layout
+- **Clamped/Compressed elevations**: How many directions were adjusted to fit the layout
+- **Invalid/fallback directions**: Degenerate directions that needed fallback handling
 
 If `--debug_dir` is specified, detailed stats are written to:
 
@@ -251,6 +300,26 @@ If interpolation produces an invalid direction:
 
 Warnings are rate-limited (once per source) with reason logged (NaN vs near-zero magnitude).
 
+### Direction Sanitization (`sanitizeDirForLayout`)
+
+After direction interpolation, directions are **sanitized** to fit within the speaker layout's representable range. This prevents sources from becoming inaudible when their directions fall outside the layout's elevation coverage.
+
+**For 3D layouts:**
+1. Convert direction to spherical coordinates (azimuth, elevation)
+2. Apply elevation mode:
+   - **Compress**: Map elevation from [-90°, +90°] to [minEl, maxEl]
+   - **Clamp**: Hard clip elevation to [minEl, maxEl]
+3. Convert back to Cartesian unit vector
+
+**For 2D layouts** (elevation span < 3°):
+- Flatten direction to z=0 (horizontal plane)
+- Re-normalize to unit vector
+
+**Layout bounds** are computed automatically from speaker positions at startup:
+```
+Layout elevation range: [-45.0°, 60.0°] (span: 105.0°)
+```
+
 ### VBAP Rendering
 
 For each audio block (default 64 samples):
@@ -282,6 +351,16 @@ if (maxTime > durationSec * 10.0 && maxTime <= totalSamples * 1.1) {
 Always specify `timeUnit` in your JSON to avoid warnings and potential misdetection.
 
 ## Common Issues
+
+### "Missing stems" / Sources cutting out
+
+**Cause**: Source directions are outside the speaker layout's elevation coverage. VBAP cannot reproduce directions that fall outside the speaker hull.
+
+**Fix**: The renderer now automatically sanitizes directions:
+- Use `--elevation_mode compress` (default) to map all elevations to the layout's range
+- Check the "Direction Sanitization Summary" in render output
+- High "Compressed elevations" count indicates many out-of-range directions were adjusted
+- For height-only sources, the compressed elevation preserves relative up/down motion
 
 ### "Zero output" / Silent channels
 

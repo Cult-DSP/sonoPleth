@@ -43,6 +43,28 @@ VBAPRenderer::VBAPRenderer(const SpeakerLayoutData &layout,
         ));
     }
     
+    // Compute layout elevation bounds from speaker positions (in radians)
+    // This determines the range of elevations the layout can reproduce
+    mLayoutMinElRad =  1e9f;
+    mLayoutMaxElRad = -1e9f;
+    for (const auto& spk : layout.speakers) {
+        mLayoutMinElRad = std::min(mLayoutMinElRad, spk.elevation);
+        mLayoutMaxElRad = std::max(mLayoutMaxElRad, spk.elevation);
+    }
+    mLayoutElSpanRad = mLayoutMaxElRad - mLayoutMinElRad;
+    
+    // Detect "effectively 2D" layouts (elevation span < 3 degrees)
+    const float twoDThreshRad = 3.0f * float(M_PI) / 180.0f;
+    mLayoutIs2D = (mLayoutElSpanRad < twoDThreshRad);
+    
+    std::cout << "Layout elevation range: [" 
+              << (mLayoutMinElRad * 180.0f / M_PI) << "°, " 
+              << (mLayoutMaxElRad * 180.0f / M_PI) << "°] "
+              << "(span: " << (mLayoutElSpanRad * 180.0f / M_PI) << "°)\n";
+    if (mLayoutIs2D) {
+        std::cout << "Layout detected as 2D (elevation span < 3°) - will flatten directions\n";
+    }
+    
     // compile builds the speaker triplet mesh for VBAP algorithm
     // this finds all valid triangles of 3 speakers that can spatialize sound
     mVBAP = al::Vbap(mSpeakers, true);
@@ -54,6 +76,9 @@ void VBAPRenderer::resetPerRenderState() {
     mLastGoodDir.clear();
     mWarnedDegenerate.clear();
     mFallbackCount.clear();
+    
+    // Reset direction sanitization diagnostics
+    mDirDiag = DirDiag();
 }
 
 // Safe normalize: returns fallback if input is degenerate
@@ -63,6 +88,78 @@ al::Vec3f VBAPRenderer::safeNormalize(const al::Vec3f& v) {
         return al::Vec3f(0.0f, 1.0f, 0.0f);  // fallback: front
     }
     return v / mag;
+}
+
+// Sanitize direction to fit within speaker layout's representable range
+// This prevents sources from becoming inaudible due to out-of-range directions
+al::Vec3f VBAPRenderer::sanitizeDirForLayout(const al::Vec3f& v, ElevationMode mode) {
+    al::Vec3f d = safeNormalize(v);
+    float mag = d.mag();
+    
+    // Handle degenerate input
+    if (!std::isfinite(mag) || mag < 1e-6f) {
+        mDirDiag.invalidDir++;
+        return al::Vec3f(0.0f, 1.0f, 0.0f);  // fallback: front
+    }
+    
+    // 2D layout: flatten elevation to z=0
+    if (mLayoutIs2D) {
+        if (std::abs(d.z) > 1e-6f) {
+            mDirDiag.flattened2D++;
+        }
+        d.z = 0.0f;
+        return safeNormalize(d);
+    }
+    
+    // 3D layout: convert to spherical coordinates (y-forward convention)
+    // az: azimuth angle in horizontal plane, measured from +y axis
+    // el: elevation angle from horizontal plane
+    float az = std::atan2(d.x, d.y);
+    float el = std::asin(std::clamp(d.z, -1.0f, 1.0f));
+    
+    float el2 = el;
+    
+    if (mode == ElevationMode::Clamp) {
+        // Hard clip elevation to layout bounds
+        float clamped = std::clamp(el, mLayoutMinElRad, mLayoutMaxElRad);
+        if (clamped != el) {
+            mDirDiag.clampedEl++;
+        }
+        el2 = clamped;
+    } else {
+        // Compress: map full elevation range [-pi/2, +pi/2] to layout's [minEl, maxEl]
+        // t in [0,1] represents normalized position in full elevation range
+        float t = (el + float(M_PI) / 2.0f) / float(M_PI);
+        t = std::clamp(t, 0.0f, 1.0f);
+        float mapped = mLayoutMinElRad + t * mLayoutElSpanRad;
+        if (std::abs(mapped - el) > 1e-5f) {
+            mDirDiag.compressedEl++;
+        }
+        el2 = mapped;
+    }
+    
+    // Convert back to Cartesian coordinates
+    float c = std::cos(el2);
+    al::Vec3f out(std::sin(az) * c, std::cos(az) * c, std::sin(el2));
+    return safeNormalize(out);
+}
+
+// Print direction sanitization summary at end of render
+void VBAPRenderer::printSanitizationSummary() {
+    std::cout << "\nDirection Sanitization Summary:\n";
+    std::cout << "  Layout type: " << (mLayoutIs2D ? "2D" : "3D") << "\n";
+    std::cout << "  Elevation range: [" 
+              << std::fixed << std::setprecision(1) 
+              << (mLayoutMinElRad * 180.0f / M_PI) << "°, " 
+              << (mLayoutMaxElRad * 180.0f / M_PI) << "°]\n";
+    
+    if (mLayoutIs2D) {
+        std::cout << "  Flattened to plane: " << mDirDiag.flattened2D << " directions\n";
+    } else {
+        std::cout << "  Clamped elevations: " << mDirDiag.clampedEl << "\n";
+        std::cout << "  Compressed elevations: " << mDirDiag.compressedEl << "\n";
+    }
+    std::cout << "  Invalid/fallback directions: " << mDirDiag.invalidDir << "\n";
 }
 
 // Spherical linear interpolation between two unit vectors
@@ -365,6 +462,13 @@ MultiWavData VBAPRenderer::render() {
 MultiWavData VBAPRenderer::render(const RenderConfig &config) {
     int sr = mSpatial.sampleRate;
     int numSpeakers = mLayout.speakers.size();
+    
+    // Apply force2D mode if requested via config
+    bool originalIs2D = mLayoutIs2D;
+    if (config.force2D && !mLayoutIs2D) {
+        mLayoutIs2D = true;
+        std::cout << "FORCE_2D: Treating layout as 2D (all elevations will be flattened)\n";
+    }
 
     size_t totalSamples = 0;
     for (auto &[name, wav] : mSources) {
@@ -399,6 +503,7 @@ MultiWavData VBAPRenderer::render(const RenderConfig &config) {
               << numSpeakers << " speakers from " << mSources.size() << " sources\n";
     std::cout << "  Master gain: " << config.masterGain << "\n";
     std::cout << "  Render resolution: " << config.renderResolution << " (block size: " << config.blockSize << ")\n";
+    std::cout << "  Elevation mode: " << (config.elevationMode == ElevationMode::Compress ? "compress" : "clamp") << "\n";
     
     if (!config.soloSource.empty()) {
         std::cout << "  SOLO MODE: Only rendering source '" << config.soloSource << "'\n";
@@ -507,6 +612,9 @@ MultiWavData VBAPRenderer::render(const RenderConfig &config) {
     // Print fallback summary (shows which sources had degenerate directions)
     printFallbackSummary(totalBlocks);
     
+    // Print direction sanitization summary
+    printSanitizationSummary();
+    
     // Write statistics to JSON if diagnostics enabled
     if (config.debugDiagnostics) {
         fs::create_directories(config.debugOutputDir);
@@ -539,6 +647,9 @@ MultiWavData VBAPRenderer::render(const RenderConfig &config) {
         statsFile.close();
         std::cout << "  Debug stats written to " << config.debugOutputDir << "/\n";
     }
+    
+    // Restore original layout 2D setting if it was overridden
+    mLayoutIs2D = originalIs2D;
     
     std::cout << "\n";
     return out;
@@ -590,7 +701,10 @@ void VBAPRenderer::renderPerBlock(MultiWavData &out, const RenderConfig &config,
             
             // Direction computed at block CENTER (reduces edge jitter and systematic bias)
             double timeSec = (double)(blockStart + blockLen / 2) / (double)sr;
-            al::Vec3f dir = safeDirForSource(name, kfs, timeSec);
+            al::Vec3f rawDir = safeDirForSource(name, kfs, timeSec);
+            
+            // Sanitize direction to fit within speaker layout's representable range
+            al::Vec3f dir = sanitizeDirForLayout(rawDir, config.elevationMode);
             
             audioIO.frame(0);
             mVBAP.renderBuffer(audioIO, dir, sourceBuffer.data(), blockLen);
@@ -646,8 +760,12 @@ void VBAPRenderer::renderSmooth(MultiWavData &out, const RenderConfig &config,
             double timeStart = (double)blockStart / (double)sr;
             double timeEnd = (double)blockEnd / (double)sr;
             
-            al::Vec3f dirStart = safeDirForSource(name, kfs, timeStart);
-            al::Vec3f dirEnd = safeDirForSource(name, kfs, timeEnd);
+            al::Vec3f rawDirStart = safeDirForSource(name, kfs, timeStart);
+            al::Vec3f rawDirEnd = safeDirForSource(name, kfs, timeEnd);
+            
+            // Sanitize directions to fit within speaker layout's representable range
+            al::Vec3f dirStart = sanitizeDirForLayout(rawDirStart, config.elevationMode);
+            al::Vec3f dirEnd = sanitizeDirForLayout(rawDirEnd, config.elevationMode);
             
             // Compute VBAP gains at both ends
             computeVBAPGains(dirStart, gainsStart);
@@ -710,7 +828,10 @@ void VBAPRenderer::renderPerSample(MultiWavData &out, const RenderConfig &config
             float inputSample = (sampleIdx < src.samples.size()) ? src.samples[sampleIdx] : 0.0f;
             
             // Compute direction at exact sample time
-            al::Vec3f dir = safeDirForSource(name, kfs, timeSec);
+            al::Vec3f rawDir = safeDirForSource(name, kfs, timeSec);
+            
+            // Sanitize direction to fit within speaker layout's representable range
+            al::Vec3f dir = sanitizeDirForLayout(rawDir, config.elevationMode);
             computeVBAPGains(dir, gains);
             
             // Accumulate into output

@@ -23,6 +23,7 @@
 
 #pragma once
 
+#include <cstdint>
 #include <map>
 #include <string>
 #include <vector>
@@ -35,6 +36,12 @@
 #include "../JSONLoader.hpp"
 #include "../LayoutLoader.hpp"
 #include "../WavUtils.hpp"
+
+// Elevation handling mode for directions outside speaker layout coverage
+enum class ElevationMode {
+    Clamp,    // Hard clip elevation to layout bounds (may cause "sticking" at extremes)
+    Compress  // Compress full [-pi/2, +pi/2] into layout's [minEl, maxEl] (recommended)
+};
 
 // Render configuration options
 struct RenderConfig {
@@ -56,6 +63,14 @@ struct RenderConfig {
     
     std::string renderResolution = "block";
     int blockSize = 64;  // Recommended: 64 for quality, 256 for speed
+    
+    // Elevation mode for directions outside speaker layout coverage
+    // Compress is recommended: maps full sphere to available elevation range
+    // Clamp clips to bounds (may cause "sticking" at top/bottom)
+    ElevationMode elevationMode = ElevationMode::Compress;
+    
+    // Force 2D mode (flatten all elevations to z=0) - useful for testing
+    bool force2D = false;
 };
 
 // Render statistics for diagnostics
@@ -106,6 +121,20 @@ private:
     // Statistics from last render
     RenderStats mLastStats;
     
+    // Layout-derived elevation constraints (computed from speaker positions)
+    float mLayoutMinElRad = -1.5707963f;   // min elevation in radians (default: -pi/2)
+    float mLayoutMaxElRad =  1.5707963f;   // max elevation in radians (default: +pi/2)
+    float mLayoutElSpanRad = 3.1415926f;   // elevation span (maxEl - minEl)
+    bool  mLayoutIs2D = false;             // true if layout has negligible elevation spread
+    
+    // Direction sanitization diagnostics
+    struct DirDiag {
+        uint64_t clampedEl = 0;      // directions where elevation was clamped
+        uint64_t compressedEl = 0;   // directions where elevation was compressed
+        uint64_t flattened2D = 0;    // directions flattened to plane (2D mode)
+        uint64_t invalidDir = 0;     // degenerate directions that needed fallback
+    } mDirDiag;
+    
     // Per-source direction tracking for safe fallback
     // These are reset at start of each render
     std::unordered_map<std::string, al::Vec3f> mLastGoodDir;
@@ -119,6 +148,12 @@ private:
     
     // Helper: compute unit direction from Cartesian (safe, validates output)
     static al::Vec3f safeNormalize(const al::Vec3f& v);
+    
+    // Sanitize direction to fit within speaker layout's representable range
+    // - 2D layouts: flatten elevation to z=0
+    // - 3D layouts: clamp or compress elevation to [mLayoutMinElRad, mLayoutMaxElRad]
+    // This prevents sources from becoming inaudible due to out-of-range directions
+    al::Vec3f sanitizeDirForLayout(const al::Vec3f& unitDir, ElevationMode mode);
     
     // Get safe direction for a source, using last-good or fallback if invalid
     // This is the main entry point for direction computation in the render loop
@@ -138,6 +173,9 @@ private:
     
     // Print end-of-render fallback summary
     void printFallbackSummary(int totalBlocks);
+    
+    // Print direction sanitization summary
+    void printSanitizationSummary();
 
     // Render implementations
     void renderPerBlock(MultiWavData &out, const RenderConfig &config,

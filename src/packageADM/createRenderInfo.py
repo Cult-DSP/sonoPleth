@@ -219,7 +219,8 @@ def createRenderInfoJSON(processed_dir="processedData", output_path="processedDa
         for block in blocks:
             time_seconds = parseTimecodeToSeconds(block.get('rtime', '00:00:00.00000'))
             position_list.append({
-                "time": round(time_seconds, 2),
+                "time":  #round(time_seconds, 4)
+                time_seconds,
                 "cart": [
                     block.get('x', 0.0),
                     block.get('y', 0.0),
