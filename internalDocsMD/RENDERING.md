@@ -254,6 +254,13 @@ Direction Sanitization Summary:
   Clamped elevations: 0
   Compressed elevations: 12847
   Invalid/fallback directions: 0
+
+VBAP Robustness Summary:
+  Total zero-output blocks detected: 0
+  Total retargets to nearest speaker: 0
+  Total sub-stepped blocks (fast motion): 23
+  Fast-mover sources (top 5):
+    source_orbital: 23 sub-stepped blocks
 ```
 
 The **Direction Sanitization Summary** shows:
@@ -261,6 +268,11 @@ The **Direction Sanitization Summary** shows:
 - **Elevation range**: The min/max speaker elevations detected from the layout
 - **Clamped/Compressed elevations**: How many directions were adjusted to fit the layout
 - **Invalid/fallback directions**: Degenerate directions that needed fallback handling
+
+The **VBAP Robustness Summary** shows:
+- **Zero-output blocks**: Blocks where VBAP produced silence despite input (coverage gaps)
+- **Retargets**: How many times the renderer fell back to nearest speaker
+- **Sub-stepped blocks**: Blocks that were subdivided due to fast source motion
 
 If `--debug_dir` is specified, detailed stats are written to:
 
@@ -319,6 +331,53 @@ After direction interpolation, directions are **sanitized** to fit within the sp
 ```
 Layout elevation range: [-45.0°, 60.0°] (span: 105.0°)
 ```
+
+### VBAP Robustness Features (Added 2026-01-27)
+
+The renderer includes several robustness features to prevent audio dropouts:
+
+#### Zero-Block Detection and Fallback
+
+VBAP can produce near-zero output when a direction falls outside the speaker hull or in a coverage gap. The renderer detects this and automatically retargets to the nearest speaker:
+
+1. **Input energy test**: Skip expensive checks for silent blocks
+2. **Render to temp buffer**: Measure VBAP output energy
+3. **Detect failure**: If output is ~silent despite input energy, VBAP failed
+4. **Retarget**: Use direction 90% toward nearest speaker (stays inside hull)
+
+#### Fast-Mover Sub-Stepping
+
+Sources that move very fast can "blink" out when direction changes significantly within a single block. The renderer detects this and subdivides:
+
+1. **Measure angular delta**: Sample directions at 25% and 75% through block
+2. **Threshold check**: If angle > ~14° (0.25 rad), block is "fast"
+3. **Sub-step render**: Render in 16-sample chunks with per-chunk direction
+
+#### Diagnostics Output
+
+```
+VBAP Robustness Summary:
+  Total zero-output blocks detected: 47
+  Total retargets to nearest speaker: 47
+  Total sub-stepped blocks (fast motion): 1203
+  Zero-block sources (top 5):
+    source_height_only: 35 blocks
+    source_moving_up: 12 blocks
+  Fast-mover sources (top 5):
+    source_spinning: 892 sub-stepped blocks
+    source_orbital: 311 sub-stepped blocks
+```
+
+#### Tuning Constants
+
+These are compile-time constants (developer-tunable, may become config options in future):
+
+| Constant | Default | Description |
+|----------|---------|-------------|
+| `kInputEnergyThreshold` | 1e-4 | Per-sample threshold for "has input energy" |
+| `kVBAPZeroThreshold` | 1e-6 | Output sum threshold for "VBAP failed" |
+| `kFastMoverAngleRad` | 0.25 | ~14° - triggers sub-stepping |
+| `kSubStepHop` | 16 | Sub-step size in samples |
 
 ### VBAP Rendering
 

@@ -135,6 +135,26 @@ private:
         uint64_t invalidDir = 0;     // degenerate directions that needed fallback
     } mDirDiag;
     
+    // VBAP rendering diagnostics (per-render, reset at start)
+    struct VBAPDiag {
+        std::unordered_map<std::string, uint64_t> zeroBlocks;      // blocks where VBAP produced ~silence despite input
+        std::unordered_map<std::string, uint64_t> retargetBlocks;  // blocks retargeted to nearest speaker
+        std::unordered_map<std::string, uint64_t> substeppedBlocks; // blocks that needed sub-stepping (fast motion)
+        uint64_t totalZeroBlocks = 0;
+        uint64_t totalRetargets = 0;
+        uint64_t totalSubsteps = 0;
+    } mVBAPDiag;
+    
+    // Precomputed speaker unit directions (for nearest-speaker fallback)
+    std::vector<al::Vec3f> mSpeakerDirs;
+    
+    // Compile-time constants for VBAP robustness (developer tunable)
+    // FUTURE OPTIMIZATION: These could become RenderConfig parameters
+    static constexpr float kInputEnergyThreshold = 1e-4f;   // per-sample threshold for "has energy"
+    static constexpr float kVBAPZeroThreshold = 1e-6f;      // output sum threshold for "VBAP failed"
+    static constexpr float kFastMoverAngleRad = 0.25f;      // ~14 degrees - triggers sub-stepping
+    static constexpr int kSubStepHop = 16;                  // sub-step size for fast movers
+    
     // Per-source direction tracking for safe fallback
     // These are reset at start of each render
     std::unordered_map<std::string, al::Vec3f> mLastGoodDir;
@@ -176,6 +196,13 @@ private:
     
     // Print direction sanitization summary
     void printSanitizationSummary();
+    
+    // Print VBAP diagnostics summary (zero blocks, retargets, substeps)
+    void printVBAPDiagSummary();
+    
+    // Find nearest speaker direction for fallback when VBAP fails
+    // Returns direction slightly inside hull (90% toward speaker) for proper triangulation
+    al::Vec3f nearestSpeakerDir(const al::Vec3f& dir);
 
     // Render implementations
     void renderPerBlock(MultiWavData &out, const RenderConfig &config,

@@ -65,6 +65,19 @@ VBAPRenderer::VBAPRenderer(const SpeakerLayoutData &layout,
         std::cout << "Layout detected as 2D (elevation span < 3°) - will flatten directions\n";
     }
     
+    // Precompute speaker unit directions for nearest-speaker fallback
+    // Used when VBAP produces zero output for a direction (coverage gaps)
+    mSpeakerDirs.resize(layout.speakers.size());
+    for (size_t i = 0; i < layout.speakers.size(); i++) {
+        const auto& spk = layout.speakers[i];
+        float cosEl = std::cos(spk.elevation);
+        mSpeakerDirs[i] = al::Vec3f(
+            std::sin(spk.azimuth) * cosEl,
+            std::cos(spk.azimuth) * cosEl,
+            std::sin(spk.elevation)
+        ).normalize();
+    }
+    
     // compile builds the speaker triplet mesh for VBAP algorithm
     // this finds all valid triangles of 3 speakers that can spatialize sound
     mVBAP = al::Vbap(mSpeakers, true);
@@ -79,6 +92,9 @@ void VBAPRenderer::resetPerRenderState() {
     
     // Reset direction sanitization diagnostics
     mDirDiag = DirDiag();
+    
+    // Reset VBAP diagnostics
+    mVBAPDiag = VBAPDiag();
 }
 
 // Safe normalize: returns fallback if input is degenerate
@@ -160,6 +176,75 @@ void VBAPRenderer::printSanitizationSummary() {
         std::cout << "  Compressed elevations: " << mDirDiag.compressedEl << "\n";
     }
     std::cout << "  Invalid/fallback directions: " << mDirDiag.invalidDir << "\n";
+}
+
+// Find nearest speaker direction for VBAP fallback
+// Returns direction 90% toward the nearest speaker to stay inside the hull
+al::Vec3f VBAPRenderer::nearestSpeakerDir(const al::Vec3f& dir) {
+    if (mSpeakerDirs.empty()) {
+        return al::Vec3f(0.0f, 1.0f, 0.0f);  // fallback: front
+    }
+    
+    float maxDot = -2.0f;
+    size_t bestIdx = 0;
+    
+    for (size_t i = 0; i < mSpeakerDirs.size(); i++) {
+        float d = dir.dot(mSpeakerDirs[i]);
+        if (d > maxDot) {
+            maxDot = d;
+            bestIdx = i;
+        }
+    }
+    
+    // Return direction 90% toward the speaker to stay inside hull
+    // This ensures VBAP can still find a valid triplet
+    al::Vec3f spkDir = mSpeakerDirs[bestIdx];
+    al::Vec3f blended = dir * 0.1f + spkDir * 0.9f;
+    return safeNormalize(blended);
+}
+
+// Print VBAP diagnostics summary (zero blocks, retargets, substeps)
+void VBAPRenderer::printVBAPDiagSummary() {
+    std::cout << "\nVBAP Robustness Summary:\n";
+    
+    if (mVBAPDiag.totalZeroBlocks == 0 && mVBAPDiag.totalRetargets == 0 && mVBAPDiag.totalSubsteps == 0) {
+        std::cout << "  All blocks rendered normally (no VBAP failures or fast motion detected)\n";
+        return;
+    }
+    
+    std::cout << "  Total zero-output blocks detected: " << mVBAPDiag.totalZeroBlocks << "\n";
+    std::cout << "  Total retargets to nearest speaker: " << mVBAPDiag.totalRetargets << "\n";
+    std::cout << "  Total sub-stepped blocks (fast motion): " << mVBAPDiag.totalSubsteps << "\n";
+    
+    // Show top offenders for zero blocks
+    if (!mVBAPDiag.zeroBlocks.empty()) {
+        std::vector<std::pair<std::string, uint64_t>> sorted(
+            mVBAPDiag.zeroBlocks.begin(), mVBAPDiag.zeroBlocks.end());
+        std::sort(sorted.begin(), sorted.end(),
+                  [](const auto& a, const auto& b) { return a.second > b.second; });
+        
+        std::cout << "  Zero-block sources (top 5):\n";
+        int shown = 0;
+        for (const auto& [name, count] : sorted) {
+            if (shown++ >= 5) break;
+            std::cout << "    " << name << ": " << count << " blocks\n";
+        }
+    }
+    
+    // Show top offenders for substeps
+    if (!mVBAPDiag.substeppedBlocks.empty()) {
+        std::vector<std::pair<std::string, uint64_t>> sorted(
+            mVBAPDiag.substeppedBlocks.begin(), mVBAPDiag.substeppedBlocks.end());
+        std::sort(sorted.begin(), sorted.end(),
+                  [](const auto& a, const auto& b) { return a.second > b.second; });
+        
+        std::cout << "  Fast-mover sources (top 5):\n";
+        int shown = 0;
+        for (const auto& [name, count] : sorted) {
+            if (shown++ >= 5) break;
+            std::cout << "    " << name << ": " << count << " sub-stepped blocks\n";
+        }
+    }
 }
 
 // Spherical linear interpolation between two unit vectors
@@ -615,6 +700,9 @@ MultiWavData VBAPRenderer::render(const RenderConfig &config) {
     // Print direction sanitization summary
     printSanitizationSummary();
     
+    // Print VBAP robustness summary (zero blocks, retargets, substeps)
+    printVBAPDiagSummary();
+    
     // Write statistics to JSON if diagnostics enabled
     if (config.debugDiagnostics) {
         fs::create_directories(config.debugOutputDir);
@@ -656,6 +744,16 @@ MultiWavData VBAPRenderer::render(const RenderConfig &config) {
 }
 
 // renderPerBlock: Direction computed at block center (reduces stepping artifacts)
+// 
+// ROBUSTNESS FEATURES (added 2026-01-27):
+// 1. Input energy detection - skip expensive checks for silent blocks
+// 2. VBAP zero-block detection - detect when VBAP produces ~silence despite input
+// 3. Nearest-speaker fallback - retarget to nearest speaker when VBAP fails
+// 4. Fast-mover sub-stepping - subdivide blocks when direction changes too fast
+//
+// FUTURE OPTIMIZATION: The temp buffer allocation and per-source energy checks
+// add overhead. Profile and optimize if needed - currently prioritizing correctness.
+//
 void VBAPRenderer::renderPerBlock(MultiWavData &out, const RenderConfig &config,
                                    size_t startSample, size_t endSample) {
     int sr = mSpatial.sampleRate;
@@ -663,12 +761,20 @@ void VBAPRenderer::renderPerBlock(MultiWavData &out, const RenderConfig &config,
     int bufferSize = config.blockSize;
     size_t renderSamples = endSample - startSample;
     
-    // Initialize AudioIOData for VBAP
+    // Initialize AudioIOData for VBAP (main accumulator)
     al::AudioIOData audioIO;
     audioIO.framesPerBuffer(bufferSize);
     audioIO.framesPerSecond(sr);
     audioIO.channelsIn(0);
     audioIO.channelsOut(numSpeakers);
+    
+    // Temp buffer for VBAP failure detection and retargeting
+    // FUTURE OPTIMIZATION: Could use lazy allocation, only create when first needed
+    al::AudioIOData audioTemp;
+    audioTemp.framesPerBuffer(bufferSize);
+    audioTemp.framesPerSecond(sr);
+    audioTemp.channelsIn(0);
+    audioTemp.channelsOut(numSpeakers);
     
     std::vector<float> sourceBuffer(bufferSize, 0.0f);
     
@@ -693,21 +799,147 @@ void VBAPRenderer::renderPerBlock(MultiWavData &out, const RenderConfig &config,
             if (srcIt == mSources.end()) continue;
             const MonoWavData &src = srcIt->second;
             
+            // Fill source buffer
             std::fill(sourceBuffer.begin(), sourceBuffer.end(), 0.0f);
             for (size_t i = 0; i < blockLen; i++) {
                 size_t globalIdx = blockStart + i;
                 sourceBuffer[i] = (globalIdx < src.samples.size()) ? src.samples[globalIdx] : 0.0f;
             }
             
-            // Direction computed at block CENTER (reduces edge jitter and systematic bias)
-            double timeSec = (double)(blockStart + blockLen / 2) / (double)sr;
-            al::Vec3f rawDir = safeDirForSource(name, kfs, timeSec);
+            // Task A1: Compute input energy - skip expensive checks for silent blocks
+            float inAbsSum = 0.0f;
+            for (size_t i = 0; i < blockLen; i++) {
+                inAbsSum += std::abs(sourceBuffer[i]);
+            }
+            float inputThreshold = kInputEnergyThreshold * blockLen;
+            bool hasInputEnergy = (inAbsSum >= inputThreshold);
             
-            // Sanitize direction to fit within speaker layout's representable range
-            al::Vec3f dir = sanitizeDirForLayout(rawDir, config.elevationMode);
+            // Skip silent sources entirely (no VBAP needed)
+            if (!hasInputEnergy) {
+                continue;
+            }
             
-            audioIO.frame(0);
-            mVBAP.renderBuffer(audioIO, dir, sourceBuffer.data(), blockLen);
+            // Task B1: Measure angular delta for fast-mover detection
+            // Sample directions at 25% and 75% through the block
+            double t0 = (double)(blockStart + blockLen / 4) / (double)sr;
+            double t1 = (double)(blockStart + 3 * blockLen / 4) / (double)sr;
+            
+            al::Vec3f rawDir0 = safeDirForSource(name, kfs, t0);
+            al::Vec3f rawDir1 = safeDirForSource(name, kfs, t1);
+            al::Vec3f dir0 = sanitizeDirForLayout(rawDir0, config.elevationMode);
+            al::Vec3f dir1 = sanitizeDirForLayout(rawDir1, config.elevationMode);
+            
+            float dotVal = std::clamp(dir0.dot(dir1), -1.0f, 1.0f);
+            float angleDelta = std::acos(dotVal);
+            
+            bool isFastMover = (angleDelta > kFastMoverAngleRad);
+            
+            // Task B2: Sub-step rendering for fast movers
+            if (isFastMover) {
+                mVBAPDiag.substeppedBlocks[name]++;
+                mVBAPDiag.totalSubsteps++;
+                
+                // Render in smaller chunks with direction computed per chunk
+                for (size_t off = 0; off < blockLen; off += kSubStepHop) {
+                    size_t len = std::min((size_t)kSubStepHop, blockLen - off);
+                    double tSub = (double)(blockStart + off + len / 2) / (double)sr;
+                    
+                    al::Vec3f rawDirSub = safeDirForSource(name, kfs, tSub);
+                    al::Vec3f dirSub = sanitizeDirForLayout(rawDirSub, config.elevationMode);
+                    
+                    // Render sub-chunk into temp buffer for zero-detection
+                    audioTemp.zeroOut();
+                    audioTemp.frame(0);
+                    mVBAP.renderBuffer(audioTemp, dirSub, sourceBuffer.data() + off, len);
+                    
+                    // Check for VBAP failure on this sub-chunk
+                    float outAbsSum = 0.0f;
+                    audioTemp.frame(0);
+                    for (size_t i = 0; i < len; i++) {
+                        for (int ch = 0; ch < numSpeakers; ch++) {
+                            outAbsSum += std::abs(audioTemp.out(ch, i));
+                        }
+                    }
+                    
+                    // Compute sub-chunk input energy
+                    float subInAbsSum = 0.0f;
+                    for (size_t i = 0; i < len; i++) {
+                        subInAbsSum += std::abs(sourceBuffer[off + i]);
+                    }
+                    float subThreshold = kInputEnergyThreshold * len;
+                    
+                    // Task A3: If VBAP failed, retarget to nearest speaker
+                    if (subInAbsSum >= subThreshold && outAbsSum < kVBAPZeroThreshold * len * numSpeakers) {
+                        mVBAPDiag.zeroBlocks[name]++;
+                        mVBAPDiag.totalZeroBlocks++;
+                        
+                        al::Vec3f dirFallback = nearestSpeakerDir(dirSub);
+                        audioTemp.zeroOut();
+                        audioTemp.frame(0);
+                        mVBAP.renderBuffer(audioTemp, dirFallback, sourceBuffer.data() + off, len);
+                        
+                        mVBAPDiag.retargetBlocks[name]++;
+                        mVBAPDiag.totalRetargets++;
+                    }
+                    
+                    // Accumulate sub-chunk into main buffer
+                    audioTemp.frame(0);
+                    audioIO.frame(0);
+                    for (size_t i = 0; i < len; i++) {
+                        for (int ch = 0; ch < numSpeakers; ch++) {
+                            // Note: audioIO.out returns reference, so we can += directly
+                            // But we need to read current value and write back
+                            float current = audioIO.out(ch, off + i);
+                            float addition = audioTemp.out(ch, i);
+                            audioIO.out(ch, off + i) = current + addition;
+                        }
+                    }
+                }
+            } else {
+                // Normal path: single direction for entire block
+                double timeSec = (double)(blockStart + blockLen / 2) / (double)sr;
+                al::Vec3f rawDir = safeDirForSource(name, kfs, timeSec);
+                al::Vec3f dir = sanitizeDirForLayout(rawDir, config.elevationMode);
+                
+                // Task A2: Render into temp buffer to detect VBAP failure
+                audioTemp.zeroOut();
+                audioTemp.frame(0);
+                mVBAP.renderBuffer(audioTemp, dir, sourceBuffer.data(), blockLen);
+                
+                // Measure output energy
+                float outAbsSum = 0.0f;
+                audioTemp.frame(0);
+                for (size_t i = 0; i < blockLen; i++) {
+                    for (int ch = 0; ch < numSpeakers; ch++) {
+                        outAbsSum += std::abs(audioTemp.out(ch, i));
+                    }
+                }
+                
+                // Task A3: If VBAP produced ~silence despite input, retarget
+                if (outAbsSum < kVBAPZeroThreshold * blockLen * numSpeakers) {
+                    mVBAPDiag.zeroBlocks[name]++;
+                    mVBAPDiag.totalZeroBlocks++;
+                    
+                    al::Vec3f dirFallback = nearestSpeakerDir(dir);
+                    audioTemp.zeroOut();
+                    audioTemp.frame(0);
+                    mVBAP.renderBuffer(audioTemp, dirFallback, sourceBuffer.data(), blockLen);
+                    
+                    mVBAPDiag.retargetBlocks[name]++;
+                    mVBAPDiag.totalRetargets++;
+                }
+                
+                // Accumulate into main buffer
+                audioTemp.frame(0);
+                audioIO.frame(0);
+                for (size_t i = 0; i < blockLen; i++) {
+                    for (int ch = 0; ch < numSpeakers; ch++) {
+                        float current = audioIO.out(ch, i);
+                        float addition = audioTemp.out(ch, i);
+                        audioIO.out(ch, i) = current + addition;
+                    }
+                }
+            }
         }
         
         // Copy output with gain
