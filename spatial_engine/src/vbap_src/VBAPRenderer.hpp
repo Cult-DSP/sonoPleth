@@ -42,7 +42,7 @@ struct RenderConfig {
     std::string soloSource = "";    // If non-empty, only render this source
     double t0 = -1.0;               // Start time in seconds (-1 = from beginning)
     double t1 = -1.0;               // End time in seconds (-1 = to end)
-    bool debugDiagnostics = false;  // Enable per-block diagnostics logging
+    bool debugDiagnostics = true;  // Enable per-block diagnostics logging
     std::string debugOutputDir = "processedData/debug";  // Where to write debug files
 
     // Render resolution (controls direction update frequency):

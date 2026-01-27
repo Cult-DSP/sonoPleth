@@ -1,5 +1,6 @@
 Cult DSP — Open Spatial Audio Infrastructure  
 Lead Developer: Lucian Parisi
+
 # ADM Decoder Prototype
 
 This repository contains a Python prototype for exploring and decoding
@@ -104,6 +105,41 @@ rm .init_complete
 source init.sh
 ```
 
+### Rebuilding the VBAP Renderer
+
+After making changes to C++ source files (`spatial_engine/src/`), rebuild the VBAP renderer:
+
+**Option 1: Force rebuild (recommended)**
+
+```bash
+# Remove existing build and rebuild from scratch
+rm -rf spatial_engine/vbapRender/build/
+python -c "from src.configCPP import buildVBAPRenderer; buildVBAPRenderer()"
+```
+
+**Option 2: Clean and rebuild**
+
+```bash
+# Clean existing build artifacts and rebuild
+cd spatial_engine/vbapRender/build/
+make clean
+make -j$(sysctl -n hw.ncpu)
+cd ../../../
+```
+
+**Option 3: Manual CMake build**
+
+```bash
+# Full manual rebuild
+cd spatial_engine/vbapRender/
+rm -rf build/
+mkdir build && cd build/
+cmake ..
+make -j$(sysctl -n hw.ncpu)
+```
+
+The built executable will be at: `spatial_engine/vbapRender/build/sonoPleth_vbap_render`
+
 ## Manual Setup
 
 If `init.sh` fails, you can set up manually:
@@ -128,6 +164,7 @@ sonoPleth/bin/python -c "from utils.configCPP import setupCppTools; setupCppTool
 - `activate.sh` - Reactivates the virtual environment in new terminal sessions (use: `source activate.sh`)
 - `utils/getExamples.py` - Downloads example ADM files
 - `utils/deleteData.py` - Cleans processed data directory
+- `src/configCPP.py` - C++ build utilities (use `buildVBAPRenderer()` to rebuild VBAP renderer)
 
 ## Pipeline Overview
 
@@ -144,11 +181,11 @@ sonoPleth/bin/python -c "from utils.configCPP import setupCppTools; setupCppTool
 
 The VBAP renderer supports multiple render resolution modes:
 
-| Mode | Description | Recommended |
-|------|-------------|-------------|
-| `block` | Compute direction once per block (default, blockSize=64) | ✓ Yes |
-| `sample` | Compute direction for every sample (highest accuracy) | For critical work |
-| `smooth` | *Deprecated* - gain interpolation can cause artifacts | No |
+| Mode     | Description                                              | Recommended       |
+| -------- | -------------------------------------------------------- | ----------------- |
+| `block`  | Compute direction once per block (default, blockSize=64) | ✓ Yes             |
+| `sample` | Compute direction for every sample (highest accuracy)    | For critical work |
+| `smooth` | _Deprecated_ - gain interpolation can cause artifacts    | No                |
 
 ### Command Line Usage
 
@@ -175,6 +212,7 @@ The spatial trajectory JSON supports an explicit `timeUnit` field:
 Valid values: `"seconds"` (default), `"samples"`, `"milliseconds"`
 
 For detailed documentation, see:
+
 - [RENDERING.md](spatial_engine/vbapRender/RENDERING.md) - Full rendering documentation
 - [json_schema_info.md](spatial_engine/vbapRender/json_schema_info.md) - JSON schema reference
 
@@ -187,7 +225,8 @@ Example ADM files: https://zenodo.org/records/15268471
 ### Essential
 
 - **Python 3.8+** - Core runtime for the Python components
-- **CMake and build tools** - Required to build the VBAP spatial audio renderer
+- **CMake 3.12+** - Required to build the VBAP spatial audio renderer (with C++17 support)
+- **Build tools** - make, clang/gcc compiler toolchain
 
 ### Platform-specific installation methods
 
