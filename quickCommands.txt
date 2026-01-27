@@ -6,6 +6,13 @@ python runPipeline.py sourceData/Offering-Atmos-Rough-1.wav /Users/lucian/projec
 
 python runPipeline.py sourceData/Swale-Atmos-ROUGH-1.wav /Users/lucian/projects/sonoPleth/spatial_engine/speaker_layouts/translab-sono-layout.json
 
+translab LFE: 
+python runPipeline.py sourceData/CANYON-ATMOS-LFE.wav /Users/lucian/projects/sonoPleth/spatial_engine/speaker_layouts/translab-sono-layout.json
+
+python runPipeline.py sourceData/SWALE-ATMOS-LFE.wav /Users/lucian/projects/sonoPleth/spatial_engine/speaker_layouts/translab-sono-layout.json
+
+
+
 
 allosphere:
 

@@ -106,14 +106,21 @@ def splitChannelsToMono(source_path, processed_dir="processedData", output_dir="
             print(f"  Channel {chanNumber}/{num_channels} -> SKIPPED (empty)")
             skipped_count += 1
             continue
+
+        
         
         chanData = audio_data[:, chanIndex]
         output_file = outputPath / f"src_{chanNumber}.wav"
         
         try:
-            sf.write(output_file, chanData, sample_rate)
-            print(f"  Channel {chanNumber}/{num_channels} -> {output_file.name}")
-            extracted_count += 1
+            if chanNumber == 4:
+                sf.write(outputPath/f"LFE.wav", chanData, sample_rate)
+                print(f"Wrote LFE data")
+                extracted_count += 1
+            else:
+                sf.write(output_file, chanData, sample_rate)
+                print(f"  Channel {chanNumber}/{num_channels} -> {output_file.name}")
+                extracted_count += 1
         except Exception as e:
             print(f"  Channel {chanNumber}/{num_channels} -> ERROR: {e}")
             continue

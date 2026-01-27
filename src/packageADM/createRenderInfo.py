@@ -99,7 +99,7 @@ def assignChannels(data):
     channel_audio_map = mapEmptyChannels(data)
     
     # Assign channels 1-10 to DirectSpeakers (in order)
-    for speaker_name in data.get('directSpeakerData', {}).keys():
+    for speaker_name in data.get('directSpeakerData', {}).keys():  
         channel_mapping[speaker_name] = channel_counter
         # Check if this channel (0-indexed in audio map) contains audio
         audio_status[speaker_name] = channel_audio_map.get(channel_counter - 1, False)
@@ -181,14 +181,22 @@ def createRenderInfoJSON(processed_dir="processedData", output_path="processedDa
     sources = {}
     sources_with_audio = 0
     sources_without_audio = 0
-    
-    # Process DirectSpeakers
-    for speaker_name, speaker_info in data.get('directSpeakerData', {}).items():
-        # Skip if channel has no audio
+
+    #Process direct speaker and single out LFE:
+    for idx, (speaker_name, speaker_info) in enumerate(data.get('directSpeakerData', {}).items(), start=1):
+        if idx == 4:
+            # Output as "LFE" with time 0.0 and no cart data
+            sources["LFE"] = [
+                {
+                    "time": 0.0
+                    # No "cart" field
+                }
+            ]
+            sources_with_audio += 1
+            continue  # Skip further processing for LFE
         if not audio_status.get(speaker_name, False):
             sources_without_audio += 1
             continue
-        
         channel_num = channel_mapping[speaker_name]
         sources[f"src_{channel_num}"] = [
             {
@@ -200,7 +208,7 @@ def createRenderInfoJSON(processed_dir="processedData", output_path="processedDa
                 ]
             }
         ]
-        sources_with_audio += 1
+    sources_with_audio += 1
 
     # Process audio objects
     for obj_name, blocks in data.get('objectData', {}).items():
