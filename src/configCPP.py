@@ -5,7 +5,7 @@ from pathlib import Path
 def setupCppTools():
     """
     Complete setup for C++ tools and dependencies.
-    Orchestrates installation of bwfmetaedit, submodule initialization, and VBAP renderer build.
+    Orchestrates installation of bwfmetaedit, submodule initialization, and Spatial renderer build.
     Only performs actions that are needed (idempotent).
     
     Returns:
@@ -26,9 +26,9 @@ def setupCppTools():
         print("\n✗ Error: Failed to initialize submodules")
         return False
     
-    # Step 3: Build VBAP renderer if needed
-    if not buildVBAPRenderer():
-        print("\n✗ Error: Failed to build VBAP renderer")
+    # Step 3: Build Spatial renderer if needed
+    if not buildSpatialRenderer():
+        print("\n✗ Error: Failed to build Spatial renderer")
         return False
     
     print("\n" + "="*60)
@@ -153,10 +153,12 @@ def initializeSubmodules(project_root=None):
         return False
 
 
-def buildVBAPRenderer(build_dir="spatial_engine/vbapRender/build", source_dir="spatial_engine/vbapRender"):
+def buildSpatialRenderer(build_dir="spatial_engine/spatialRender/build", source_dir="spatial_engine/spatialRender"):
     """
-    Build the VBAP renderer using CMake.
+    Build the Spatial renderer using CMake.
     Only builds if executable doesn't exist (idempotent).
+    
+    Supports VBAP, DBAP, and LBAP spatializers from AlloLib.
     
     Parameters:
     -----------
@@ -172,22 +174,32 @@ def buildVBAPRenderer(build_dir="spatial_engine/vbapRender/build", source_dir="s
     """
     project_root = Path(__file__).parent.parent.resolve()
     build_path = project_root / build_dir
-    executable = project_root / build_dir / "sonoPleth_vbap_render"
+    executable = project_root / build_dir / "sonoPleth_spatial_render"
     
     # Check if executable already exists
     if executable.exists():
-        print(f"✓ VBAP renderer already built at: {executable}")
+        print(f"✓ Spatial renderer already built at: {executable}")
         return True
     
     # Executable doesn't exist, proceed with build
-    print("Building VBAP renderer...")
+    print("Building Spatial renderer...")
     return runCmake(build_dir, source_dir)
 
 
-def runCmake(build_dir="vbapRender/build", source_dir="vbapRender"):
+# Backwards compatibility alias
+def buildVBAPRenderer(build_dir="spatial_engine/spatialRender/build", source_dir="spatial_engine/spatialRender"):
     """
-    Run CMake configuration and make to build the VBAP renderer.
-    This is called by buildVBAPRenderer() and performs the actual build.
+    DEPRECATED: Use buildSpatialRenderer() instead.
+    This alias is kept for backwards compatibility.
+    """
+    print("Note: buildVBAPRenderer() is deprecated, use buildSpatialRenderer()")
+    return buildSpatialRenderer(build_dir, source_dir)
+
+
+def runCmake(build_dir="spatialRender/build", source_dir="spatialRender"):
+    """
+    Run CMake configuration and make to build the Spatial renderer.
+    This is called by buildSpatialRenderer() and performs the actual build.
     
     Parameters:
     -----------
@@ -250,7 +262,7 @@ def runCmake(build_dir="vbapRender/build", source_dir="vbapRender"):
         )
         print(result.stdout)
         
-        print("✓ VBAP renderer build complete!")
+        print("✓ Spatial renderer build complete!")
         return True
         
     except subprocess.CalledProcessError as e:

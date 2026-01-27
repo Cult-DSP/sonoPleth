@@ -5,7 +5,7 @@ Lead Developer: Lucian Parisi
 
 This repository contains a Python prototype for exploring and decoding
 Audio Definition Model Broadcast WAV (ADM BWF) files — atmos masters —
-with mapping to the AlloSphere speaker layout.
+with mapping to speaker arrays using multiple spatializers (DBAP, VBAP, LBAP).
 
 ## Quick Start
 
@@ -27,7 +27,7 @@ The `init.sh` script will:
 - Install all Python dependencies
 - Install `bwfmetaedit` (via Homebrew)
 - Initialize git submodules (AlloLib)
-- Build the VBAP renderer
+- Build the Spatial renderer (supports DBAP, VBAP, LBAP)
 - Activate the virtual environment automatically
 
 After `source init.sh` completes, you'll see `(sonoPleth)` in your terminal prompt
@@ -62,8 +62,38 @@ python runPipeline.py <adm_wav_file> <speaker_layout.json> <true|false>
 **Arguments:**
 
 - `adm_wav_file` - Path to ADM BWF WAV file (Atmos master)
-- `speaker_layout.json` - Speaker layout JSON (default: `vbapRender/allosphere_layout.json`)
+- `speaker_layout.json` - Speaker layout JSON (default: `spatialRender/allosphere_layout.json`)
 - `true|false` - Create PDF analysis of render (default: `true`)
+
+---
+
+## Spatial Rendering
+
+The project supports three spatializers from AlloLib:
+
+- **DBAP** (default) - Distance-Based Amplitude Panning, works with any layout
+- **VBAP** - Vector Base Amplitude Panning, best for layouts with good 3D coverage
+- **LBAP** - Layer-Based Amplitude Panning, designed for multi-ring layouts
+
+See [`internalDocsMD/RENDERING.md`](internalDocsMD/RENDERING.md) for full documentation.
+
+### Rebuilding the Renderer
+
+If you need to rebuild after code changes:
+
+```bash
+rm -rf spatial_engine/spatialRender/build
+python -c "from src.configCPP import buildSpatialRenderer; buildSpatialRenderer()"
+```
+
+Or manually:
+
+```bash
+cd spatial_engine/spatialRender
+mkdir -p build && cd build
+cmake ..
+make -j$(nproc)
+```
 
 ---
 

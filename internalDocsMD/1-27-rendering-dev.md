@@ -215,9 +215,9 @@ To profile the overhead:
 
 ```bash
 # Render same content with and without robustness
-time ./sonoPleth_vbap_render --layout ... --positions ... --sources ... --out test.wav
+time ./sonoPleth_spatial_render --layout ... --positions ... --sources ... --out test.wav
 
-# Compare VBAP diag summary to see how often features trigger
+# Compare diag summary to see how often features trigger
 ```
 
 ## Testing Checklist
@@ -230,16 +230,37 @@ time ./sonoPleth_vbap_render --layout ... --positions ... --sources ... --out te
 
 ## Related Files
 
-- `VBAPRenderer.hpp` - Struct definitions, constants, declarations
-- `VBAPRenderer.cpp` - Implementation of `renderPerBlock()`, helpers
+- `SpatialRenderer.hpp` - Struct definitions, constants, declarations
+- `SpatialRenderer.cpp` - Implementation of `renderPerBlock()`, helpers
 - `RENDERING.md` - User-facing documentation
-- `main.cpp` - CLI (no changes needed for these features)
+- `main.cpp` - CLI with spatializer selection
 
 ## Changelog
 
 ### 2026-01-27
 
-### PUSH 1
+### PUSH 2 - Multi-Spatializer Support
+
+- **Renamed** `VBAPRenderer` → `SpatialRenderer`
+- **Renamed** directories: `vbap_src/` → `renderer/`, `vbapRender/` → `spatialRender/`
+- **Renamed** executable: `sonoPleth_vbap_render` → `sonoPleth_spatial_render`
+- **Added** DBAP (Distance-Based Amplitude Panning) support via `al::Dbap`
+- **Added** LBAP (Layer-Based Amplitude Panning) support via `al::Lbap`
+- **Added** `PannerType` enum (DBAP, VBAP, LBAP)
+- **Added** CLI flags: `--spatializer`, `--dbap_focus`, `--lbap_dispersion`
+- **Changed** default spatializer from VBAP to DBAP (safer for unknown layouts)
+- **Added** `mActiveSpatializer` pointer for polymorphic panner dispatch
+- **Added** `mLayoutRadius` (median speaker distance) for DBAP positioning
+- **Added** `directionToDBAPPosition()` with coordinate transform compensation
+- **Added** DBAP coordinate transform documentation (AlloLib quirk)
+- **Updated** Python wrappers: `buildSpatialRenderer()`, `runSpatialRender()`
+- **Added** backwards-compatibility aliases for old function names
+- **Updated** `RENDERING.md` with spatializer comparison and usage examples
+- **Renamed** `kVBAPZeroThreshold` → `kPannerZeroThreshold`
+- **Renamed** `VBAPDiag` → `PannerDiag`
+- **Added** DEV NOTE for future `--spatializer auto` mode
+
+### PUSH 1 - VBAP Robustness
 
 - Added `VBAPDiag` struct for robustness diagnostics
 - Added `mSpeakerDirs` precomputed speaker unit vectors
@@ -253,3 +274,58 @@ time ./sonoPleth_vbap_render --layout ... --positions ... --sources ... --out te
   - Sub-stepping for fast movers
 - Added compile-time tuning constants
 - Updated `RENDERING.md` with new features
+
+---
+
+## Multi-Spatializer Technical Notes
+
+### DBAP Coordinate Transform
+
+**Critical quirk discovered in AlloLib's DBAP implementation.**
+
+AlloLib's `al::Dbap` class internally applies a coordinate transform:
+
+```cpp
+// In AlloLib dbap.cpp line ~35
+Vec3d relpos = Vec3d(pos.x, -pos.z, pos.y);
+```
+
+Our coordinate system: y-forward, x-right, z-up (standard OpenGL-style)
+
+To compensate, we pre-transform in `directionToDBAPPosition()`:
+
+```cpp
+// Transform: (our_x, our_z, -our_y)
+return al::Vec3f(pos.x, pos.z, -pos.y);
+```
+
+This is marked with `// FIXME test DBAP` in AlloLib source, suggesting it may be
+a temporary workaround that could change. If AlloLib updates this, we'll need
+to update or remove our compensation transform.
+
+### Zero-Block Detection Scope
+
+Currently runs for all panners for consistency, but:
+
+- **VBAP**: Actually needs it (coverage gaps at zenith/nadir, hull boundaries)
+- **DBAP**: Shouldn't need it (distance-based, no gaps)
+- **LBAP**: Shouldn't need it (layer interpolation covers all directions)
+
+**DEV NOTE**: Consider optimizing to only run for VBAP in future.
+
+### Future: Auto-Detection Mode
+
+Could analyze speaker layout to recommend best spatializer:
+
+```cpp
+// Pseudo-code for future --spatializer auto
+if (elevationSpan < 3°) {
+    return DBAP;  // 2D layout
+} else if (hasDistinctElevationRings(2, 4)) {
+    return LBAP;  // Multi-layer layout
+} else if (hasGoodTriangulation()) {
+    return VBAP;  // Dense 3D coverage
+} else {
+    return DBAP;  // Safe fallback
+}
+```

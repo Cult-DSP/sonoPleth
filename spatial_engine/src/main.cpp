@@ -1,13 +1,18 @@
-// sonoPleth VBAP Renderer for AlloSphere
+// sonoPleth Spatial Renderer for AlloSphere
 // 
-// renders spatial audio using Vector Base Amplitude Panning
+// renders spatial audio using Vector Base Amplitude Panning (VBAP),
+// Distance-Based Amplitude Panning (DBAP), or Layer-Based Amplitude Panning (LBAP)
 // takes mono source files and spatial trajectory data
-// outputs multichannel WAV for the AlloSphere's 54-speaker array
+// outputs multichannel WAV for the AlloSphere's speaker array
 //
 // key gotcha that took forever to debug:
 // AlloLib expects speaker angles in degrees not radians
 // so the JSON loader converts from radians to degrees when creating al::Speaker objects
-// without this conversion VBAP silently fails and produces zero output
+// without this conversion panners silently fail and produce zero output
+//
+// DBAP coordinate quirk: AlloLib's DBAP internally swaps: Vec3d(pos.x, -pos.z, pos.y)
+// We compensate by transforming (x,y,z) -> (x,z,-y) before passing to DBAP.
+// See SpatialRenderer::directionToDBAPPosition() for details.
 
 #include <iostream>
 #include <string>
@@ -16,15 +21,15 @@
 
 #include "JSONLoader.hpp"
 #include "LayoutLoader.hpp"
-#include "VBAPRenderer.hpp"
+#include "SpatialRenderer.hpp"
 #include "WavUtils.hpp"
 
 namespace fs = std::filesystem;
 
 void printUsage() {
-    std::cout << "sonoPleth VBAP Renderer\n\n";
+    std::cout << "sonoPleth Spatial Renderer\n\n";
     std::cout << "Usage:\n"
-              << "  sonoPleth_vbap_render \\\n"
+              << "  sonoPleth_spatial_render \\\n"
               << "    --layout layout.json \\\n"
               << "    --positions spatial.json \\\n"
               << "    --sources <folder> \\\n"
@@ -35,8 +40,12 @@ void printUsage() {
               << "  --positions FILE    Spatial trajectory JSON file\n"
               << "  --sources FOLDER    Folder containing mono source WAVs\n"
               << "  --out FILE          Output multichannel WAV file\n\n";
-    std::cout << "Options:\n"
-              << "  --master_gain FLOAT   Master gain (default: 0.5 for headroom)\n"
+    std::cout << "Spatializer Options:\n"
+              << "  --spatializer TYPE    Spatializer: vbap, dbap, or lbap (default: dbap)\n"
+              << "  --dbap_focus FLOAT    DBAP focus/rolloff exponent (default: 1.0, range: 0.2-5.0)\n"
+              << "  --lbap_dispersion F   LBAP dispersion threshold (default: 0.5, range: 0.0-1.0)\n\n";
+    std::cout << "General Options:\n"
+              << "  --master_gain FLOAT   Master gain (default: 0.25 for headroom)\n"
               << "  --solo_source NAME    Render only the named source (for debugging)\n"
               << "  --t0 SECONDS          Start time in seconds (default: 0)\n"
               << "  --t1 SECONDS          End time in seconds (default: full duration)\n"
@@ -46,6 +55,21 @@ void printUsage() {
               << "  --force_2d            Force 2D mode (flatten all elevations)\n"
               << "  --debug_dir DIR       Output debug diagnostics to directory\n"
               << "  --help                Show this help message\n\n";
+    std::cout << "Spatializers:\n"
+              << "  dbap   - Distance-Based Amplitude Panning (DEFAULT)\n"
+              << "           Works with any speaker layout, no coverage gaps\n"
+              << "           --dbap_focus controls distance attenuation (higher = sharper focus)\n"
+              << "  vbap   - Vector Base Amplitude Panning\n"
+              << "           Best for layouts with good 3D coverage, uses speaker triplets\n"
+              << "           May have coverage gaps at zenith/nadir\n"
+              << "  lbap   - Layer-Based Amplitude Panning\n"
+              << "           Designed for multi-ring/layer layouts (e.g., 3 elevation rings)\n"
+              << "           --lbap_dispersion controls zenith/nadir signal spread\n\n";
+    // DEV NOTE: Future --spatializer auto mode could detect layout type:
+    // - Single ring (2D): use DBAP
+    // - Multi-ring with good coverage: use LBAP
+    // - Dense 3D coverage: use VBAP
+    // For now, default to DBAP as safest option.
     std::cout << "Render Resolutions:\n"
               << "  block  - Direction computed at block center (RECOMMENDED)\n"
               << "           Use small blockSize (32-64) for smooth motion\n"
@@ -69,7 +93,7 @@ int main(int argc, char *argv[]) {
     }
 
     fs::path layoutFile, positionsFile, sourcesFolder, outFile;
-    RenderConfig config;  // Uses sensible defaults: masterGain=0.25f, etc.
+    RenderConfig config;  // Uses sensible defaults: masterGain=0.25f, pannerType=DBAP, etc.
 
     for (int i = 1; i < argc; i++) {
         std::string arg = argv[i];
@@ -85,6 +109,31 @@ int main(int argc, char *argv[]) {
             sourcesFolder = argv[++i];
         } else if (arg == "--out") {
             outFile = argv[++i];
+        } else if (arg == "--spatializer") {
+            std::string panner = argv[++i];
+            if (panner == "dbap") {
+                config.pannerType = PannerType::DBAP;
+            } else if (panner == "vbap") {
+                config.pannerType = PannerType::VBAP;
+            } else if (panner == "lbap") {
+                config.pannerType = PannerType::LBAP;
+            } else {
+                std::cerr << "Error: unknown spatializer '" << panner << "'\n";
+                std::cerr << "Valid spatializers: vbap, dbap, lbap\n";
+                return 1;
+            }
+        } else if (arg == "--dbap_focus") {
+            config.dbapFocus = std::stof(argv[++i]);
+            if (config.dbapFocus < 0.2f || config.dbapFocus > 5.0f) {
+                std::cerr << "Warning: --dbap_focus " << config.dbapFocus 
+                          << " is outside recommended range [0.2, 5.0]\n";
+            }
+        } else if (arg == "--lbap_dispersion") {
+            config.lbapDispersion = std::stof(argv[++i]);
+            if (config.lbapDispersion < 0.0f || config.lbapDispersion > 1.0f) {
+                std::cerr << "Warning: --lbap_dispersion " << config.lbapDispersion 
+                          << " is outside recommended range [0.0, 1.0]\n";
+            }
         } else if (arg == "--master_gain") {
             config.masterGain = std::stof(argv[++i]);
         } else if (arg == "--solo_source") {
@@ -128,7 +177,7 @@ int main(int argc, char *argv[]) {
     }
 
     // layout JSON has speaker positions in radians
-    // these get converted to degrees when creating al::Speaker objects in VBAPRenderer
+    // these get converted to degrees when creating al::Speaker objects in SpatialRenderer
     std::cout << "Loading layout...\n";
     SpeakerLayoutData layout = LayoutLoader::loadLayout(layoutFile);
 
@@ -144,10 +193,10 @@ int main(int argc, char *argv[]) {
     // main rendering happens here
     // this is where the degrees conversion and channel mapping fixes are critical
     std::cout << "Rendering...\n";
-    VBAPRenderer renderer(layout, spatial, sources);
+    SpatialRenderer renderer(layout, spatial, sources);
     MultiWavData output = renderer.render(config);
 
-    // output has consecutive channels 0 to 53
+    // output has consecutive channels 0 to numSpeakers
     // if you need AlloSphere hardware channel numbers with gaps you can remap later
     std::cout << "Writing output WAV: " << outFile << "\n";
     WavUtils::writeMultichannelWav(outFile, output);

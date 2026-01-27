@@ -34,15 +34,24 @@ def deleteRenderOutput(output_file="processedData/completedRenders/spatial_rende
         return False
 
 
-def runVBAPRender(
+def runSpatialRender(
     source_folder="processedData/stageForRender",
     render_instructions="processedData/stageForRender/renderInstructions.json",
     speaker_layout="spatial_engine/speaker_layouts/allosphere_layout.json",
-    output_file="processedData/completedRenders/spatial_render.wav"
+    output_file="processedData/completedRenders/spatial_render.wav",
+    spatializer="dbap",
+    dbap_focus=1.0,
+    lbap_dispersion=0.5
 ):
     """
+    Run the spatial renderer with the specified spatializer.
     
-    params:
+    Supports three spatializers:
+    - dbap (default): Distance-Based Amplitude Panning - works with any layout
+    - vbap: Vector Base Amplitude Panning - best for layouts with good 3D coverage
+    - lbap: Layer-Based Amplitude Panning - designed for multi-ring layouts
+    
+    Parameters:
     -----------
     source_folder : str
         Directory containing mono source WAV files (src_*.wav)
@@ -52,17 +61,30 @@ def runVBAPRender(
         JSON file with speaker configuration
     output_file : str
         Output multichannel WAV file path
+    spatializer : str
+        Spatializer type: 'dbap' (default), 'vbap', or 'lbap'
+    dbap_focus : float
+        DBAP focus/rolloff exponent (default: 1.0, range: 0.2-5.0)
+    lbap_dispersion : float
+        LBAP dispersion threshold (default: 0.5, range: 0.0-1.0)
     
     Returns:
     --------
     bool
         True if render succeeded, False otherwise
+    
+    DEV NOTE (2026-01-27): Future enhancement could add spatializer='auto' mode
+    that auto-detects the best spatializer based on layout type:
+    - Single ring (2D): DBAP
+    - Multi-ring with elevation layers: LBAP  
+    - Dense 3D coverage: VBAP
+    For now, DBAP is the safest default as it works with any layout.
     """
     # Get absolute paths
     project_root = Path(__file__).parent.parent.resolve()
 
     deleteRenderOutput(output_file)
-    executable = project_root / "spatial_engine" / "vbapRender" / "build" / "sonoPleth_vbap_render"
+    executable = project_root / "spatial_engine" / "spatialRender" / "build" / "sonoPleth_spatial_render"
     
     # Check if executable exists
     if not executable.exists():
@@ -90,22 +112,39 @@ def runVBAPRender(
         print(f"Error: Speaker layout not found: {speaker_layout}")
         return False
     
+    # Validate spatializer
+    valid_spatializers = ['dbap', 'vbap', 'lbap']
+    if spatializer not in valid_spatializers:
+        print(f"Error: Invalid spatializer '{spatializer}'. Must be one of: {valid_spatializers}")
+        return False
+    
     # Run the renderer
-    print(f"\nRunning VBAP Renderer...")
+    print(f"\nRunning Spatial Renderer...")
+    print(f"  Spatializer: {spatializer.upper()}")
     print(f"  Source folder: {source_folder}")
     print(f"  Instructions: {render_instructions}")
     print(f"  Speaker layout: {speaker_layout}")
     print(f"  Output: {output_file}\n")
     
+    # Build command
+    cmd = [
+        str(executable),
+        "--layout", speaker_layout,
+        "--positions", render_instructions,
+        "--sources", source_folder,
+        "--out", output_file,
+        "--spatializer", spatializer
+    ]
+    
+    # Add spatializer-specific parameters
+    if spatializer == 'dbap':
+        cmd.extend(["--dbap_focus", str(dbap_focus)])
+    elif spatializer == 'lbap':
+        cmd.extend(["--lbap_dispersion", str(lbap_dispersion)])
+    
     try:
         result = subprocess.run(
-            [
-                str(executable),
-                "--layout", speaker_layout,
-                "--positions", render_instructions,
-                "--sources", source_folder,
-                "--out", output_file
-            ],
+            cmd,
             check=True,
             capture_output=False,
             text=True
@@ -123,16 +162,32 @@ def runVBAPRender(
     except subprocess.CalledProcessError as e:
         print(f"\n✗ Render failed with error: {e}")
         return False
-    except Exception as e:
-        print(f"\n✗ Unexpected error: {e}")
-        return False
+
+
+# Backwards compatibility alias
+def runVBAPRender(
+    source_folder="processedData/stageForRender",
+    render_instructions="processedData/stageForRender/renderInstructions.json",
+    speaker_layout="spatial_engine/speaker_layouts/allosphere_layout.json",
+    output_file="processedData/completedRenders/spatial_render.wav"
+):
+    """
+    DEPRECATED: Use runSpatialRender() instead.
+    This function is kept for backwards compatibility and calls runSpatialRender with VBAP.
+    """
+    print("Note: runVBAPRender() is deprecated, use runSpatialRender(spatializer='vbap')")
+    return runSpatialRender(
+        source_folder=source_folder,
+        render_instructions=render_instructions,
+        speaker_layout=speaker_layout,
+        output_file=output_file,
+        spatializer='vbap'
+    )
 
 
 if __name__ == "__main__":
-    # Delete old render if it exists
-    
-    # Run the render
-    success = runVBAPRender()
+    # Run the render with default DBAP spatializer
+    success = runSpatialRender()
     if success:
         print("\nVBAP render completed successfully!")
     else:

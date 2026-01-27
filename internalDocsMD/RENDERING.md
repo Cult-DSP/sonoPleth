@@ -1,26 +1,32 @@
 # sonoPleth Rendering System
 
-This document explains the VBAP (Vector Base Amplitude Panning) rendering system used to spatialize audio for the AlloSphere's 54-speaker array.
+This document explains the spatial rendering system used to spatialize audio for the AlloSphere's speaker array.
 
 ## Overview
 
-The rendering pipeline takes:
+The rendering pipeline supports three spatializers:
+
+- **DBAP** (Distance-Based Amplitude Panning) - default, works with any layout
+- **VBAP** (Vector Base Amplitude Panning) - best for layouts with good 3D coverage
+- **LBAP** (Layer-Based Amplitude Panning) - designed for multi-ring layouts
+
+The pipeline takes:
 
 1. **Mono source audio files** - individual audio stems
 2. **Spatial trajectory data** - JSON with position keyframes over time
-3. **Speaker layout** - AlloSphere 54-speaker configuration
+3. **Speaker layout** - Speaker configuration (e.g., AlloSphere 54-speaker)
 
 And produces:
 
-- **54-channel WAV file** - each channel corresponds to one speaker
+- **N-channel WAV file** - each channel corresponds to one speaker
 
 ## Architecture
 
 ```
-┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
-│  Source WAVs    │───>│  VBAPRenderer    │───>│ 54-channel WAV  │
-│  (mono stems)   │    │  (AlloLib VBAP)  │    │  for AlloSphere │
-└─────────────────┘    └────────┬─────────┘    └─────────────────┘
+┌─────────────────┐    ┌───────────────────┐    ┌─────────────────┐
+│  Source WAVs    │───>│  SpatialRenderer  │───>│ N-channel WAV   │
+│  (mono stems)   │    │  (DBAP/VBAP/LBAP) │    │  for speakers   │
+└─────────────────┘    └────────┬──────────┘    └─────────────────┘
                                 │
 ┌─────────────────┐    ┌────────┴─────────┐
 │ Spatial JSON    │───>│ interpolateDir() │
@@ -28,28 +34,28 @@ And produces:
 └─────────────────┘    │  time)           │
                        └──────────────────┘
 ┌─────────────────┐
-│ Layout JSON     │───> Speaker positions for VBAP triangulation
+│ Layout JSON     │───> Speaker positions
 │ (speaker pos)   │
 └─────────────────┘
 ```
 
 ## Key Files
 
-| File                                           | Purpose                           |
-| ---------------------------------------------- | --------------------------------- |
-| `spatial_engine/src/main.cpp`                  | CLI entry point, argument parsing |
-| `spatial_engine/src/vbap_src/VBAPRenderer.cpp` | Core rendering logic              |
-| `spatial_engine/src/vbap_src/VBAPRenderer.hpp` | Renderer class and config structs |
-| `spatial_engine/src/JSONLoader.cpp`            | Parses spatial trajectory JSON    |
-| `spatial_engine/src/LayoutLoader.cpp`          | Parses speaker layout JSON        |
-| `spatial_engine/src/WavUtils.cpp`              | WAV I/O utilities                 |
-| `spatial_engine/speaker_layouts/*.json`        | Speaker layout configurations     |
-| `spatial_engine/vbapRender/CMakeLists.txt`     | CMake build configuration         |
+| File                                              | Purpose                           |
+| ------------------------------------------------- | --------------------------------- |
+| `spatial_engine/src/main.cpp`                     | CLI entry point, argument parsing |
+| `spatial_engine/src/renderer/SpatialRenderer.cpp` | Core rendering logic              |
+| `spatial_engine/src/renderer/SpatialRenderer.hpp` | Renderer class and config structs |
+| `spatial_engine/src/JSONLoader.cpp`               | Parses spatial trajectory JSON    |
+| `spatial_engine/src/LayoutLoader.cpp`             | Parses speaker layout JSON        |
+| `spatial_engine/src/WavUtils.cpp`                 | WAV I/O utilities                 |
+| `spatial_engine/speaker_layouts/*.json`           | Speaker layout configurations     |
+| `spatial_engine/spatialRender/CMakeLists.txt`     | CMake build configuration         |
 
 ## CLI Usage
 
 ```bash
-./sonoPleth_vbap_render \
+./sonoPleth_spatial_render \
   --layout allosphere_layout.json \
   --positions spatial.json \
   --sources ./mono_stems/ \
@@ -66,51 +72,125 @@ And produces:
 | `--sources FOLDER` | Directory containing mono source WAV files               |
 | `--out FILE`       | Output multichannel WAV path                             |
 
-### Optional Arguments
+### Spatializer Options
 
-| Flag                       | Default   | Description                                        |
-| -------------------------- | --------- | -------------------------------------------------- |
-| `--master_gain FLOAT`      | 0.5       | Global gain (prevents clipping from VBAP sum)      |
-| `--solo_source NAME`       | (none)    | Render only this source (for debugging)            |
-| `--t0 SECONDS`             | 0         | Start rendering at this time                       |
-| `--t1 SECONDS`             | (end)     | Stop rendering at this time                        |
-| `--render_resolution MODE` | block     | Render mode: `block` (recommended) or `sample`     |
-| `--block_size N`           | 64        | Block size for direction updates (32-256)          |
-| `--elevation_mode MODE`    | compress  | Elevation handling: `compress` or `clamp`          |
-| `--force_2d`               | (off)     | Force 2D mode (flatten all elevations to z=0)      |
-| `--debug_dir DIR`          | (none)    | Output diagnostics to this directory               |
+| Flag                      | Default | Description                                  |
+| ------------------------- | ------- | -------------------------------------------- |
+| `--spatializer TYPE`      | dbap    | Spatializer: `vbap`, `dbap`, or `lbap`       |
+| `--dbap_focus FLOAT`      | 1.0     | DBAP focus/rolloff exponent (range: 0.2-5.0) |
+| `--lbap_dispersion FLOAT` | 0.5     | LBAP dispersion threshold (range: 0.0-1.0)   |
 
-### Render Resolution Modes
+### General Options
 
-| Mode     | Description                                                  |
-| -------- | ------------------------------------------------------------ |
-| `block`  | **Recommended.** Direction computed at block center. Use small block size (32-64) for smooth motion. |
-| `sample` | Direction computed per sample. Very slow, use for debugging only. |
-| `smooth` | **DEPRECATED.** May cause artifacts. Use `block` instead.    |
+| Flag                       | Default  | Description                                      |
+| -------------------------- | -------- | ------------------------------------------------ |
+| `--master_gain FLOAT`      | 0.25     | Global gain (prevents clipping from panning sum) |
+| `--solo_source NAME`       | (none)   | Render only this source (for debugging)          |
+| `--t0 SECONDS`             | 0        | Start rendering at this time                     |
+| `--t1 SECONDS`             | (end)    | Stop rendering at this time                      |
+| `--render_resolution MODE` | block    | Render mode: `block` (recommended) or `sample`   |
+| `--block_size N`           | 64       | Block size for direction updates (32-256)        |
+| `--elevation_mode MODE`    | compress | Elevation handling: `compress` or `clamp`        |
+| `--force_2d`               | (off)    | Force 2D mode (flatten all elevations to z=0)    |
+| `--debug_dir DIR`          | (none)   | Output diagnostics to this directory             |
 
-### Elevation Modes
+## Spatializer Comparison
 
-The speaker layout determines which elevation angles can be reproduced. Directions outside this range (e.g., directly up when the top speaker ring is at 60°) would otherwise be inaudible. The elevation mode controls how out-of-range directions are handled:
+### DBAP (Distance-Based Amplitude Panning)
 
-| Mode       | Description                                                  |
-| ---------- | ------------------------------------------------------------ |
-| `compress` | **Recommended.** Maps full elevation range [-90°, +90°] to the layout's actual speaker coverage. Preserves relative height differences. No signal loss. |
-| `clamp`    | Hard clips elevations to speaker bounds. May cause "sticking" at top/bottom when sources are at extreme elevations. |
+**Default spatializer.** Best for general use.
 
-**2D Layout Detection**: If the speaker layout has < 3° of elevation spread, it's automatically treated as 2D and all elevations are flattened to the horizontal plane. Use `--force_2d` to force this behavior for testing.
+- Works with **any speaker layout** - no coverage gaps
+- Uses inverse-distance weighting from source position to speakers
+- `--dbap_focus` controls distance attenuation:
+  - Lower values (0.2-0.8): Wider spread, more speakers active
+  - Default (1.0): Natural distance law
+  - Higher values (2.0-5.0): Tighter focus, fewer speakers active
 
-### Examples
+**Recommended for:**
+
+- Unknown or irregular speaker layouts
+- Layouts with potential coverage gaps
+- General purpose spatial audio
+
+**Technical note:** AlloLib's DBAP internally applies a coordinate transform: `Vec3d(pos.x, -pos.z, pos.y)`. The renderer compensates for this automatically. See `SpatialRenderer::directionToDBAPPosition()` for details.
+
+### VBAP (Vector Base Amplitude Panning)
+
+Classic triangulation-based panning.
+
+- **Best for layouts with good 3D coverage** (dense, well-distributed speakers)
+- Builds a mesh of speaker triplets at startup
+- Each source maps to exactly 3 speakers (or 2 for 2D layouts)
+- Can have **coverage gaps** at zenith/nadir or sparse regions
+
+**Recommended for:**
+
+- Dense 3D speaker arrays (like AlloSphere)
+- When precise localization is important
+- Layouts with known good triangulation
+
+**Caveats:**
+
+- May produce zero output for directions outside speaker hull
+- Renderer includes fallback to nearest speaker for coverage gaps
+
+### LBAP (Layer-Based Amplitude Panning)
+
+Designed for multi-layer speaker setups.
+
+- Optimized for **multi-ring layouts** (e.g., floor/ear/ceiling rings)
+- Groups speakers into horizontal layers
+- Interpolates within and between layers
+- `--lbap_dispersion` controls zenith/nadir signal spread:
+  - 0.0: No dispersion at poles
+  - 0.5 (default): Moderate spread
+  - 1.0: Maximum dispersion to adjacent layers
+
+**Recommended for:**
+
+- Speaker arrays with distinct elevation rings
+- TransLAB and similar multi-layer setups
+- When VBAP has zenith/nadir issues
+
+## Examples
 
 ```bash
-# Basic render with default 0.25 gain
-./sonoPleth_vbap_render \
+# Default render with DBAP
+./sonoPleth_spatial_render \
   --layout allosphere_layout.json \
   --positions renderInstructions.json \
   --sources ./stems/ \
   --out render.wav
 
+# Use VBAP for precise localization
+./sonoPleth_spatial_render \
+  --layout allosphere_layout.json \
+  --positions renderInstructions.json \
+  --sources ./stems/ \
+  --out render_vbap.wav \
+  --spatializer vbap
+
+# Use LBAP for multi-ring layout with high dispersion
+./sonoPleth_spatial_render \
+  --layout translab_layout.json \
+  --positions renderInstructions.json \
+  --sources ./stems/ \
+  --out render_lbap.wav \
+  --spatializer lbap \
+  --lbap_dispersion 0.8
+
+# DBAP with tight focus
+./sonoPleth_spatial_render \
+  --layout allosphere_layout.json \
+  --positions renderInstructions.json \
+  --sources ./stems/ \
+  --out render_tight.wav \
+  --spatializer dbap \
+  --dbap_focus 3.0
+
 # Debug a single source with diagnostics
-./sonoPleth_vbap_render \
+./sonoPleth_spatial_render \
   --layout allosphere_layout.json \
   --positions renderInstructions.json \
   --sources ./stems/ \
@@ -119,29 +199,13 @@ The speaker layout determines which elevation angles can be reproduced. Directio
   --debug_dir ./debug_output/
 
 # Render just 10-20 second window at full gain
-./sonoPleth_vbap_render \
+./sonoPleth_spatial_render \
   --layout allosphere_layout.json \
   --positions renderInstructions.json \
   --sources ./stems/ \
   --out segment.wav \
   --t0 10.0 --t1 20.0 \
   --master_gain 1.0
-
-# Use clamp mode for elevation handling
-./sonoPleth_vbap_render \
-  --layout allosphere_layout.json \
-  --positions renderInstructions.json \
-  --sources ./stems/ \
-  --out render_clamped.wav \
-  --elevation_mode clamp
-
-# Force 2D rendering (flatten all elevations)
-./sonoPleth_vbap_render \
-  --layout allosphere_layout.json \
-  --positions renderInstructions.json \
-  --sources ./stems/ \
-  --out render_2d.wav \
-  --force_2d
 ```
 
 ## Spatial Trajectory JSON Format
@@ -173,11 +237,11 @@ The `--positions` file defines source trajectories:
 
 Always specify `timeUnit` explicitly to avoid ambiguity:
 
-| Value          | Description                                      |
-| -------------- | ------------------------------------------------ |
-| `"seconds"`    | Default. Times are in seconds (e.g., `1.5`)      |
-| `"samples"`    | Times are sample indices (e.g., `48000` = 1 sec) |
-| `"milliseconds"` | Times are in ms (e.g., `1500` = 1.5 sec)       |
+| Value            | Description                                      |
+| ---------------- | ------------------------------------------------ |
+| `"seconds"`      | Default. Times are in seconds (e.g., `1.5`)      |
+| `"samples"`      | Times are sample indices (e.g., `48000` = 1 sec) |
+| `"milliseconds"` | Times are in ms (e.g., `1500` = 1.5 sec)         |
 
 Positions are interpolated using **spherical linear interpolation (SLERP)** between keyframes, which prevents artifacts when directions are far apart on the sphere.
 
@@ -212,39 +276,58 @@ The `--layout` file defines speaker positions:
 The `RenderConfig` struct controls rendering behavior:
 
 ```cpp
-struct RenderConfig {
-    float masterGain = 0.5f;            // Prevent VBAP summation clipping
-    std::string soloSource = "";        // Solo mode: only render this source
-    double t0 = -1.0;                   // Start time (-1 = beginning)
-    double t1 = -1.0;                   // End time (-1 = end)
-    bool debugDiagnostics = false;      // Enable diagnostic output
-    std::string debugOutputDir = "";    // Where to write diagnostics
-    std::string renderResolution = "block";  // "block" (recommended) or "sample"
-    int blockSize = 64;                 // Direction update interval (samples)
-    ElevationMode elevationMode = ElevationMode::Compress;  // How to handle out-of-range elevations
-    bool force2D = false;               // Force 2D mode (flatten all elevations)
+enum class PannerType {
+    DBAP,   // Distance-Based Amplitude Panning (default)
+    VBAP,   // Vector Base Amplitude Panning
+    LBAP    // Layer-Based Amplitude Panning
 };
 
 enum class ElevationMode {
     Clamp,    // Hard clip elevation to layout bounds
     Compress  // Map full sphere to layout's elevation range (recommended)
 };
+
+struct RenderConfig {
+    // Spatializer selection
+    PannerType pannerType = PannerType::DBAP;  // Default: DBAP
+    float dbapFocus = 1.0f;                     // DBAP focus exponent (0.2-5.0)
+    float lbapDispersion = 0.5f;                // LBAP dispersion threshold (0.0-1.0)
+
+    // General render options
+    float masterGain = 0.25f;                   // Prevent summation clipping
+    std::string soloSource = "";                // Solo mode: only render this source
+    double t0 = -1.0;                           // Start time (-1 = beginning)
+    double t1 = -1.0;                           // End time (-1 = end)
+    bool debugDiagnostics = false;              // Enable diagnostic output
+    std::string debugOutputDir = "";            // Where to write diagnostics
+    std::string renderResolution = "block";     // "block" (recommended) or "sample"
+    int blockSize = 64;                         // Direction update interval (samples)
+    ElevationMode elevationMode = ElevationMode::Compress;
+    bool force2D = false;                       // Force 2D mode
+};
 ```
 
 ### Master Gain Rationale
 
-VBAP works by distributing each source's energy across 2-3 speakers. When multiple sources are rendered, their contributions **accumulate**. With many sources pointing at similar directions, this can cause clipping.
+All spatializers work by distributing each source's energy across multiple speakers. When multiple sources are rendered, their contributions **accumulate**. With many sources pointing at similar directions, this can cause clipping.
 
-The default `masterGain = 0.5f` provides ~6dB of headroom. Adjust based on your source count and panning density.
+The default `masterGain = 0.25f` provides ~12dB of headroom. Adjust based on your source count and panning density.
 
 ## Render Statistics
 
 After rendering, statistics are computed and logged:
 
 ```
+Rendering 1234567 samples (25.72 sec) to 16 speakers from 8 sources
+Spatializer: DBAP (focus=1.0)
+  NOTE: DBAP uses coordinate transform (x,y,z)->(x,z,-y) for AlloLib compatibility
+  Master gain: 0.25
+  Render resolution: block (block size: 64)
+  Elevation mode: compress
+
 Render Statistics:
   Overall peak: 0.847 (-1.4 dBFS)
-  Near-silent channels (< -85 dBFS): 0/54
+  Near-silent channels (< -85 dBFS): 0/16
   Clipping channels (peak > 1.0): 0
   Channels with NaN: 0
 
@@ -255,28 +338,26 @@ Direction Sanitization Summary:
   Compressed elevations: 12847
   Invalid/fallback directions: 0
 
-VBAP Robustness Summary:
-  Total zero-output blocks detected: 0
-  Total retargets to nearest speaker: 0
-  Total sub-stepped blocks (fast motion): 23
-  Fast-mover sources (top 5):
-    source_orbital: 23 sub-stepped blocks
+DBAP Robustness Summary:
+  All blocks rendered normally (no panner failures or fast motion detected)
 ```
 
 The **Direction Sanitization Summary** shows:
+
 - **Layout type**: Whether the layout is treated as 2D or 3D
 - **Elevation range**: The min/max speaker elevations detected from the layout
 - **Clamped/Compressed elevations**: How many directions were adjusted to fit the layout
 - **Invalid/fallback directions**: Degenerate directions that needed fallback handling
 
-The **VBAP Robustness Summary** shows:
-- **Zero-output blocks**: Blocks where VBAP produced silence despite input (coverage gaps)
+The **Panner Robustness Summary** shows (varies by spatializer):
+
+- **Zero-output blocks**: Blocks where the panner produced silence despite input (coverage gaps)
 - **Retargets**: How many times the renderer fell back to nearest speaker
 - **Sub-stepped blocks**: Blocks that were subdivided due to fast source motion
 
 If `--debug_dir` is specified, detailed stats are written to:
 
-- `render_stats.json` - Per-channel RMS and peak levels
+- `render_stats.json` - Per-channel RMS and peak levels, spatializer info
 - `block_stats.log` - Per-block processing stats (sampled)
 
 ## Algorithm Details
@@ -317,6 +398,7 @@ Warnings are rate-limited (once per source) with reason logged (NaN vs near-zero
 After direction interpolation, directions are **sanitized** to fit within the speaker layout's representable range. This prevents sources from becoming inaudible when their directions fall outside the layout's elevation coverage.
 
 **For 3D layouts:**
+
 1. Convert direction to spherical coordinates (azimuth, elevation)
 2. Apply elevation mode:
    - **Compress**: Map elevation from [-90°, +90°] to [minEl, maxEl]
@@ -324,26 +406,30 @@ After direction interpolation, directions are **sanitized** to fit within the sp
 3. Convert back to Cartesian unit vector
 
 **For 2D layouts** (elevation span < 3°):
+
 - Flatten direction to z=0 (horizontal plane)
 - Re-normalize to unit vector
 
 **Layout bounds** are computed automatically from speaker positions at startup:
+
 ```
 Layout elevation range: [-45.0°, 60.0°] (span: 105.0°)
 ```
 
-### VBAP Robustness Features (Added 2026-01-27)
+### Robustness Features
 
 The renderer includes several robustness features to prevent audio dropouts:
 
 #### Zero-Block Detection and Fallback
 
-VBAP can produce near-zero output when a direction falls outside the speaker hull or in a coverage gap. The renderer detects this and automatically retargets to the nearest speaker:
+Spatializers (especially VBAP) can produce near-zero output when a direction falls outside the speaker hull or in a coverage gap. The renderer detects this and automatically retargets to the nearest speaker:
 
 1. **Input energy test**: Skip expensive checks for silent blocks
-2. **Render to temp buffer**: Measure VBAP output energy
-3. **Detect failure**: If output is ~silent despite input energy, VBAP failed
+2. **Render to temp buffer**: Measure panner output energy
+3. **Detect failure**: If output is ~silent despite input energy, panner failed
 4. **Retarget**: Use direction 90% toward nearest speaker (stays inside hull)
+
+**DEV NOTE**: Zero-block detection currently runs for all panners for consistency. DBAP and LBAP shouldn't need it (they don't have coverage gaps), so this could be optimized to VBAP-only in future.
 
 #### Fast-Mover Sub-Stepping
 
@@ -372,14 +458,14 @@ VBAP Robustness Summary:
 
 These are compile-time constants (developer-tunable, may become config options in future):
 
-| Constant | Default | Description |
-|----------|---------|-------------|
-| `kInputEnergyThreshold` | 1e-4 | Per-sample threshold for "has input energy" |
-| `kVBAPZeroThreshold` | 1e-6 | Output sum threshold for "VBAP failed" |
-| `kFastMoverAngleRad` | 0.25 | ~14° - triggers sub-stepping |
-| `kSubStepHop` | 16 | Sub-step size in samples |
+| Constant                | Default | Description                                 |
+| ----------------------- | ------- | ------------------------------------------- |
+| `kInputEnergyThreshold` | 1e-4    | Per-sample threshold for "has input energy" |
+| `kPannerZeroThreshold`  | 1e-6    | Output sum threshold for "panner failed"    |
+| `kFastMoverAngleRad`    | 0.25    | ~14° - triggers sub-stepping                |
+| `kSubStepHop`           | 16      | Sub-step size in samples                    |
 
-### VBAP Rendering
+### Spatializer-Specific Rendering
 
 For each audio block (default 64 samples):
 
@@ -387,12 +473,12 @@ For each audio block (default 64 samples):
 2. For each source:
    a. Fill source buffer with samples (zero-padded beyond source length)
    b. Compute direction vector at **block center** time (reduces edge bias)
-   c. Call AlloLib's `mVBAP.renderBuffer()` which:
-   - Finds optimal speaker triplet for direction
-   - Calculates VBAP gains
-   - Mixes source into speaker channels
+   c. **For DBAP**: Convert direction to position via `directionToDBAPPosition()`
+   d. Call the active spatializer's `renderBuffer()`
 3. Apply master gain
 4. Copy to output buffer
+
+**DBAP-specific**: Directions are converted to positions by scaling by `layoutRadius` (median speaker distance). The coordinate transform `(x,y,z) -> (x,z,-y)` compensates for AlloLib's internal DBAP coordinate swap.
 
 ### Time Unit Handling
 
@@ -416,6 +502,7 @@ Always specify `timeUnit` in your JSON to avoid warnings and potential misdetect
 **Cause**: Source directions are outside the speaker layout's elevation coverage. VBAP cannot reproduce directions that fall outside the speaker hull.
 
 **Fix**: The renderer now automatically sanitizes directions:
+
 - Use `--elevation_mode compress` (default) to map all elevations to the layout's range
 - Check the "Direction Sanitization Summary" in render output
 - High "Compressed elevations" count indicates many out-of-range directions were adjusted
@@ -479,12 +566,12 @@ speaker.elevation = s.elevation * 180.0f / M_PI;
 ## Building
 
 ```bash
-cd spatial_engine/vbapRender/build
+cd spatial_engine/spatialRender/build
 cmake ..
 make
 ```
 
-The executable is `sonoPleth_vbap_render` in the build directory.
+The executable is `sonoPleth_spatial_render` in the build directory.
 
 Or use the Python setup:
 
@@ -498,14 +585,26 @@ setupCppTools()
 The Python pipeline (`runPipeline.py`) calls the renderer via subprocess:
 
 ```python
-subprocess.run([
-    './spatial_engine/vbapRender/build/sonoPleth_vbap_render',
-    '--layout', 'spatial_engine/speaker_layouts/allosphere_layout.json',
-    '--positions', 'processedData/stageForRender/renderInstructions.json',
-    '--sources', 'sourceData/',
-    '--out', 'output.wav'
-])
+from src.createRender import runSpatialRender
+
+# Use DBAP (default)
+runSpatialRender(
+    source_folder="processedData/stageForRender",
+    render_instructions="processedData/stageForRender/renderInstructions.json",
+    speaker_layout="spatial_engine/speaker_layouts/allosphere_layout.json",
+    output_file="processedData/completedRenders/spatial_render.wav",
+    spatializer="dbap",
+    dbap_focus=1.0
+)
+
+# Or use VBAP
+runSpatialRender(spatializer="vbap")
+
+# Or use LBAP with custom dispersion
+runSpatialRender(spatializer="lbap", lbap_dispersion=0.7)
 ```
+
+````
 
 ## Debugging Workflow
 
@@ -513,7 +612,7 @@ subprocess.run([
 
    ```bash
    --solo_source "problematic_source" --debug_dir ./debug/
-   ```
+````
 
 2. **Render a short segment**:
 

@@ -97,12 +97,15 @@ def run_pipeline(sourceADMFile, sourceSpeakerLayout, createRenderAnalysis=True):
     print("\nPackaging audio for render...")
     packageForRender(sourceADMFile, processedDataDir)
 
-    print("\nRunning VBAP spatial renderer...")
-    runVBAPRender(
+    print("\nRunning DBAP spatial renderer...")
+    # Minimal change: call runSpatialRender with DBAP
+    from src.createRender import runSpatialRender
+    runSpatialRender(
         source_folder="processedData/stageForRender",
         render_instructions="processedData/stageForRender/renderInstructions.json",
         speaker_layout=sourceSpeakerLayout,
-        output_file=finalOutputRenderFile
+        output_file=finalOutputRenderFile,
+        spatializer="dbap"
     )
 
     if createRenderAnalysis:
