@@ -1,4 +1,4 @@
-#include "VBAPRenderer.hpp"
+#include "SpatialRenderer.hpp"
 #include <cmath>
 #include <iostream>
 #include <iomanip>
@@ -9,13 +9,21 @@
 
 namespace fs = std::filesystem;
 
-VBAPRenderer::VBAPRenderer(const SpeakerLayoutData &layout,
-                           const SpatialData &spatial,
-                           const std::map<std::string, MonoWavData> &sources)
-    : mLayout(layout), mSpatial(spatial), mSources(sources),
-      mSpeakers(), mVBAP(mSpeakers, true)
+// Helper function to get panner type name as string
+std::string SpatialRenderer::pannerTypeName(PannerType type) {
+    switch (type) {
+        case PannerType::DBAP: return "DBAP";
+        case PannerType::VBAP: return "VBAP";
+        case PannerType::LBAP: return "LBAP";
+        default: return "Unknown";
+    }
+}
 
-      //note: might need to remap channels for sphere later? current adressed on the sphere side 
+SpatialRenderer::SpatialRenderer(const SpeakerLayoutData &layout,
+                                 const SpatialData &spatial,
+                                 const std::map<std::string, MonoWavData> &sources)
+    : mLayout(layout), mSpatial(spatial), mSources(sources),
+      mSpeakers(), mVBAP(nullptr), mDBAP(nullptr), mLBAP(nullptr)
 {
     // CRITICAL FIX 1: AlloLib's al::Speaker expects angles in DEGREES not radians
     // The AlloSphere layout JSON stores angles in radians but al::Speaker internally
@@ -25,12 +33,15 @@ VBAPRenderer::VBAPRenderer(const SpeakerLayoutData &layout,
     // This caused VBAP to fail silently and produce zero output
     //
     // CRITICAL FIX 2: AlloSphere hardware uses non-consecutive channel numbers 1-60 with gaps
-    // but VBAP needs consecutive 0-based indices for AudioIOData buffer access
-    // We use array index i as the VBAP channel and ignore the original deviceChannel numbers
-    // The output WAV will have consecutive channels 0-53 which can be remapped later
+    // but spatializers need consecutive 0-based indices for AudioIOData buffer access
+    // We use array index i as the channel and ignore the original deviceChannel numbers
+    // The output WAV will have consecutive channels 0-N which can be remapped later
     // if you need the original hardware channel routing
     // Old approach tried to preserve deviceChannel which caused out-of-bounds crashes
     // because AudioIOData only allocates channels 0 to numSpeakers-1
+    
+    // Collect speaker distances for layout radius computation
+    std::vector<float> speakerDistances;
     
     for (size_t i = 0; i < layout.speakers.size(); i++) {
         const auto &spk = layout.speakers[i];
@@ -41,6 +52,19 @@ VBAPRenderer::VBAPRenderer(const SpeakerLayoutData &layout,
             0,                                    // group id
             spk.radius                            // distance from center
         ));
+        speakerDistances.push_back(spk.radius);
+    }
+    
+    // Compute layout radius as median of speaker distances
+    // This is used to convert directions to positions for DBAP
+    if (!speakerDistances.empty()) {
+        std::sort(speakerDistances.begin(), speakerDistances.end());
+        size_t mid = speakerDistances.size() / 2;
+        if (speakerDistances.size() % 2 == 0) {
+            mLayoutRadius = (speakerDistances[mid - 1] + speakerDistances[mid]) / 2.0f;
+        } else {
+            mLayoutRadius = speakerDistances[mid];
+        }
     }
     
     // Compute layout elevation bounds from speaker positions (in radians)
@@ -57,6 +81,8 @@ VBAPRenderer::VBAPRenderer(const SpeakerLayoutData &layout,
     const float twoDThreshRad = 3.0f * float(M_PI) / 180.0f;
     mLayoutIs2D = (mLayoutElSpanRad < twoDThreshRad);
     
+    std::cout << "Layout: " << layout.speakers.size() << " speakers, radius: " 
+              << std::fixed << std::setprecision(2) << mLayoutRadius << "m\n";
     std::cout << "Layout elevation range: [" 
               << (mLayoutMinElRad * 180.0f / M_PI) << "°, " 
               << (mLayoutMaxElRad * 180.0f / M_PI) << "°] "
@@ -66,7 +92,7 @@ VBAPRenderer::VBAPRenderer(const SpeakerLayoutData &layout,
     }
     
     // Precompute speaker unit directions for nearest-speaker fallback
-    // Used when VBAP produces zero output for a direction (coverage gaps)
+    // Used when a spatializer produces zero output for a direction (coverage gaps)
     mSpeakerDirs.resize(layout.speakers.size());
     for (size_t i = 0; i < layout.speakers.size(); i++) {
         const auto& spk = layout.speakers[i];
@@ -78,14 +104,24 @@ VBAPRenderer::VBAPRenderer(const SpeakerLayoutData &layout,
         ).normalize();
     }
     
-    // compile builds the speaker triplet mesh for VBAP algorithm
-    // this finds all valid triangles of 3 speakers that can spatialize sound
-    mVBAP = al::Vbap(mSpeakers, true);
-    mVBAP.compile();
+    // Create spatializers using unique_ptr (LBAP has broken copy semantics in AlloLib)
+    
+    // VBAP - builds the speaker triplet mesh for triangulation
+    // This finds all valid triangles of 3 speakers that can spatialize sound
+    mVBAP = std::make_unique<al::Vbap>(mSpeakers, true);
+    mVBAP->compile();
+    
+    // DBAP - distance-based amplitude panning
+    // Note: DBAP doesn't need compile() - it uses distance-based calculations
+    mDBAP = std::make_unique<al::Dbap>(mSpeakers);
+    
+    // LBAP - layer-based panning for multi-ring layouts
+    mLBAP = std::make_unique<al::Lbap>(mSpeakers);
+    mLBAP->compile();
 }
 
 // Reset per-render state (call at start of each render)
-void VBAPRenderer::resetPerRenderState() {
+void SpatialRenderer::resetPerRenderState() {
     mLastGoodDir.clear();
     mWarnedDegenerate.clear();
     mFallbackCount.clear();
@@ -93,12 +129,56 @@ void VBAPRenderer::resetPerRenderState() {
     // Reset direction sanitization diagnostics
     mDirDiag = DirDiag();
     
-    // Reset VBAP diagnostics
-    mVBAPDiag = VBAPDiag();
+    // Reset panner diagnostics
+    mPannerDiag = PannerDiag();
+}
+
+// Initialize the selected spatializer for this render
+void SpatialRenderer::initializeSpatializer(const RenderConfig& config) {
+    mActivePannerType = config.pannerType;
+    
+    switch (config.pannerType) {
+        case PannerType::DBAP:
+            mActiveSpatializer = mDBAP.get();
+            mDBAP->setFocus(config.dbapFocus);
+            break;
+        case PannerType::VBAP:
+            mActiveSpatializer = mVBAP.get();
+            break;
+        case PannerType::LBAP:
+            mActiveSpatializer = mLBAP.get();
+            mLBAP->setDispersionThreshold(config.lbapDispersion);
+            break;
+        default:
+            std::cerr << "Unknown panner type, defaulting to DBAP\n";
+            mActiveSpatializer = mDBAP.get();
+            mActivePannerType = PannerType::DBAP;
+            break;
+    }
+}
+
+// Print spatializer info at start of render
+void SpatialRenderer::printSpatializerInfo(const RenderConfig& config) {
+    std::cout << "Spatializer: " << pannerTypeName(config.pannerType);
+    
+    switch (config.pannerType) {
+        case PannerType::DBAP:
+            std::cout << " (focus=" << config.dbapFocus << ")";
+            // Print coordinate transform warning once per render
+            std::cout << "\n  NOTE: DBAP uses coordinate transform (x,y,z)->(x,z,-y) for AlloLib compatibility";
+            break;
+        case PannerType::VBAP:
+            // No extra params to show
+            break;
+        case PannerType::LBAP:
+            std::cout << " (dispersion=" << config.lbapDispersion << ")";
+            break;
+    }
+    std::cout << "\n";
 }
 
 // Safe normalize: returns fallback if input is degenerate
-al::Vec3f VBAPRenderer::safeNormalize(const al::Vec3f& v) {
+al::Vec3f SpatialRenderer::safeNormalize(const al::Vec3f& v) {
     float mag = v.mag();
     if (mag < 1e-6f || !std::isfinite(mag)) {
         return al::Vec3f(0.0f, 1.0f, 0.0f);  // fallback: front
@@ -106,9 +186,37 @@ al::Vec3f VBAPRenderer::safeNormalize(const al::Vec3f& v) {
     return v / mag;
 }
 
+// Convert direction to DBAP position
+// DBAP needs a position in 3D space, not just a direction
+// We use direction * layoutRadius to place the source at the speaker ring distance
+//
+// COORDINATE TRANSFORM NOTE:
+// AlloLib's DBAP internally does: Vec3d relpos = Vec3d(pos.x, -pos.z, pos.y)
+// Our system uses: y-forward, x-right, z-up
+// To compensate, we transform: (x, y, z) -> (x, z, -y)
+// This makes our y-forward map to DBAP's expected z-forward
+//
+// DEV NOTE (2026-01-27): This is marked as "FIXME test DBAP" in AlloLib source.
+// If AlloLib changes this in future versions, we'll need to update or remove
+// this transform. Consider adding a version check or config option.
+//
+// FUTURE POSSIBILITY: Could add per-source distance from keyframes to use
+// instead of fixed layoutRadius. Would require parsing distance from JSON.
+al::Vec3f SpatialRenderer::directionToDBAPPosition(const al::Vec3f& dir) {
+    // Scale direction by layout radius to get position
+    al::Vec3f pos = dir * mLayoutRadius;
+    
+    // Apply coordinate transform for AlloLib DBAP
+    // Our: (x=right, y=forward, z=up)
+    // DBAP internal swap: (x, -z, y) means it expects (x=right, z=backward, y=up)
+    // So we send: (our_x, our_z, -our_y) which after DBAP's swap becomes:
+    // (our_x, our_y, our_z) - back to our original!
+    return al::Vec3f(pos.x, pos.z, -pos.y);
+}
+
 // Sanitize direction to fit within speaker layout's representable range
 // This prevents sources from becoming inaudible due to out-of-range directions
-al::Vec3f VBAPRenderer::sanitizeDirForLayout(const al::Vec3f& v, ElevationMode mode) {
+al::Vec3f SpatialRenderer::sanitizeDirForLayout(const al::Vec3f& v, ElevationMode mode) {
     al::Vec3f d = safeNormalize(v);
     float mag = d.mag();
     
@@ -161,7 +269,7 @@ al::Vec3f VBAPRenderer::sanitizeDirForLayout(const al::Vec3f& v, ElevationMode m
 }
 
 // Print direction sanitization summary at end of render
-void VBAPRenderer::printSanitizationSummary() {
+void SpatialRenderer::printSanitizationSummary() {
     std::cout << "\nDirection Sanitization Summary:\n";
     std::cout << "  Layout type: " << (mLayoutIs2D ? "2D" : "3D") << "\n";
     std::cout << "  Elevation range: [" 
@@ -178,9 +286,9 @@ void VBAPRenderer::printSanitizationSummary() {
     std::cout << "  Invalid/fallback directions: " << mDirDiag.invalidDir << "\n";
 }
 
-// Find nearest speaker direction for VBAP fallback
+// Find nearest speaker direction for fallback
 // Returns direction 90% toward the nearest speaker to stay inside the hull
-al::Vec3f VBAPRenderer::nearestSpeakerDir(const al::Vec3f& dir) {
+al::Vec3f SpatialRenderer::nearestSpeakerDir(const al::Vec3f& dir) {
     if (mSpeakerDirs.empty()) {
         return al::Vec3f(0.0f, 1.0f, 0.0f);  // fallback: front
     }
@@ -203,23 +311,23 @@ al::Vec3f VBAPRenderer::nearestSpeakerDir(const al::Vec3f& dir) {
     return safeNormalize(blended);
 }
 
-// Print VBAP diagnostics summary (zero blocks, retargets, substeps)
-void VBAPRenderer::printVBAPDiagSummary() {
-    std::cout << "\nVBAP Robustness Summary:\n";
+// Print panner diagnostics summary (zero blocks, retargets, substeps)
+void SpatialRenderer::printPannerDiagSummary() {
+    std::cout << "\n" << pannerTypeName(mActivePannerType) << " Robustness Summary:\n";
     
-    if (mVBAPDiag.totalZeroBlocks == 0 && mVBAPDiag.totalRetargets == 0 && mVBAPDiag.totalSubsteps == 0) {
-        std::cout << "  All blocks rendered normally (no VBAP failures or fast motion detected)\n";
+    if (mPannerDiag.totalZeroBlocks == 0 && mPannerDiag.totalRetargets == 0 && mPannerDiag.totalSubsteps == 0) {
+        std::cout << "  All blocks rendered normally (no panner failures or fast motion detected)\n";
         return;
     }
     
-    std::cout << "  Total zero-output blocks detected: " << mVBAPDiag.totalZeroBlocks << "\n";
-    std::cout << "  Total retargets to nearest speaker: " << mVBAPDiag.totalRetargets << "\n";
-    std::cout << "  Total sub-stepped blocks (fast motion): " << mVBAPDiag.totalSubsteps << "\n";
+    std::cout << "  Total zero-output blocks detected: " << mPannerDiag.totalZeroBlocks << "\n";
+    std::cout << "  Total retargets to nearest speaker: " << mPannerDiag.totalRetargets << "\n";
+    std::cout << "  Total sub-stepped blocks (fast motion): " << mPannerDiag.totalSubsteps << "\n";
     
     // Show top offenders for zero blocks
-    if (!mVBAPDiag.zeroBlocks.empty()) {
+    if (!mPannerDiag.zeroBlocks.empty()) {
         std::vector<std::pair<std::string, uint64_t>> sorted(
-            mVBAPDiag.zeroBlocks.begin(), mVBAPDiag.zeroBlocks.end());
+            mPannerDiag.zeroBlocks.begin(), mPannerDiag.zeroBlocks.end());
         std::sort(sorted.begin(), sorted.end(),
                   [](const auto& a, const auto& b) { return a.second > b.second; });
         
@@ -232,9 +340,9 @@ void VBAPRenderer::printVBAPDiagSummary() {
     }
     
     // Show top offenders for substeps
-    if (!mVBAPDiag.substeppedBlocks.empty()) {
+    if (!mPannerDiag.substeppedBlocks.empty()) {
         std::vector<std::pair<std::string, uint64_t>> sorted(
-            mVBAPDiag.substeppedBlocks.begin(), mVBAPDiag.substeppedBlocks.end());
+            mPannerDiag.substeppedBlocks.begin(), mPannerDiag.substeppedBlocks.end());
         std::sort(sorted.begin(), sorted.end(),
                   [](const auto& a, const auto& b) { return a.second > b.second; });
         
@@ -249,7 +357,7 @@ void VBAPRenderer::printVBAPDiagSummary() {
 
 // Spherical linear interpolation between two unit vectors
 // Returns smooth interpolation on the unit sphere from a (t=0) to b (t=1)
-al::Vec3f VBAPRenderer::slerpDir(const al::Vec3f& a, const al::Vec3f& b, float t) {
+al::Vec3f SpatialRenderer::slerpDir(const al::Vec3f& a, const al::Vec3f& b, float t) {
     // Clamp t to [0,1]
     t = std::max(0.0f, std::min(1.0f, t));
     
@@ -287,7 +395,7 @@ al::Vec3f VBAPRenderer::slerpDir(const al::Vec3f& a, const al::Vec3f& b, float t
 
 // Compute VBAP gains for a direction by injecting a unit sample
 // This uses AlloLib's VBAP implementation to get the speaker gains
-void VBAPRenderer::computeVBAPGains(const al::Vec3f& dir, std::vector<float>& gains) {
+void SpatialRenderer::computeVBAPGains(const al::Vec3f& dir, std::vector<float>& gains) {
     int numSpeakers = mLayout.speakers.size();
     gains.resize(numSpeakers, 0.0f);
     
@@ -302,7 +410,7 @@ void VBAPRenderer::computeVBAPGains(const al::Vec3f& dir, std::vector<float>& ga
     // Render a single unit sample at the given direction
     float unitSample = 1.0f;
     tempAudio.frame(0);
-    mVBAP.renderBuffer(tempAudio, dir, &unitSample, 1);
+    mVBAP->renderBuffer(tempAudio, dir, &unitSample, 1);
     
     // Extract gains from output channels
     tempAudio.frame(0);
@@ -312,9 +420,9 @@ void VBAPRenderer::computeVBAPGains(const al::Vec3f& dir, std::vector<float>& ga
 }
 
 // Main safe direction getter - wraps interpolation with fallback logic
-al::Vec3f VBAPRenderer::safeDirForSource(const std::string& name, 
-                                          const std::vector<Keyframe>& kfs, 
-                                          double t) {
+al::Vec3f SpatialRenderer::safeDirForSource(const std::string& name, 
+                                             const std::vector<Keyframe>& kfs, 
+                                             double t) {
     // Get raw interpolated direction
     al::Vec3f v = interpolateDirRaw(kfs, t);
     float m2 = v.magSqr();
@@ -390,7 +498,7 @@ al::Vec3f VBAPRenderer::safeDirForSource(const std::string& name,
 }
 
 // Raw interpolation - may return invalid vectors (caller must validate)
-al::Vec3f VBAPRenderer::interpolateDirRaw(const std::vector<Keyframe> &kfs, double t) {
+al::Vec3f SpatialRenderer::interpolateDirRaw(const std::vector<Keyframe> &kfs, double t) {
     // Returns interpolated direction from keyframes using SLERP.
     // This avoids the near-zero vector problem that linear Cartesian interpolation has
     // when keyframes are far apart on the sphere (chord through origin).
@@ -446,7 +554,7 @@ al::Vec3f VBAPRenderer::interpolateDirRaw(const std::vector<Keyframe> &kfs, doub
 }
 
 // Print end-of-render fallback summary
-void VBAPRenderer::printFallbackSummary(int totalBlocks) {
+void SpatialRenderer::printFallbackSummary(int totalBlocks) {
     if (mFallbackCount.empty()) {
         std::cout << "  Direction fallbacks: none (all sources had valid directions)\n";
         return;
@@ -473,7 +581,7 @@ void VBAPRenderer::printFallbackSummary(int totalBlocks) {
 
 // Legacy heuristic time unit detection - now just a safety net
 // Primary time unit handling is done in JSONLoader via explicit "timeUnit" field
-void VBAPRenderer::normalizeKeyframeTimes(double durationSec, size_t totalSamples, int sr) {
+void SpatialRenderer::normalizeKeyframeTimes(double durationSec, size_t totalSamples, int sr) {
     for (auto &[name, kfs] : mSpatial.sources) {
         if (kfs.empty()) continue;
         
@@ -497,7 +605,7 @@ void VBAPRenderer::normalizeKeyframeTimes(double durationSec, size_t totalSample
 }
 
 // Compute statistics on rendered output
-void VBAPRenderer::computeRenderStats(const MultiWavData &output) {
+void SpatialRenderer::computeRenderStats(const MultiWavData &output) {
     mLastStats = RenderStats();
     mLastStats.numChannels = output.channels;
     mLastStats.totalSamples = output.samples.empty() ? 0 : output.samples[0].size();
@@ -538,15 +646,18 @@ void VBAPRenderer::computeRenderStats(const MultiWavData &output) {
 }
 
 // Default render (uses default config)
-MultiWavData VBAPRenderer::render() {
+MultiWavData SpatialRenderer::render() {
     RenderConfig defaultConfig;
     return render(defaultConfig);
 }
 
 // Main render function with configuration options
-MultiWavData VBAPRenderer::render(const RenderConfig &config) {
+MultiWavData SpatialRenderer::render(const RenderConfig &config) {
     int sr = mSpatial.sampleRate;
     int numSpeakers = mLayout.speakers.size();
+    
+    // Initialize the selected spatializer
+    initializeSpatializer(config);
     
     // Apply force2D mode if requested via config
     bool originalIs2D = mLayoutIs2D;
@@ -586,6 +697,10 @@ MultiWavData VBAPRenderer::render(const RenderConfig &config) {
     std::cout << "Rendering " << renderSamples << " samples (" 
               << (double)renderSamples / sr << " sec) to " 
               << numSpeakers << " speakers from " << mSources.size() << " sources\n";
+    
+    // Print spatializer info
+    printSpatializerInfo(config);
+    
     std::cout << "  Master gain: " << config.masterGain << "\n";
     std::cout << "  Render resolution: " << config.renderResolution << " (block size: " << config.blockSize << ")\n";
     std::cout << "  Elevation mode: " << (config.elevationMode == ElevationMode::Compress ? "compress" : "clamp") << "\n";
@@ -646,6 +761,7 @@ MultiWavData VBAPRenderer::render(const RenderConfig &config) {
         std::cout << "    All sources OK\n";
     }
     std::cout << "\n";
+    
     // output uses consecutive channels 0 to numSpeakers-1
     MultiWavData out;
     out.sampleRate = sr;
@@ -700,14 +816,15 @@ MultiWavData VBAPRenderer::render(const RenderConfig &config) {
     // Print direction sanitization summary
     printSanitizationSummary();
     
-    // Print VBAP robustness summary (zero blocks, retargets, substeps)
-    printVBAPDiagSummary();
+    // Print panner robustness summary (zero blocks, retargets, substeps)
+    printPannerDiagSummary();
     
     // Write statistics to JSON if diagnostics enabled
     if (config.debugDiagnostics) {
         fs::create_directories(config.debugOutputDir);
         std::ofstream statsFile(config.debugOutputDir + "/render_stats.json");
         statsFile << "{\n";
+        statsFile << "  \"spatializer\": \"" << pannerTypeName(config.pannerType) << "\",\n";
         statsFile << "  \"totalSamples\": " << mLastStats.totalSamples << ",\n";
         statsFile << "  \"durationSec\": " << mLastStats.durationSec << ",\n";
         statsFile << "  \"numChannels\": " << mLastStats.numChannels << ",\n";
@@ -719,6 +836,12 @@ MultiWavData VBAPRenderer::render(const RenderConfig &config) {
         statsFile << "  \"clippingChannels\": " << clippingChannels << ",\n";
         statsFile << "  \"nanChannels\": " << nanChannels << ",\n";
         statsFile << "  \"masterGain\": " << config.masterGain << ",\n";
+        if (config.pannerType == PannerType::DBAP) {
+            statsFile << "  \"dbapFocus\": " << config.dbapFocus << ",\n";
+        }
+        if (config.pannerType == PannerType::LBAP) {
+            statsFile << "  \"lbapDispersion\": " << config.lbapDispersion << ",\n";
+        }
         statsFile << "  \"channelRMS\": [";
         for (int i = 0; i < numSpeakers; i++) {
             statsFile << mLastStats.channelRMS[i];
@@ -747,29 +870,29 @@ MultiWavData VBAPRenderer::render(const RenderConfig &config) {
 // 
 // ROBUSTNESS FEATURES (added 2026-01-27):
 // 1. Input energy detection - skip expensive checks for silent blocks
-// 2. VBAP zero-block detection - detect when VBAP produces ~silence despite input
-// 3. Nearest-speaker fallback - retarget to nearest speaker when VBAP fails
+// 2. Zero-block detection - detect when panner produces ~silence despite input
+// 3. Nearest-speaker fallback - retarget to nearest speaker when panner fails
 // 4. Fast-mover sub-stepping - subdivide blocks when direction changes too fast
 //
-// FUTURE OPTIMIZATION: The temp buffer allocation and per-source energy checks
-// add overhead. Profile and optimize if needed - currently prioritizing correctness.
+// DEV NOTE: Zero-block detection runs for all panners for consistency.
+// Consider optimizing for DBAP/LBAP in future - they shouldn't produce zero blocks.
 //
-void VBAPRenderer::renderPerBlock(MultiWavData &out, const RenderConfig &config,
-                                   size_t startSample, size_t endSample) {
+void SpatialRenderer::renderPerBlock(MultiWavData &out, const RenderConfig &config,
+                                      size_t startSample, size_t endSample) {
     int sr = mSpatial.sampleRate;
     int numSpeakers = mLayout.speakers.size();
     int bufferSize = config.blockSize;
     size_t renderSamples = endSample - startSample;
     
-    // Initialize AudioIOData for VBAP (main accumulator)
+    // Initialize AudioIOData for panner (main accumulator)
     al::AudioIOData audioIO;
     audioIO.framesPerBuffer(bufferSize);
     audioIO.framesPerSecond(sr);
     audioIO.channelsIn(0);
     audioIO.channelsOut(numSpeakers);
     
-    // Temp buffer for VBAP failure detection and retargeting
-    // FUTURE OPTIMIZATION: Could use lazy allocation, only create when first needed
+    // Temp buffer for panner failure detection and retargeting
+    // DEV NOTE: Could use lazy allocation for DBAP/LBAP since they shouldn't need fallback
     al::AudioIOData audioTemp;
     audioTemp.framesPerBuffer(bufferSize);
     audioTemp.framesPerSecond(sr);
@@ -806,7 +929,7 @@ void VBAPRenderer::renderPerBlock(MultiWavData &out, const RenderConfig &config,
                 sourceBuffer[i] = (globalIdx < src.samples.size()) ? src.samples[globalIdx] : 0.0f;
             }
             
-            // Task A1: Compute input energy - skip expensive checks for silent blocks
+            // Compute input energy - skip expensive checks for silent blocks
             float inAbsSum = 0.0f;
             for (size_t i = 0; i < blockLen; i++) {
                 inAbsSum += std::abs(sourceBuffer[i]);
@@ -814,12 +937,12 @@ void VBAPRenderer::renderPerBlock(MultiWavData &out, const RenderConfig &config,
             float inputThreshold = kInputEnergyThreshold * blockLen;
             bool hasInputEnergy = (inAbsSum >= inputThreshold);
             
-            // Skip silent sources entirely (no VBAP needed)
+            // Skip silent sources entirely (no panning needed)
             if (!hasInputEnergy) {
                 continue;
             }
             
-            // Task B1: Measure angular delta for fast-mover detection
+            // Measure angular delta for fast-mover detection
             // Sample directions at 25% and 75% through the block
             double t0 = (double)(blockStart + blockLen / 4) / (double)sr;
             double t1 = (double)(blockStart + 3 * blockLen / 4) / (double)sr;
@@ -834,10 +957,10 @@ void VBAPRenderer::renderPerBlock(MultiWavData &out, const RenderConfig &config,
             
             bool isFastMover = (angleDelta > kFastMoverAngleRad);
             
-            // Task B2: Sub-step rendering for fast movers
+            // Sub-step rendering for fast movers
             if (isFastMover) {
-                mVBAPDiag.substeppedBlocks[name]++;
-                mVBAPDiag.totalSubsteps++;
+                mPannerDiag.substeppedBlocks[name]++;
+                mPannerDiag.totalSubsteps++;
                 
                 // Render in smaller chunks with direction computed per chunk
                 for (size_t off = 0; off < blockLen; off += kSubStepHop) {
@@ -847,12 +970,16 @@ void VBAPRenderer::renderPerBlock(MultiWavData &out, const RenderConfig &config,
                     al::Vec3f rawDirSub = safeDirForSource(name, kfs, tSub);
                     al::Vec3f dirSub = sanitizeDirForLayout(rawDirSub, config.elevationMode);
                     
+                    // Convert direction to position for DBAP, use direction for VBAP/LBAP
+                    al::Vec3f posOrDir = (mActivePannerType == PannerType::DBAP) 
+                        ? directionToDBAPPosition(dirSub) : dirSub;
+                    
                     // Render sub-chunk into temp buffer for zero-detection
                     audioTemp.zeroOut();
                     audioTemp.frame(0);
-                    mVBAP.renderBuffer(audioTemp, dirSub, sourceBuffer.data() + off, len);
+                    mActiveSpatializer->renderBuffer(audioTemp, posOrDir, sourceBuffer.data() + off, len);
                     
-                    // Check for VBAP failure on this sub-chunk
+                    // Check for panner failure on this sub-chunk
                     float outAbsSum = 0.0f;
                     audioTemp.frame(0);
                     for (size_t i = 0; i < len; i++) {
@@ -868,18 +995,21 @@ void VBAPRenderer::renderPerBlock(MultiWavData &out, const RenderConfig &config,
                     }
                     float subThreshold = kInputEnergyThreshold * len;
                     
-                    // Task A3: If VBAP failed, retarget to nearest speaker
-                    if (subInAbsSum >= subThreshold && outAbsSum < kVBAPZeroThreshold * len * numSpeakers) {
-                        mVBAPDiag.zeroBlocks[name]++;
-                        mVBAPDiag.totalZeroBlocks++;
+                    // If panner failed, retarget to nearest speaker
+                    if (subInAbsSum >= subThreshold && outAbsSum < kPannerZeroThreshold * len * numSpeakers) {
+                        mPannerDiag.zeroBlocks[name]++;
+                        mPannerDiag.totalZeroBlocks++;
                         
                         al::Vec3f dirFallback = nearestSpeakerDir(dirSub);
+                        al::Vec3f posOrDirFallback = (mActivePannerType == PannerType::DBAP)
+                            ? directionToDBAPPosition(dirFallback) : dirFallback;
+                        
                         audioTemp.zeroOut();
                         audioTemp.frame(0);
-                        mVBAP.renderBuffer(audioTemp, dirFallback, sourceBuffer.data() + off, len);
+                        mActiveSpatializer->renderBuffer(audioTemp, posOrDirFallback, sourceBuffer.data() + off, len);
                         
-                        mVBAPDiag.retargetBlocks[name]++;
-                        mVBAPDiag.totalRetargets++;
+                        mPannerDiag.retargetBlocks[name]++;
+                        mPannerDiag.totalRetargets++;
                     }
                     
                     // Accumulate sub-chunk into main buffer
@@ -887,8 +1017,6 @@ void VBAPRenderer::renderPerBlock(MultiWavData &out, const RenderConfig &config,
                     audioIO.frame(0);
                     for (size_t i = 0; i < len; i++) {
                         for (int ch = 0; ch < numSpeakers; ch++) {
-                            // Note: audioIO.out returns reference, so we can += directly
-                            // But we need to read current value and write back
                             float current = audioIO.out(ch, off + i);
                             float addition = audioTemp.out(ch, i);
                             audioIO.out(ch, off + i) = current + addition;
@@ -901,10 +1029,14 @@ void VBAPRenderer::renderPerBlock(MultiWavData &out, const RenderConfig &config,
                 al::Vec3f rawDir = safeDirForSource(name, kfs, timeSec);
                 al::Vec3f dir = sanitizeDirForLayout(rawDir, config.elevationMode);
                 
-                // Task A2: Render into temp buffer to detect VBAP failure
+                // Convert direction to position for DBAP
+                al::Vec3f posOrDir = (mActivePannerType == PannerType::DBAP)
+                    ? directionToDBAPPosition(dir) : dir;
+                
+                // Render into temp buffer to detect panner failure
                 audioTemp.zeroOut();
                 audioTemp.frame(0);
-                mVBAP.renderBuffer(audioTemp, dir, sourceBuffer.data(), blockLen);
+                mActiveSpatializer->renderBuffer(audioTemp, posOrDir, sourceBuffer.data(), blockLen);
                 
                 // Measure output energy
                 float outAbsSum = 0.0f;
@@ -915,18 +1047,21 @@ void VBAPRenderer::renderPerBlock(MultiWavData &out, const RenderConfig &config,
                     }
                 }
                 
-                // Task A3: If VBAP produced ~silence despite input, retarget
-                if (outAbsSum < kVBAPZeroThreshold * blockLen * numSpeakers) {
-                    mVBAPDiag.zeroBlocks[name]++;
-                    mVBAPDiag.totalZeroBlocks++;
+                // If panner produced ~silence despite input, retarget
+                if (outAbsSum < kPannerZeroThreshold * blockLen * numSpeakers) {
+                    mPannerDiag.zeroBlocks[name]++;
+                    mPannerDiag.totalZeroBlocks++;
                     
                     al::Vec3f dirFallback = nearestSpeakerDir(dir);
+                    al::Vec3f posOrDirFallback = (mActivePannerType == PannerType::DBAP)
+                        ? directionToDBAPPosition(dirFallback) : dirFallback;
+                    
                     audioTemp.zeroOut();
                     audioTemp.frame(0);
-                    mVBAP.renderBuffer(audioTemp, dirFallback, sourceBuffer.data(), blockLen);
+                    mActiveSpatializer->renderBuffer(audioTemp, posOrDirFallback, sourceBuffer.data(), blockLen);
                     
-                    mVBAPDiag.retargetBlocks[name]++;
-                    mVBAPDiag.totalRetargets++;
+                    mPannerDiag.retargetBlocks[name]++;
+                    mPannerDiag.totalRetargets++;
                 }
                 
                 // Accumulate into main buffer
@@ -955,8 +1090,9 @@ void VBAPRenderer::renderPerBlock(MultiWavData &out, const RenderConfig &config,
 }
 
 // renderSmooth: Direction interpolated within each block using SLERP
-void VBAPRenderer::renderSmooth(MultiWavData &out, const RenderConfig &config,
-                                 size_t startSample, size_t endSample) {
+// Note: This mode is DEPRECATED. Only VBAP gains interpolation is implemented.
+void SpatialRenderer::renderSmooth(MultiWavData &out, const RenderConfig &config,
+                                    size_t startSample, size_t endSample) {
     int sr = mSpatial.sampleRate;
     int numSpeakers = mLayout.speakers.size();
     int bufferSize = config.blockSize;
@@ -964,6 +1100,7 @@ void VBAPRenderer::renderSmooth(MultiWavData &out, const RenderConfig &config,
     
     // For smooth mode, we need per-sample gain interpolation
     // We compute VBAP gains at block start and end, then interpolate
+    // NOTE: This only works properly with VBAP, other panners use block mode internally
     std::vector<float> gainsStart(numSpeakers);
     std::vector<float> gainsEnd(numSpeakers);
     std::vector<float> gainsInterp(numSpeakers);
@@ -999,7 +1136,7 @@ void VBAPRenderer::renderSmooth(MultiWavData &out, const RenderConfig &config,
             al::Vec3f dirStart = sanitizeDirForLayout(rawDirStart, config.elevationMode);
             al::Vec3f dirEnd = sanitizeDirForLayout(rawDirEnd, config.elevationMode);
             
-            // Compute VBAP gains at both ends
+            // Compute VBAP gains at both ends (always uses VBAP for smooth mode)
             computeVBAPGains(dirStart, gainsStart);
             computeVBAPGains(dirEnd, gainsEnd);
             
@@ -1026,8 +1163,8 @@ void VBAPRenderer::renderSmooth(MultiWavData &out, const RenderConfig &config,
 }
 
 // renderPerSample: Direction computed at every sample (slowest, smoothest)
-void VBAPRenderer::renderPerSample(MultiWavData &out, const RenderConfig &config,
-                                    size_t startSample, size_t endSample) {
+void SpatialRenderer::renderPerSample(MultiWavData &out, const RenderConfig &config,
+                                       size_t startSample, size_t endSample) {
     int sr = mSpatial.sampleRate;
     int numSpeakers = mLayout.speakers.size();
     size_t renderSamples = endSample - startSample;
@@ -1064,6 +1201,8 @@ void VBAPRenderer::renderPerSample(MultiWavData &out, const RenderConfig &config
             
             // Sanitize direction to fit within speaker layout's representable range
             al::Vec3f dir = sanitizeDirForLayout(rawDir, config.elevationMode);
+            
+            // For per-sample mode, always use VBAP gains (most accurate per-sample)
             computeVBAPGains(dir, gains);
             
             // Accumulate into output
