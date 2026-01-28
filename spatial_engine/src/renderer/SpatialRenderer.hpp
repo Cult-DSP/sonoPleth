@@ -169,6 +169,9 @@ private:
     // Layout radius for DBAP position computation
     // Computed as median speaker distance in constructor
     float mLayoutRadius = 1.0f;
+
+    // Subwoofer output channels (from layout.subwoofers)
+    std::vector<int> mSubwooferChannels;
     
     // not currently used but left here in case you need to remap channels later
     // would map consecutive indices to AlloSphere hardware channels

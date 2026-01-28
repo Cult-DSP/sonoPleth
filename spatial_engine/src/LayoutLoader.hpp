@@ -11,8 +11,13 @@ struct SpeakerData {
     int deviceChannel;
 };
 
+struct subwooferData {
+    int deviceChannel;
+};
+
 struct SpeakerLayoutData {
     std::vector<SpeakerData> speakers;
+    std::vector<subwooferData> subwoofers;
 };
 
 class LayoutLoader {

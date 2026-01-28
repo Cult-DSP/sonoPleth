@@ -22,5 +22,11 @@ SpeakerLayoutData LayoutLoader::loadLayout(const std::string &path) {
         d.speakers.push_back(spk);
     }
 
+    for (auto &s : j["subwoofers"]) {
+        subwooferData sub;
+        sub.deviceChannel = s["channel"];
+        d.subwoofers.push_back(sub);
+    }
+
     return d;
 }

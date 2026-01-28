@@ -40,6 +40,12 @@ SpatialRenderer::SpatialRenderer(const SpeakerLayoutData &layout,
     // Old approach tried to preserve deviceChannel which caused out-of-bounds crashes
     // because AudioIOData only allocates channels 0 to numSpeakers-1
     
+    // Collect subwoofer channels from layout
+    mSubwooferChannels.clear();
+    for (const auto& sub : layout.subwoofers) {
+        mSubwooferChannels.push_back(sub.deviceChannel);
+    }
+
     // Collect speaker distances for layout radius computation
     std::vector<float> speakerDistances;
     
@@ -81,7 +87,7 @@ SpatialRenderer::SpatialRenderer(const SpeakerLayoutData &layout,
     const float twoDThreshRad = 3.0f * float(M_PI) / 180.0f;
     mLayoutIs2D = (mLayoutElSpanRad < twoDThreshRad);
     
-    std::cout << "Layout: " << layout.speakers.size() << " speakers, radius: " 
+    std::cout << "Layout: " << layout.subwoofers.size() << " subwoofers, " << layout.speakers.size() << " speakers, radius: " 
               << std::fixed << std::setprecision(2) << mLayoutRadius << "m\n";
     std::cout << "Layout elevation range: [" 
               << (mLayoutMinElRad * 180.0f / M_PI) << "°, " 
@@ -103,6 +109,8 @@ SpatialRenderer::SpatialRenderer(const SpeakerLayoutData &layout,
             std::sin(spk.elevation)
         ).normalize();
     }
+
+    
     
     // Create spatializers using unique_ptr (LBAP has broken copy semantics in AlloLib)
     
@@ -397,6 +405,7 @@ al::Vec3f SpatialRenderer::slerpDir(const al::Vec3f& a, const al::Vec3f& b, floa
 // This uses AlloLib's VBAP implementation to get the speaker gains
 void SpatialRenderer::computeVBAPGains(const al::Vec3f& dir, std::vector<float>& gains) {
     int numSpeakers = mLayout.speakers.size();
+    int numSubwoofers = mLayout.subwoofers.size();
     gains.resize(numSpeakers, 0.0f);
     
     // Use a small AudioIOData buffer with a unit sample to extract gains
@@ -404,7 +413,7 @@ void SpatialRenderer::computeVBAPGains(const al::Vec3f& dir, std::vector<float>&
     tempAudio.framesPerBuffer(1);
     tempAudio.framesPerSecond(mSpatial.sampleRate);
     tempAudio.channelsIn(0);
-    tempAudio.channelsOut(numSpeakers);
+    tempAudio.channelsOut(numSpeakers + numSubwoofers); // ensure enough channels
     tempAudio.zeroOut();
     
     // Render a single unit sample at the given direction
@@ -763,10 +772,16 @@ MultiWavData SpatialRenderer::render(const RenderConfig &config) {
     std::cout << "\n";
     
     // output uses consecutive channels 0 to numSpeakers-1
+    //return here if there are indexing issues with channel output 
     MultiWavData out;
     out.sampleRate = sr;
-    out.channels = numSpeakers;
-    out.samples.resize(numSpeakers);
+    int maxChannel = numSpeakers - 1;
+    for (int subCh : mSubwooferChannels) {
+        if (subCh > maxChannel) maxChannel = subCh;
+    }
+    //logic to accommodate subwoofer channels that may be beyond speaker count / placed out of order 
+    out.channels = maxChannel + 1;
+    out.samples.resize(out.channels);
     for (auto &c : out.samples) c.resize(renderSamples, 0.0f);
 
     // Dispatch to appropriate render resolution
@@ -941,6 +956,18 @@ void SpatialRenderer::renderPerBlock(MultiWavData &out, const RenderConfig &conf
             if (!hasInputEnergy) {
                 continue;
             }
+            // Special handling for LFE channel / SUB (no spatialization) 
+            if (name == "LFE") {
+                // Example: assume mSubwooferChannels is a std::vector<int> of sub channel indices
+                for (size_t i = 0; i < blockLen; ++i) {
+                    float sample = sourceBuffer[i];
+                    for (int subCh : mSubwooferChannels) {
+                        out.samples[subCh][outBlockStart + i] += sample * config.masterGain;
+                    }
+                }
+                continue; // Skip spatialization for LFE
+            }
+
             
             // Measure angular delta for fast-mover detection
             // Sample directions at 25% and 75% through the block
@@ -1086,6 +1113,8 @@ void SpatialRenderer::renderPerBlock(MultiWavData &out, const RenderConfig &conf
                 out.samples[ch][outBlockStart + i] = sample * config.masterGain;
             }
         }
+
+
     }
 }
 
@@ -1162,7 +1191,7 @@ void SpatialRenderer::renderSmooth(MultiWavData &out, const RenderConfig &config
     }
 }
 
-// renderPerSample: Direction computed at every sample (slowest, smoothest)
+// renderPerSample: Direction computed at every sample (slowest, smoothest) ### NOT UP TO DATE , DO NOT USE
 void SpatialRenderer::renderPerSample(MultiWavData &out, const RenderConfig &config,
                                        size_t startSample, size_t endSample) {
     int sr = mSpatial.sampleRate;
