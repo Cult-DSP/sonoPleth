@@ -30,6 +30,9 @@ And produces:
                                 │
 ┌─────────────────┐    ┌────────┴─────────┐
 │ Spatial JSON    │───>│ interpolateDir() │
+                                ## LFE
+
+                                See the full section above: "LFE (Low-Frequency Effects) Handling" for detailed documentation on LFE routing, subwoofer buffer sizing, and spatializer support.
 │ (trajectories)  │    │ (direction over  │
 └─────────────────┘    │  time)           │
                        └──────────────────┘
@@ -341,6 +344,56 @@ Direction Sanitization Summary:
 DBAP Robustness Summary:
   All blocks rendered normally (no panner failures or fast motion detected)
 ```
+
+## LFE (Low-Frequency Effects) Handling
+
+### Overview
+
+The renderer now supports robust, layout-driven handling of LFE (subwoofer) channels. LFE sources are **not spatialized**; instead, they are routed directly to the subwoofer channel(s) as defined in the speaker layout JSON. This ensures correct bass management and prevents spatialization artifacts for LFE content.
+
+### Key Features
+
+- **Direct Routing:** LFE sources are detected and routed directly to all subwoofer channels specified in the layout's `subwoofers` array (see below), bypassing the spatializer.
+- **Arbitrary Subwoofer Indices:** The renderer supports any number of subwoofers, with arbitrary channel indices, as defined in the layout JSON.
+- **Buffer Sizing:** The output buffer is automatically sized to accommodate the highest channel index present in either the `speakers` or `subwoofers` arrays. This prevents out-of-bounds errors when subwoofer channels have high indices.
+- **Spatializer-Agnostic:** LFE routing works identically for all spatializers (DBAP, VBAP, LBAP).
+
+### Speaker Layout JSON Example
+
+```json
+{
+  "speakers": [
+    { "id": 1, "channel": 0, ... },
+    { "id": 2, "channel": 1, ... }
+  ],
+  "subwoofers": [
+    { "id": "LFE1", "channel": 16 },
+    { "id": "LFE2", "channel": 17 }
+  ]
+}
+```
+
+### Implementation Details
+
+- **Detection:** LFE sources are identified by name or metadata (see code for details).
+- **Routing:** For each LFE source, its signal is copied directly to all subwoofer channels for every block.
+- **Buffer Allocation:** The output buffer (`MultiWavData.samples`) is resized to `max(maxSpeakerChannel, maxSubwooferChannel) + 1` to ensure all channels are valid.
+- **Safety:** All buffer accesses are bounds-checked by construction; negative or invalid channel indices in the layout will cause a warning or error.
+
+### Rationale
+
+This approach ensures:
+- LFE content is always delivered to the correct subwoofer channels, regardless of layout.
+- No risk of buffer overruns or segmentation faults due to high subwoofer channel indices.
+- Consistent behavior across all spatializer modes.
+
+### Related Files
+
+- `spatial_engine/src/renderer/SpatialRenderer.cpp` — LFE routing and buffer sizing logic
+- `spatial_engine/src/renderer/SpatialRenderer.hpp` — Renderer config and member variables
+- `spatial_engine/speaker_layouts/*.json` — Layouts with subwoofer definitions
+
+---
 
 The **Direction Sanitization Summary** shows:
 

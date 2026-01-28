@@ -1,3 +1,26 @@
+### PUSH 3 - LFE Routing and Buffer Sizing
+
+#### Summary
+
+This push implements robust, layout-driven handling of LFE (Low-Frequency Effects) channels and subwoofer routing in the spatial renderer. All changes are fully documented in `RENDERING.md` (see "LFE (Low-Frequency Effects) Handling").
+
+#### Key Changes
+
+- **Direct LFE Routing:** LFE sources are detected and routed directly to all subwoofer channels specified in the layout's `subwoofers` array, bypassing the spatializer.
+- **Arbitrary Subwoofer Indices:** The renderer supports any number of subwoofers, with arbitrary channel indices, as defined in the layout JSON.
+- **Buffer Sizing:** The output buffer is automatically sized to accommodate the highest channel index present in either the `speakers` or `subwoofers` arrays. This prevents out-of-bounds errors when subwoofer channels have high indices.
+- **Spatializer-Agnostic:** LFE routing works identically for all spatializers (DBAP, VBAP, LBAP).
+- **Safety:** All buffer accesses are bounds-checked by construction; negative or invalid channel indices in the layout will cause a warning or error.
+
+#### Rationale
+
+This approach ensures:
+- LFE content is always delivered to the correct subwoofer channels, regardless of layout.
+- No risk of buffer overruns or segmentation faults due to high subwoofer channel indices.
+- Consistent behavior across all spatializer modes.
+
+See `RENDERING.md` for full details, rationale, and example layout JSON.
+
 # Rendering Development Notes - 2026-01-27
 
 ## Overview
