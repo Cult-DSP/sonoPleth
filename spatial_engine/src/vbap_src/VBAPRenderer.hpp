@@ -40,7 +40,8 @@
 // Elevation handling mode for directions outside speaker layout coverage
 enum class ElevationMode {
     Clamp,    // Hard clip elevation to layout bounds (may cause "sticking" at extremes)
-    Compress  // Compress full [-pi/2, +pi/2] into layout's [minEl, maxEl] (recommended)
+    RescaleAtmosUp,  // (default) assumes content elevation in [0, +pi/2] and remaps into layout range
+    RescaleFullSphere // assumes content elevation in [-pi/2, +pi/2] and remaps into layout range
 };
 
 // Render configuration options
@@ -65,9 +66,8 @@ struct RenderConfig {
     int blockSize = 64;  // Recommended: 64 for quality, 256 for speed
     
     // Elevation mode for directions outside speaker layout coverage
-    // Compress is recommended: maps full sphere to available elevation range
-    // Clamp clips to bounds (may cause "sticking" at top/bottom)
-    ElevationMode elevationMode = ElevationMode::Compress;
+    // Default: RescaleAtmosUp (vertical compensation ON)
+    ElevationMode elevationMode = ElevationMode::RescaleAtmosUp;
     
     // Force 2D mode (flatten all elevations to z=0) - useful for testing
     bool force2D = false;
@@ -130,7 +130,8 @@ private:
     // Direction sanitization diagnostics
     struct DirDiag {
         uint64_t clampedEl = 0;      // directions where elevation was clamped
-        uint64_t compressedEl = 0;   // directions where elevation was compressed
+        uint64_t rescaledAtmosUp = 0;    // directions remapped by RescaleAtmosUp
+        uint64_t rescaledFullSphere = 0; // directions remapped by RescaleFullSphere
         uint64_t flattened2D = 0;    // directions flattened to plane (2D mode)
         uint64_t invalidDir = 0;     // degenerate directions that needed fallback
     } mDirDiag;
@@ -171,7 +172,7 @@ private:
     
     // Sanitize direction to fit within speaker layout's representable range
     // - 2D layouts: flatten elevation to z=0
-    // - 3D layouts: clamp or compress elevation to [mLayoutMinElRad, mLayoutMaxElRad]
+    // - 3D layouts: clamp or rescale (RescaleAtmosUp / RescaleFullSphere) elevation to [mLayoutMinElRad, mLayoutMaxElRad]
     // This prevents sources from becoming inaudible due to out-of-range directions
     al::Vec3f sanitizeDirForLayout(const al::Vec3f& unitDir, ElevationMode mode);
     

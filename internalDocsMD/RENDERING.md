@@ -93,7 +93,7 @@ And produces:
 | `--t1 SECONDS`             | (end)    | Stop rendering at this time                      |
 | `--render_resolution MODE` | block    | Render mode: `block` (recommended) or `sample`   |
 | `--block_size N`           | 64       | Block size for direction updates (32-256)        |
-| `--elevation_mode MODE`    | compress | Elevation handling: `compress` or `clamp`        |
+| `--elevation_mode MODE`    | (legacy) | Legacy flag; accepts `compress` (maps to RescaleFullSphere) or `clamp`. Prefer `--vertical-compensation` / `--no-vertical-compensation` (default: RescaleAtmosUp) |
 | `--force_2d`               | (off)    | Force 2D mode (flatten all elevations to z=0)    |
 | `--debug_dir DIR`          | (none)   | Output diagnostics to this directory             |
 
@@ -286,8 +286,9 @@ enum class PannerType {
 };
 
 enum class ElevationMode {
-    Clamp,    // Hard clip elevation to layout bounds
-    Compress  // Map full sphere to layout's elevation range (recommended)
+  Clamp,           // Hard clip elevation to layout bounds
+  RescaleAtmosUp,  // Map [0,+90°] (Atmos-style) into layout range (DEFAULT)
+  RescaleFullSphere // Map [-90°,+90°] (full-sphere) into layout range (legacy "compress")
 };
 
 struct RenderConfig {
@@ -305,7 +306,7 @@ struct RenderConfig {
     std::string debugOutputDir = "";            // Where to write diagnostics
     std::string renderResolution = "block";     // "block" (recommended) or "sample"
     int blockSize = 64;                         // Direction update interval (samples)
-    ElevationMode elevationMode = ElevationMode::Compress;
+  ElevationMode elevationMode = ElevationMode::RescaleAtmosUp;
     bool force2D = false;                       // Force 2D mode
 };
 ```
@@ -326,7 +327,7 @@ Spatializer: DBAP (focus=1.0)
   NOTE: DBAP uses coordinate transform (x,y,z)->(x,z,-y) for AlloLib compatibility
   Master gain: 0.25
   Render resolution: block (block size: 64)
-  Elevation mode: compress
+  Elevation mode: rescale_atmos_up
 
 Render Statistics:
   Overall peak: 0.847 (-1.4 dBFS)
@@ -338,7 +339,8 @@ Direction Sanitization Summary:
   Layout type: 3D
   Elevation range: [-45.0°, 60.0°]
   Clamped elevations: 0
-  Compressed elevations: 12847
+  Rescaled (AtmosUp): 12847
+  Rescaled (FullSphere): 0
   Invalid/fallback directions: 0
 
 DBAP Robustness Summary:
@@ -399,7 +401,7 @@ The **Direction Sanitization Summary** shows:
 
 - **Layout type**: Whether the layout is treated as 2D or 3D
 - **Elevation range**: The min/max speaker elevations detected from the layout
-- **Clamped/Compressed elevations**: How many directions were adjusted to fit the layout
+  - **Sanitized elevations**: Counts of how many directions were adjusted to fit the layout (clamped / rescaledAtmosUp / rescaledFullSphere)
 - **Invalid/fallback directions**: Degenerate directions that needed fallback handling
 
 The **Panner Robustness Summary** shows (varies by spatializer):
@@ -453,9 +455,10 @@ After direction interpolation, directions are **sanitized** to fit within the sp
 **For 3D layouts:**
 
 1. Convert direction to spherical coordinates (azimuth, elevation)
-2. Apply elevation mode:
-   - **Compress**: Map elevation from [-90°, +90°] to [minEl, maxEl]
-   - **Clamp**: Hard clip elevation to [minEl, maxEl]
+2. Apply elevation mode (default: RescaleAtmosUp):
+  - **RescaleAtmosUp** (default): Map source elevations from [0°, +90°] (typical Atmos-style range) into the layout's [minEl, maxEl]. This preserves upward-only Atmos elevation cues while keeping layout bounds.
+  - **RescaleFullSphere**: Map source elevations from [-90°, +90°] (full-sphere content) into the layout's [minEl, maxEl]. This reproduces the previous "compress" behavior.
+  - **Clamp**: Hard clip elevation to [minEl, maxEl] (disable vertical compensation)
 3. Convert back to Cartesian unit vector
 
 **For 2D layouts** (elevation span < 3°):
@@ -556,10 +559,10 @@ Always specify `timeUnit` in your JSON to avoid warnings and potential misdetect
 
 **Fix**: The renderer now automatically sanitizes directions:
 
-- Use `--elevation_mode compress` (default) to map all elevations to the layout's range
-- Check the "Direction Sanitization Summary" in render output
-- High "Compressed elevations" count indicates many out-of-range directions were adjusted
-- For height-only sources, the compressed elevation preserves relative up/down motion
+- By default vertical compensation is ON (RescaleAtmosUp). To preserve Atmos-style elevations use the default behavior which remaps source elevations in [0°, +90°] into the layout's range.
+- Legacy flag: `--elevation_mode compress` maps to `RescaleFullSphere` and will remap [-90°, +90°] into the layout's range (equivalent to the older "compress" behavior).
+- To disable vertical compensation entirely use `--no-vertical-compensation` (Clamp).
+- Check the "Direction Sanitization Summary" in render output. High counts in the rescale/clamp counters indicate many out-of-range directions were adjusted.
 
 ### "Zero output" / Silent channels
 

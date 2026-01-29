@@ -9,6 +9,16 @@
 
 namespace fs = std::filesystem;
 
+// Local helper for VBAPRenderer: remap and clamp a scalar value from [inMin,inMax]
+// into [outMin,outMax]. Mirrors remapClamped used in SpatialRenderer.cpp
+static inline float remapClamped(float x, float inMin, float inMax, float outMin, float outMax) {
+    float denom = inMax - inMin;
+    if (std::abs(denom) < 1e-12f) return outMin;
+    float t = (x - inMin) / denom;
+    t = std::clamp(t, 0.0f, 1.0f);
+    return outMin + t * (outMax - outMin);
+}
+
 VBAPRenderer::VBAPRenderer(const SpeakerLayoutData &layout,
                            const SpatialData &spatial,
                            const std::map<std::string, MonoWavData> &sources)
@@ -134,24 +144,32 @@ al::Vec3f VBAPRenderer::sanitizeDirForLayout(const al::Vec3f& v, ElevationMode m
     float el = std::asin(std::clamp(d.z, -1.0f, 1.0f));
     
     float el2 = el;
-    
-    if (mode == ElevationMode::Clamp) {
-        // Hard clip elevation to layout bounds
-        float clamped = std::clamp(el, mLayoutMinElRad, mLayoutMaxElRad);
-        if (clamped != el) {
-            mDirDiag.clampedEl++;
+
+    switch (mode) {
+        case ElevationMode::Clamp: {
+            float clamped = std::clamp(el, mLayoutMinElRad, mLayoutMaxElRad);
+            if (clamped != el) mDirDiag.clampedEl++;
+            el2 = clamped;
+            break;
         }
-        el2 = clamped;
-    } else {
-        // Compress: map full elevation range [-pi/2, +pi/2] to layout's [minEl, maxEl]
-        // t in [0,1] represents normalized position in full elevation range
-        float t = (el + float(M_PI) / 2.0f) / float(M_PI);
-        t = std::clamp(t, 0.0f, 1.0f);
-        float mapped = mLayoutMinElRad + t * mLayoutElSpanRad;
-        if (std::abs(mapped - el) > 1e-5f) {
-            mDirDiag.compressedEl++;
+        case ElevationMode::RescaleAtmosUp: {
+            float mapped = remapClamped(el, 0.0f, float(M_PI)/2.0f, mLayoutMinElRad, mLayoutMaxElRad);
+            if (std::abs(mapped - el) > 1e-5f) mDirDiag.rescaledAtmosUp++;
+            el2 = mapped;
+            break;
         }
-        el2 = mapped;
+        case ElevationMode::RescaleFullSphere: {
+            float mapped = remapClamped(el, -float(M_PI)/2.0f, float(M_PI)/2.0f, mLayoutMinElRad, mLayoutMaxElRad);
+            if (std::abs(mapped - el) > 1e-5f) mDirDiag.rescaledFullSphere++;
+            el2 = mapped;
+            break;
+        }
+        default: {
+            float clamped = std::clamp(el, mLayoutMinElRad, mLayoutMaxElRad);
+            if (clamped != el) mDirDiag.clampedEl++;
+            el2 = clamped;
+            break;
+        }
     }
     
     // Convert back to Cartesian coordinates
@@ -172,8 +190,9 @@ void VBAPRenderer::printSanitizationSummary() {
     if (mLayoutIs2D) {
         std::cout << "  Flattened to plane: " << mDirDiag.flattened2D << " directions\n";
     } else {
-        std::cout << "  Clamped elevations: " << mDirDiag.clampedEl << "\n";
-        std::cout << "  Compressed elevations: " << mDirDiag.compressedEl << "\n";
+    std::cout << "  Clamped elevations: " << mDirDiag.clampedEl << "\n";
+    std::cout << "  Rescaled (AtmosUp): " << mDirDiag.rescaledAtmosUp << "\n";
+    std::cout << "  Rescaled (FullSphere): " << mDirDiag.rescaledFullSphere << "\n";
     }
     std::cout << "  Invalid/fallback directions: " << mDirDiag.invalidDir << "\n";
 }
@@ -588,7 +607,14 @@ MultiWavData VBAPRenderer::render(const RenderConfig &config) {
               << numSpeakers << " speakers from " << mSources.size() << " sources\n";
     std::cout << "  Master gain: " << config.masterGain << "\n";
     std::cout << "  Render resolution: " << config.renderResolution << " (block size: " << config.blockSize << ")\n";
-    std::cout << "  Elevation mode: " << (config.elevationMode == ElevationMode::Compress ? "compress" : "clamp") << "\n";
+    std::string emodeStr;
+    switch (config.elevationMode) {
+        case ElevationMode::Clamp: emodeStr = "clamp"; break;
+        case ElevationMode::RescaleAtmosUp: emodeStr = "rescale_atmos_up"; break;
+        case ElevationMode::RescaleFullSphere: emodeStr = "rescale_full_sphere"; break;
+        default: emodeStr = "unknown"; break;
+    }
+    std::cout << "  Elevation mode: " << emodeStr << "\n";
     
     if (!config.soloSource.empty()) {
         std::cout << "  SOLO MODE: Only rendering source '" << config.soloSource << "'\n";

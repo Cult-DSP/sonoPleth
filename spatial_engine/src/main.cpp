@@ -51,7 +51,7 @@ void printUsage() {
               << "  --t1 SECONDS          End time in seconds (default: full duration)\n"
               << "  --render_resolution MODE  Render resolution: block or sample (default: block)\n"
               << "  --block_size N        Block size in samples (default: 64, use 256 for faster renders)\n"
-              << "  --elevation_mode MODE Elevation handling: compress or clamp (default: compress)\n"
+              << "  --vertical-compensation [fullsphere]  Vertical compensation mode (default: enabled, AtmosUp)\n"
               << "  --force_2d            Force 2D mode (flatten all elevations)\n"
               << "  --debug_dir DIR       Output debug diagnostics to directory\n"
               << "  --help                Show this help message\n\n";
@@ -67,7 +67,7 @@ void printUsage() {
               << "           --lbap_dispersion controls zenith/nadir signal spread\n\n";
     // DEV NOTE: Future --spatializer auto mode could detect layout type:
     // - Single ring (2D): use DBAP
-    // - Multi-ring with good coverage: use LBAP
+    // - Multi-ring with good coverage: use LBAP or DBAP
     // - Dense 3D coverage: use VBAP
     // For now, default to DBAP as safest option.
     std::cout << "Render Resolutions:\n"
@@ -76,10 +76,15 @@ void printUsage() {
               << "  sample - Direction computed per sample (very slow, debugging only)\n"
               << "  smooth - DEPRECATED: may cause artifacts, use 'block' instead\n\n";
     std::cout << "Elevation Modes:\n"
-              << "  compress - Map full elevation range to layout's speaker coverage (RECOMMENDED)\n"
-              << "             Preserves relative height differences, no signal loss\n"
-              << "  clamp    - Hard clip elevations to speaker bounds\n"
-              << "             May cause 'sticking' at top/bottom\n";
+              << "  (default) vertical compensation ON (RescaleAtmosUp):\n"
+              << "             Assumes source elevations live in [0,+pi/2] (ear->top) and\n"
+              << "             remaps into the layout's elevation range. Recommended for\n"
+              << "             Atmos-style content.\n"
+              << "  --vertical-compensation fullsphere :\n"
+              << "             Rescale assuming source elevations in [-pi/2,+pi/2] (full sphere).\n"
+              << "  --no-vertical-compensation :\n"
+              << "             Disable vertical compensation (Clamp). Preserves input elevation\n"
+              << "             but clips to layout bounds for safety.\n";
 }
 
 int main(int argc, char *argv[]) {
@@ -161,15 +166,28 @@ int main(int argc, char *argv[]) {
                 return 1;
             }
         } else if (arg == "--elevation_mode") {
+            // Backwards-compatible: accept old flag values
             std::string mode = argv[++i];
             if (mode == "compress") {
-                config.elevationMode = ElevationMode::Compress;
+                config.elevationMode = ElevationMode::RescaleFullSphere; // map old 'compress' to full-sphere rescale
             } else if (mode == "clamp") {
                 config.elevationMode = ElevationMode::Clamp;
             } else {
                 std::cerr << "Error: unknown elevation mode '" << mode << "'\n";
                 std::cerr << "Valid modes: compress, clamp\n";
                 return 1;
+            }
+        } else if (arg == "--no-vertical-compensation") {
+            config.elevationMode = ElevationMode::Clamp;
+        } else if (arg == "--vertical-compensation") {
+            // Optional argument: 'fullsphere' selects full-sphere mapping.
+            // If no argument provided (flag alone), keep default RescaleAtmosUp.
+            if (i + 1 < argc) {
+                std::string val = argv[i+1];
+                if (val == "fullsphere") {
+                    config.elevationMode = ElevationMode::RescaleFullSphere;
+                    i++; // consume argument
+                }
             }
         } else if (arg == "--force_2d") {
             config.force2D = true;

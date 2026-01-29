@@ -9,6 +9,16 @@
 
 namespace fs = std::filesystem;
 
+// Local helper: remap and clamp a scalar from [inMin,inMax] to [outMin,outMax].
+// Protects against degenerate input ranges and clamps the normalized t to [0,1].
+static inline float remapClamped(float x, float inMin, float inMax, float outMin, float outMax) {
+    float denom = inMax - inMin;
+    if (std::abs(denom) < 1e-12f) return outMin; // avoid div0
+    float t = (x - inMin) / denom;
+    t = std::clamp(t, 0.0f, 1.0f);
+    return outMin + t * (outMax - outMin);
+}
+
 // Helper function to get panner type name as string
 std::string SpatialRenderer::pannerTypeName(PannerType type) {
     switch (type) {
@@ -224,6 +234,8 @@ al::Vec3f SpatialRenderer::directionToDBAPPosition(const al::Vec3f& dir) {
 
 // Sanitize direction to fit within speaker layout's representable range
 // This prevents sources from becoming inaudible due to out-of-range directions
+
+ //updating to compensate for low speakers 
 al::Vec3f SpatialRenderer::sanitizeDirForLayout(const al::Vec3f& v, ElevationMode mode) {
     al::Vec3f d = safeNormalize(v);
     float mag = d.mag();
@@ -250,24 +262,47 @@ al::Vec3f SpatialRenderer::sanitizeDirForLayout(const al::Vec3f& v, ElevationMod
     float el = std::asin(std::clamp(d.z, -1.0f, 1.0f));
     
     float el2 = el;
-    
-    if (mode == ElevationMode::Clamp) {
-        // Hard clip elevation to layout bounds
-        float clamped = std::clamp(el, mLayoutMinElRad, mLayoutMaxElRad);
-        if (clamped != el) {
-            mDirDiag.clampedEl++;
+
+    // Apply elevation mapping according to the selected mode. All angles are
+    // in radians. We intentionally keep the mapping logic localized here so
+    // changes remain minimal and easy to audit.
+    switch (mode) {
+        case ElevationMode::Clamp: {
+            // Hard clip elevation to layout bounds
+            float clamped = std::clamp(el, mLayoutMinElRad, mLayoutMaxElRad);
+            if (clamped != el) {
+                mDirDiag.clampedEl++;
+            }
+            el2 = clamped;
+            break;
         }
-        el2 = clamped;
-    } else {
-        // Compress: map full elevation range [-pi/2, +pi/2] to layout's [minEl, maxEl]
-        // t in [0,1] represents normalized position in full elevation range
-        float t = (el + float(M_PI) / 2.0f) / float(M_PI);
-        t = std::clamp(t, 0.0f, 1.0f);
-        float mapped = mLayoutMinElRad + t * mLayoutElSpanRad;
-        if (std::abs(mapped - el) > 1e-5f) {
-            mDirDiag.compressedEl++;
+        case ElevationMode::RescaleAtmosUp: {
+            // Source assumed in [0, +pi/2] (ear -> top). Map that range into
+            // the layout's [mLayoutMinElRad, mLayoutMaxElRad]. Inputs below 0
+            // or above +pi/2 are clamped by remapClamped.
+            float mapped = remapClamped(el, 0.0f, float(M_PI)/2.0f, mLayoutMinElRad, mLayoutMaxElRad);
+            if (std::abs(mapped - el) > 1e-5f) {
+                mDirDiag.rescaledAtmosUp++;
+            }
+            el2 = mapped;
+            break;
         }
-        el2 = mapped;
+        case ElevationMode::RescaleFullSphere: {
+            // Source assumed in [-pi/2, +pi/2]. Map full sphere into layout range.
+            float mapped = remapClamped(el, -float(M_PI)/2.0f, float(M_PI)/2.0f, mLayoutMinElRad, mLayoutMaxElRad);
+            if (std::abs(mapped - el) > 1e-5f) {
+                mDirDiag.rescaledFullSphere++;
+            }
+            el2 = mapped;
+            break;
+        }
+        default: {
+            // Safe fallback: clamp
+            float clamped = std::clamp(el, mLayoutMinElRad, mLayoutMaxElRad);
+            if (clamped != el) mDirDiag.clampedEl++;
+            el2 = clamped;
+            break;
+        }
     }
     
     // Convert back to Cartesian coordinates
@@ -289,7 +324,8 @@ void SpatialRenderer::printSanitizationSummary() {
         std::cout << "  Flattened to plane: " << mDirDiag.flattened2D << " directions\n";
     } else {
         std::cout << "  Clamped elevations: " << mDirDiag.clampedEl << "\n";
-        std::cout << "  Compressed elevations: " << mDirDiag.compressedEl << "\n";
+        std::cout << "  Rescaled (AtmosUp): " << mDirDiag.rescaledAtmosUp << "\n";
+        std::cout << "  Rescaled (FullSphere): " << mDirDiag.rescaledFullSphere << "\n";
     }
     std::cout << "  Invalid/fallback directions: " << mDirDiag.invalidDir << "\n";
 }
@@ -712,7 +748,15 @@ MultiWavData SpatialRenderer::render(const RenderConfig &config) {
     
     std::cout << "  Master gain: " << config.masterGain << "\n";
     std::cout << "  Render resolution: " << config.renderResolution << " (block size: " << config.blockSize << ")\n";
-    std::cout << "  Elevation mode: " << (config.elevationMode == ElevationMode::Compress ? "compress" : "clamp") << "\n";
+    // Print a human-readable elevation mode string
+    std::string emodeStr;
+    switch (config.elevationMode) {
+        case ElevationMode::Clamp: emodeStr = "clamp"; break;
+        case ElevationMode::RescaleAtmosUp: emodeStr = "rescale_atmos_up"; break;
+        case ElevationMode::RescaleFullSphere: emodeStr = "rescale_full_sphere"; break;
+        default: emodeStr = "unknown"; break;
+    }
+    std::cout << "  Elevation mode: " << emodeStr << "\n";
     
     if (!config.soloSource.empty()) {
         std::cout << "  SOLO MODE: Only rendering source '" << config.soloSource << "'\n";

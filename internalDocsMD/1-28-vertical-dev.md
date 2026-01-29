@@ -36,15 +36,22 @@ This document captures the technical decisions and implementation details for th
 
 **Symptoms:**
 
+- Random audible gaps in rendered output
+- Sources "disappearing" at certain positions
+- Gaps correlate with high elevation or edge-of-coverage directions
 
 **Root Cause:**
 VBAP (Vector Base Amplitude Panning) requires the source direction to fall within a valid speaker triplet (triangle formed by 3 speakers). When a direction falls outside all triplets, VBAP produces zero output. This can happen:
 
+- At elevations beyond the speaker array's coverage
+- In "holes" between speaker rings
+- At directions that got sanitized but still fall in a gap
 
 **Previous Mitigations (insufficient):**
 
 - Elevation rescale/clamping (added earlier) - helps but doesn't guarantee valid triplet
 - Direction fallback - only triggers on degenerate interpolation, not VBAP failure
+
 ### Issue 2: Fast Mover Blink
 
 **Symptoms:**
