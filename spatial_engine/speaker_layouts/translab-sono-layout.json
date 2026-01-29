@@ -97,5 +97,5 @@
       "radius": 5.212773750125743
     }
   ],
-  "subwoofers": [{ "channel": 16 }]
+  "subwoofers": [{ "channel": 16 }, { "channel": 17 }]
 }
