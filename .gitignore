@@ -45,6 +45,9 @@ bin/
 processedData/stageForRender/
 processedData/
 
+#jupyter 
+sonoPleth/etc/jupyter/
+
 
 # Ignore WAV files
 *.wav
