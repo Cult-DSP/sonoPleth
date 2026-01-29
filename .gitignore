@@ -54,13 +54,13 @@ processedData/
 .vscode/
 
 #data
-*.json
+
 *.xml
-!vbapRender/allosphere_layout.json
+!spatial_Engine/speaker_layouts/
 
 
 #c ++ stuff 
-vbapRender/build/
+spatial_Engine/spatialRender/build
 # Ignore AlloLib build directory
 
 build/
