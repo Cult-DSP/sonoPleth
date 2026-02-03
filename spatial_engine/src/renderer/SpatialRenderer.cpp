@@ -1003,10 +1003,11 @@ void SpatialRenderer::renderPerBlock(MultiWavData &out, const RenderConfig &conf
             // Special handling for LFE channel / SUB (no spatialization) 
             if (name == "LFE") {
                 // Example: assume mSubwooferChannels is a std::vector<int> of sub channel indices
+                float subGain = config.masterGain / mSubwooferChannels.size(); // Could customize LFE gain if desired
                 for (size_t i = 0; i < blockLen; ++i) {
                     float sample = sourceBuffer[i];
                     for (int subCh : mSubwooferChannels) {
-                        out.samples[subCh][outBlockStart + i] += sample * config.masterGain;
+                        out.samples[subCh][outBlockStart + i] += sample * subGain;
                     }
                 }
                 continue; // Skip spatialization for LFE

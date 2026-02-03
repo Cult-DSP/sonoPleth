@@ -16,3 +16,9 @@ Takeaways:
 - make 1.5 default for now
 - Conduct further testing to find ideal range between 1.1 and 1.5
 - subs need to be updated -- energy needs to be distributed based on number of subs
+
+### LFE Updates
+
+- updated sub rendering block to divide output energy by number of sub channels.
+- due to DBAP focus being increaased, the loudspeaker to sub levels are different
+- the sub is still 30-40% too loud. need to update this with default param or CLI config. possibly scaled based on DBAP focus param?

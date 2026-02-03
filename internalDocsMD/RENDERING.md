@@ -85,17 +85,17 @@ And produces:
 
 ### General Options
 
-| Flag                       | Default  | Description                                      |
-| -------------------------- | -------- | ------------------------------------------------ |
-| `--master_gain FLOAT`      | 0.25     | Global gain (prevents clipping from panning sum) |
-| `--solo_source NAME`       | (none)   | Render only this source (for debugging)          |
-| `--t0 SECONDS`             | 0        | Start rendering at this time                     |
-| `--t1 SECONDS`             | (end)    | Stop rendering at this time                      |
-| `--render_resolution MODE` | block    | Render mode: `block` (recommended) or `sample`   |
-| `--block_size N`           | 64       | Block size for direction updates (32-256)        |
+| Flag                       | Default  | Description                                                                                                                                                       |
+| -------------------------- | -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--master_gain FLOAT`      | 0.25     | Global gain (prevents clipping from panning sum)                                                                                                                  |
+| `--solo_source NAME`       | (none)   | Render only this source (for debugging)                                                                                                                           |
+| `--t0 SECONDS`             | 0        | Start rendering at this time                                                                                                                                      |
+| `--t1 SECONDS`             | (end)    | Stop rendering at this time                                                                                                                                       |
+| `--render_resolution MODE` | block    | Render mode: `block` (recommended) or `sample`                                                                                                                    |
+| `--block_size N`           | 64       | Block size for direction updates (32-256)                                                                                                                         |
 | `--elevation_mode MODE`    | (legacy) | Legacy flag; accepts `compress` (maps to RescaleFullSphere) or `clamp`. Prefer `--vertical-compensation` / `--no-vertical-compensation` (default: RescaleAtmosUp) |
-| `--force_2d`               | (off)    | Force 2D mode (flatten all elevations to z=0)    |
-| `--debug_dir DIR`          | (none)   | Output diagnostics to this directory             |
+| `--force_2d`               | (off)    | Force 2D mode (flatten all elevations to z=0)                                                                                                                     |
+| `--debug_dir DIR`          | (none)   | Output diagnostics to this directory                                                                                                                              |
 
 ## Spatializer Comparison
 
@@ -378,13 +378,14 @@ The renderer now supports robust, layout-driven handling of LFE (subwoofer) chan
 ### Implementation Details
 
 - **Detection:** LFE sources are identified by name or metadata (see code for details).
-- **Routing:** For each LFE source, its signal is copied directly to all subwoofer channels for every block.
+- **Routing:** For each LFE source, its signal is copied directly to all subwoofer channels for every block. The volume is divided by the number of subwoofers to ensure even energy distribution across channels.
 - **Buffer Allocation:** The output buffer (`MultiWavData.samples`) is resized to `max(maxSpeakerChannel, maxSubwooferChannel) + 1` to ensure all channels are valid.
 - **Safety:** All buffer accesses are bounds-checked by construction; negative or invalid channel indices in the layout will cause a warning or error.
 
 ### Rationale
 
 This approach ensures:
+
 - LFE content is always delivered to the correct subwoofer channels, regardless of layout.
 - No risk of buffer overruns or segmentation faults due to high subwoofer channel indices.
 - Consistent behavior across all spatializer modes.
@@ -456,9 +457,11 @@ After direction interpolation, directions are **sanitized** to fit within the sp
 
 1. Convert direction to spherical coordinates (azimuth, elevation)
 2. Apply elevation mode (default: RescaleAtmosUp):
-  - **RescaleAtmosUp** (default): Map source elevations from [0°, +90°] (typical Atmos-style range) into the layout's [minEl, maxEl]. This preserves upward-only Atmos elevation cues while keeping layout bounds.
-  - **RescaleFullSphere**: Map source elevations from [-90°, +90°] (full-sphere content) into the layout's [minEl, maxEl]. This reproduces the previous "compress" behavior.
-  - **Clamp**: Hard clip elevation to [minEl, maxEl] (disable vertical compensation)
+
+- **RescaleAtmosUp** (default): Map source elevations from [0°, +90°] (typical Atmos-style range) into the layout's [minEl, maxEl]. This preserves upward-only Atmos elevation cues while keeping layout bounds.
+- **RescaleFullSphere**: Map source elevations from [-90°, +90°] (full-sphere content) into the layout's [minEl, maxEl]. This reproduces the previous "compress" behavior.
+- **Clamp**: Hard clip elevation to [minEl, maxEl] (disable vertical compensation)
+
 3. Convert back to Cartesian unit vector
 
 **For 2D layouts** (elevation span < 3°):
