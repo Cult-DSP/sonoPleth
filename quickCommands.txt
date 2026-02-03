@@ -1,11 +1,3 @@
-translab:
-
-python runPipeline.py sourceData/Canyon-Atmos-Rough-1.wav /Users/lucian/projects/sonoPleth/spatial_engine/speaker_layouts/translab-sono-layout.json
-
-python runPipeline.py sourceData/Offering-Atmos-Rough-1.wav /Users/lucian/projects/sonoPleth/spatial_engine/speaker_layouts/translab-sono-layout.json
-
-python runPipeline.py sourceData/Swale-Atmos-ROUGH-1.wav /Users/lucian/projects/sonoPleth/spatial_engine/speaker_layouts/translab-sono-layout.json
-
 
 
 translab LFE: 

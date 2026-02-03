@@ -15,6 +15,7 @@ This push implements robust, layout-driven handling of LFE (Low-Frequency Effect
 #### Rationale
 
 This approach ensures:
+
 - LFE content is always delivered to the correct subwoofer channels, regardless of layout.
 - No risk of buffer overruns or segmentation faults due to high subwoofer channel indices.
 - Consistent behavior across all spatializer modes.

@@ -15,6 +15,7 @@ This push implements robust, layout-driven handling of LFE (Low-Frequency Effect
 #### Rationale
 
 This approach ensures:
+
 - LFE content is always delivered to the correct subwoofer channels, regardless of layout.
 - No risk of buffer overruns or segmentation faults due to high subwoofer channel indices.
 - Consistent behavior across all spatializer modes.
@@ -36,15 +37,14 @@ This document captures the technical decisions and implementation details for th
 
 **Symptoms:**
 
-
 **Root Cause:**
 VBAP (Vector Base Amplitude Panning) requires the source direction to fall within a valid speaker triplet (triangle formed by 3 speakers). When a direction falls outside all triplets, VBAP produces zero output. This can happen:
-
 
 **Previous Mitigations (insufficient):**
 
 - Elevation rescale/clamping (added earlier) - helps but doesn't guarantee valid triplet
 - Direction fallback - only triggers on degenerate interpolation, not VBAP failure
+
 ### Issue 2: Fast Mover Blink
 
 **Symptoms:**
