@@ -381,6 +381,7 @@ The renderer now supports robust, layout-driven handling of LFE (subwoofer) chan
 - **Routing:** For each LFE source, its signal is copied directly to all subwoofer channels for every block. The volume is divided by the number of subwoofers to ensure even energy distribution across channels.
 - **Buffer Allocation:** The output buffer (`MultiWavData.samples`) is resized to `max(maxSpeakerChannel, maxSubwooferChannel) + 1` to ensure all channels are valid.
 - **Safety:** All buffer accesses are bounds-checked by construction; negative or invalid channel indices in the layout will cause a warning or error.
+- **Levels:** For now uses a global parameter dbap_sub_compensation to scale the output before dividing by number of subs. Currently a global var, plans to update this.
 
 ### Rationale
 

@@ -29,6 +29,9 @@ std::string SpatialRenderer::pannerTypeName(PannerType type) {
     }
 }
 
+float dbap_sub_compensation = 0.95f; // LFE/subwoofer compensation factor for DBAP. TEMPORARY - UPDATE IN THE FUTURE BASED ON FOCUS SETTING
+// ^ update to not be a global variable later 
+
 SpatialRenderer::SpatialRenderer(const SpeakerLayoutData &layout,
                                  const SpatialData &spatial,
                                  const std::map<std::string, MonoWavData> &sources)
@@ -1003,7 +1006,7 @@ void SpatialRenderer::renderPerBlock(MultiWavData &out, const RenderConfig &conf
             // Special handling for LFE channel / SUB (no spatialization) 
             if (name == "LFE") {
                 // Example: assume mSubwooferChannels is a std::vector<int> of sub channel indices
-                float subGain = config.masterGain / mSubwooferChannels.size(); // Could customize LFE gain if desired
+                float subGain = (config.masterGain * dbap_sub_compensation) / mSubwooferChannels.size(); // Could customize LFE gain if desired
                 for (size_t i = 0; i < blockLen; ++i) {
                     float sample = sourceBuffer[i];
                     for (int subCh : mSubwooferChannels) {
