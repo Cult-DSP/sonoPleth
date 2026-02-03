@@ -1,0 +1,26 @@
+{
+  "speakers": [
+    {
+      "channel": 1,
+      "az": 1.3554386270971586,
+      "el": 0.5699542990454679,
+      "radius": 5.929404714372819
+    },
+    {
+      "channel": 2,
+      "az": 0.7869343193066588,
+      "el": 0.5213056440487467,
+      "radius": 6.424471059083544
+    },
+    {
+      "channel": 3,
+      "az": 0.25826140887556304,
+      "el": 0.49685618323377717,
+      "radius": 6.71220656142949
+    }
+  ],
+  "subwoofers": [{ "channel": 48 }],
+  "notes": [
+    "{place mapping notes here; potentially convert to a proper metadata field for future transcoding; for now, sub should be channel placed before or after main speakers to avoid interference with rendering algo"
+  ]
+}
