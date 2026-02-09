@@ -274,7 +274,7 @@ class PipelineGUI:
         print("\nRunning VBAP spatial renderer...")
         runVBAPRender(
             source_folder="processedData/stageForRender",
-            render_instructions="processedData/stageForRender/renderInstructions.json",
+            render_instructions="processedData/stageForRender/scene.lusid.json",
             speaker_layout=speaker_layout,
             output_file="processedData/spatial_render.wav"
         )

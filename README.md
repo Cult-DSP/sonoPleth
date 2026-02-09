@@ -199,12 +199,12 @@ sonoPleth/bin/python -c "from utils.configCPP import setupCppTools; setupCppTool
 ## Pipeline Overview
 
 1. **Check Initialization** - Verify all dependencies are installed
-2. **Setup C++ Tools** - Install bwfmetaedit, initialize AlloLib submodule, build VBAP renderer
+2. **Setup C++ Tools** - Install bwfmetaedit, initialize AlloLib submodule, build spatial renderer
 3. **Extract Metadata** - Use bwfmetaedit to extract ADM XML from WAV
 4. **Parse ADM** - Convert ADM XML to internal data structure
 5. **Analyze Audio** - Detect which channels contain audio content
-6. **Package for Render** - Split audio stems and create spatial instruction JSON
-7. **VBAP Render** - Generate multichannel spatial audio using VBAP
+6. **Package for Render** - Split audio stems (X.1.wav naming) and build LUSID scene (scene.lusid.json)
+7. **Spatial Render** - Generate multichannel spatial audio (renderer reads LUSID scene directly)
 8. **Analyze Render** - Create PDF with dB analysis of each output channel
 
 ## VBAP Renderer Options

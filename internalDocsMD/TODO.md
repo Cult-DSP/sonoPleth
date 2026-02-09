@@ -23,8 +23,8 @@
 
 \*change all instances of deleting a file(s) before writing to use one helper function from utils
 
-- this is relevant in checkAudioChannels, createRenderInfo, extractMetaData, and others
-  \*deal with static objects in renderInstructions
+- this is relevant in checkAudioChannels, extractMetaData, and others
+  \*deal with static objects in LUSID scene (direct_speaker nodes at t=0)
 
 # to consider
 

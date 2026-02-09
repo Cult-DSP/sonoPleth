@@ -1,3 +1,7 @@
 [submodule "thirdparty/allolib"]
 	path = thirdparty/allolib
 	url = https://github.com/AlloSphere-Research-Group/AlloLib.git
+
+[submodule "LUSID"]
+	path = LUSID
+	url = https://github.com/Cult-DSP/LUSID

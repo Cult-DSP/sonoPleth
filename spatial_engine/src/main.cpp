@@ -199,9 +199,9 @@ int main(int argc, char *argv[]) {
     std::cout << "Loading layout...\n";
     SpeakerLayoutData layout = LayoutLoader::loadLayout(layoutFile);
 
-    // spatial trajectories with keyframes for each source
-    std::cout << "Loading spatial instructions...\n";
-    SpatialData spatial = JSONLoader::loadSpatialInstructions(positionsFile);
+    // spatial trajectories from LUSID scene (frames/nodes format)
+    std::cout << "Loading LUSID scene...\n";
+    SpatialData spatial = JSONLoader::loadLusidScene(positionsFile);
 
     // load all mono source files
     std::cout << "Loading source WAVs...\n";

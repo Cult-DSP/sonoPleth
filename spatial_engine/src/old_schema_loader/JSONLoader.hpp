@@ -25,14 +25,5 @@ struct SpatialData {
 
 class JSONLoader {
 public:
-    /// Load a LUSID scene JSON file (v0.5+).
-    /// Parses frames/nodes, extracts audio_object + direct_speaker as sources,
-    /// LFE as "LFE" source. Ignores spectral_features and agent_state.
-    /// Source keys use node ID format ("1.1", "11.1") not old "src_N" format.
-    static SpatialData loadLusidScene(const std::string &path);
-
-    /// DEPRECATED: Load old renderInstructions.json format.
-    /// Kept for backwards compatibility. Use loadLusidScene() for new pipeline.
-    /// Old implementation moved to old_schema_loader/JSONLoader.cpp
     static SpatialData loadSpatialInstructions(const std::string &path);
 };

@@ -4,6 +4,14 @@ from pathlib import Path
 import json
 import os
 
+# ---------------------------------------------------------------------------
+# Developer flag — mirrors LUSID/src/xmlParser.py _DEV_LFE_HARDCODED
+# When True: channel 4 is always written as LFE.wav (hardcoded index).
+# When False: LFE detection should come from label matching (not yet implemented here).
+# Keep in sync with LUSID/src/xmlParser.py.
+# ---------------------------------------------------------------------------
+_DEV_LFE_HARDCODED = True
+
 def loadContainsAudioData(processed_dir="processedData"):
     data = {}
     channels_contains_audio_path = os.path.join(processed_dir, "containsAudio.json")
@@ -96,6 +104,11 @@ def splitChannelsToMono(source_path, processed_dir="processedData", output_dir="
     skipped_count = 0
     
     # Split each channel and save as mono file (only if contains audio)
+    # WAV naming convention (LUSID v0.5):
+    #   DirectSpeakers + AudioObjects: "{group}.1.wav" where group = 1-based channel number
+    #   LFE: "LFE.wav"
+    #   The group numbering matches LUSID node IDs: DirectSpeakers get groups 1–N,
+    #   AudioObjects get groups N+1+, all in ADM channel order.
     for chanIndex in range(num_channels):
         chanNumber = chanIndex + 1  # 1-indexed channel numbers
         
@@ -107,17 +120,19 @@ def splitChannelsToMono(source_path, processed_dir="processedData", output_dir="
             skipped_count += 1
             continue
 
-        
-        
         chanData = audio_data[:, chanIndex]
-        output_file = outputPath / f"src_{chanNumber}.wav"
-        
+
+        # LFE detection
+        is_lfe = (_DEV_LFE_HARDCODED and chanNumber == 4)
+
         try:
-            if chanNumber == 4:
-                sf.write(outputPath/f"LFE.wav", chanData, sample_rate)
-                print(f"Wrote LFE data")
+            if is_lfe:
+                sf.write(outputPath / "LFE.wav", chanData, sample_rate)
+                print(f"  Channel {chanNumber}/{num_channels} -> LFE.wav")
                 extracted_count += 1
             else:
+                # LUSID node ID naming: group = chanNumber, hierarchy = 1
+                output_file = outputPath / f"{chanNumber}.1.wav"
                 sf.write(output_file, chanData, sample_rate)
                 print(f"  Channel {chanNumber}/{num_channels} -> {output_file.name}")
                 extracted_count += 1

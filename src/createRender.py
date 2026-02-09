@@ -36,7 +36,7 @@ def deleteRenderOutput(output_file="processedData/completedRenders/spatial_rende
 
 def runSpatialRender(
     source_folder="processedData/stageForRender",
-    render_instructions="processedData/stageForRender/renderInstructions.json",
+    render_instructions="processedData/stageForRender/scene.lusid.json",
     speaker_layout="spatial_engine/speaker_layouts/allosphere_layout.json",
     output_file="processedData/completedRenders/spatial_render.wav",
     spatializer="dbap",
@@ -54,9 +54,9 @@ def runSpatialRender(
     Parameters:
     -----------
     source_folder : str
-        Directory containing mono source WAV files (src_*.wav)
+        Directory containing mono source WAV files (X.1.wav, LFE.wav)
     render_instructions : str
-        JSON file with spatial position data
+        LUSID scene JSON file with spatial position data (scene.lusid.json)
     speaker_layout : str
         JSON file with speaker configuration
     output_file : str
@@ -64,7 +64,7 @@ def runSpatialRender(
     spatializer : str
         Spatializer type: 'dbap' (default), 'vbap', or 'lbap'
     dbap_focus : float
-        DBAP focus/rolloff exponent (default: 1.0, range: 0.2-5.0)
+        DBAP focus/rolloff exponent (default: 1.5, range: 0.2-5.0)
     lbap_dispersion : float
         LBAP dispersion threshold (default: 0.5, range: 0.0-1.0)
     
@@ -167,7 +167,7 @@ def runSpatialRender(
 # Backwards compatibility alias
 def runVBAPRender(
     source_folder="processedData/stageForRender",
-    render_instructions="processedData/stageForRender/renderInstructions.json",
+    render_instructions="processedData/stageForRender/scene.lusid.json",
     speaker_layout="spatial_engine/speaker_layouts/allosphere_layout.json",
     output_file="processedData/completedRenders/spatial_render.wav"
 ):

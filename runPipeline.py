@@ -12,12 +12,12 @@ import sys
 
 # Current pipeline:
 # 0. Check initialization - if not initialized, prompt to run ./init.sh
-# 1. Setup C++ tools - install bwfmetaedit, initialize git submodules (allolib), build VBAP renderer (only if needed)
+# 1. Setup C++ tools - install bwfmetaedit, initialize git submodules (allolib), build spatial renderer (only if needed)
 # 2. Extract ADM metadata from source WAV using bwfmetaedit
 # 3. Parse ADM metadata into internal data structure (optionally export JSON for analysis)
 # 4. Analyze audio channels for content (generate containsAudio.json)
-# 5. Run packageForRender - split stems and create spatial instructions JSON
-# 6. Run VBAP renderer - create multichannel spatial render
+# 5. Run packageForRender - split stems (X.1.wav naming) and build LUSID scene (scene.lusid.json)
+# 6. Run spatial renderer - create multichannel spatial render (reads LUSID scene directly)
 # 7. Analyze render output - create PDF with dB analysis of each channel in final render
 
 
@@ -102,7 +102,7 @@ def run_pipeline(sourceADMFile, sourceSpeakerLayout, createRenderAnalysis=True):
     from src.createRender import runSpatialRender
     runSpatialRender(
         source_folder="processedData/stageForRender",
-        render_instructions="processedData/stageForRender/renderInstructions.json",
+        render_instructions="processedData/stageForRender/scene.lusid.json",
         speaker_layout=sourceSpeakerLayout,
         output_file=finalOutputRenderFile,
         spatializer="dbap"

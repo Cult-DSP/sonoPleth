@@ -159,17 +159,17 @@ Designed for multi-layer speaker setups.
 ## Examples
 
 ```bash
-# Default render with DBAP
+# Default render with DBAP (reads LUSID scene directly)
 ./sonoPleth_spatial_render \
   --layout allosphere_layout.json \
-  --positions renderInstructions.json \
+  --positions scene.lusid.json \
   --sources ./stems/ \
   --out render.wav
 
 # Use VBAP for precise localization
 ./sonoPleth_spatial_render \
   --layout allosphere_layout.json \
-  --positions renderInstructions.json \
+  --positions scene.lusid.json \
   --sources ./stems/ \
   --out render_vbap.wav \
   --spatializer vbap
@@ -177,7 +177,7 @@ Designed for multi-layer speaker setups.
 # Use LBAP for multi-ring layout with high dispersion
 ./sonoPleth_spatial_render \
   --layout translab_layout.json \
-  --positions renderInstructions.json \
+  --positions scene.lusid.json \
   --sources ./stems/ \
   --out render_lbap.wav \
   --spatializer lbap \
@@ -186,7 +186,7 @@ Designed for multi-layer speaker setups.
 # DBAP with tight focus
 ./sonoPleth_spatial_render \
   --layout allosphere_layout.json \
-  --positions renderInstructions.json \
+  --positions scene.lusid.json \
   --sources ./stems/ \
   --out render_tight.wav \
   --spatializer dbap \
@@ -195,7 +195,7 @@ Designed for multi-layer speaker setups.
 # Debug a single source with diagnostics
 ./sonoPleth_spatial_render \
   --layout allosphere_layout.json \
-  --positions renderInstructions.json \
+  --positions scene.lusid.json \
   --sources ./stems/ \
   --out debug_source1.wav \
   --solo_source "source_1" \
@@ -204,7 +204,7 @@ Designed for multi-layer speaker setups.
 # Render just 10-20 second window at full gain
 ./sonoPleth_spatial_render \
   --layout allosphere_layout.json \
-  --positions renderInstructions.json \
+  --positions scene.lusid.json \
   --sources ./stems/ \
   --out segment.wav \
   --t0 10.0 --t1 20.0 \
@@ -647,14 +647,14 @@ The Python pipeline (`runPipeline.py`) calls the renderer via subprocess:
 ```python
 from src.createRender import runSpatialRender
 
-# Use DBAP (default)
+# Use DBAP (default) — reads LUSID scene directly
 runSpatialRender(
     source_folder="processedData/stageForRender",
-    render_instructions="processedData/stageForRender/renderInstructions.json",
+    render_instructions="processedData/stageForRender/scene.lusid.json",
     speaker_layout="spatial_engine/speaker_layouts/allosphere_layout.json",
     output_file="processedData/completedRenders/spatial_render.wav",
     spatializer="dbap",
-    dbap_focus=1.0
+    dbap_focus=1.5
 )
 
 # Or use VBAP
