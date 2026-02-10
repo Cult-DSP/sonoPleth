@@ -5,10 +5,10 @@ import json
 import os
 
 # ---------------------------------------------------------------------------
-# Developer flag — mirrors LUSID/src/xmlParser.py _DEV_LFE_HARDCODED
+# Developer flag — mirrors LUSID/src/xml_etree_parser.py _DEV_LFE_HARDCODED
 # When True: channel 4 is always written as LFE.wav (hardcoded index).
 # When False: LFE detection should come from label matching (not yet implemented here).
-# Keep in sync with LUSID/src/xmlParser.py.
+# Keep in sync with LUSID/src/xml_etree_parser.py.
 # ---------------------------------------------------------------------------
 _DEV_LFE_HARDCODED = True
 

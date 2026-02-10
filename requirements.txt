@@ -1,7 +1,6 @@
 
 numpy
 soundfile
-lxml
 matplotlib
 pandas
 jupyter
