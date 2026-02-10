@@ -1,7 +1,7 @@
 from src.configCPP import setupCppTools
 from src.analyzeADM.extractMetadata import extractMetaData
-from src.analyzeADM.parser import parseMetadata, getGlobalData
-from src.analyzeADM.checkAudioChannels import exportAudioActivity
+from src.analyzeADM.parser import parseMetadata
+from src.analyzeADM.checkAudioChannels import channelHasAudio, exportAudioActivity
 from src.packageADM.packageForRender import packageForRender
 from src.createRender import runVBAPRender
 from src.analyzeRender import analyzeRenderOutput
@@ -78,9 +78,13 @@ def run_pipeline(sourceADMFile, sourceSpeakerLayout, createRenderAnalysis=True):
     finalOutputRenderFile = "processedData/spatial_render.wav"
     finalOutputRenderAnalysisPDF = "processedData/spatial_render_analysis.pdf"
 
+    # -- Audio channel analysis (still writes containsAudio.json for splitStems) --
     print("\nChecking audio channels for content...")
     exportAudioActivity(sourceADMFile, output_path="processedData/containsAudio.json", threshold_db=-100)
+    # Also get the result dict in memory for passing to LUSID
+    contains_audio_data = channelHasAudio(sourceADMFile, threshold_db=-100, printChannelUpdate=False)
 
+    # -- Extract ADM XML metadata from WAV --
     print("Extracting ADM metadata from WAV file...")
     extractedMetadata = extractMetaData(sourceADMFile, "processedData/currentMetaData.xml")
 
@@ -91,11 +95,13 @@ def run_pipeline(sourceADMFile, sourceSpeakerLayout, createRenderAnalysis=True):
         print("Using default XML metadata file")
         xmlPath = "data/POE-ATMOS-FINAL-metadata.xml"
 
+    # -- Parse ADM metadata into dicts (no intermediate JSON files) --
     print("Parsing ADM metadata...")
-    reformattedMetadata = parseMetadata(xmlPath, ToggleExportJSON=True, TogglePrintSummary=True) 
+    parsed_adm_data = parseMetadata(xmlPath, ToggleExportJSON=False, TogglePrintSummary=True)
 
+    # -- Package for render: dicts flow directly to LUSID scene builder --
     print("\nPackaging audio for render...")
-    packageForRender(sourceADMFile, processedDataDir)
+    packageForRender(sourceADMFile, parsed_adm_data, contains_audio_data, processedDataDir)
 
     print("\nRunning DBAP spatial renderer...")
     # Minimal change: call runSpatialRender with DBAP

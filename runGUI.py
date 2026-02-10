@@ -16,7 +16,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src.analyzeADM.extractMetadata import extractMetaData
 from src.analyzeADM.parser import parseMetadata
-from src.analyzeADM.checkAudioChannels import exportAudioActivity
+from src.analyzeADM.checkAudioChannels import exportAudioActivity, channelHasAudio
 from src.packageADM.packageForRender import packageForRender
 from src.createRender import runVBAPRender
 from src.analyzeRender import analyzeRenderOutput
@@ -254,6 +254,7 @@ class PipelineGUI:
         
         print("Checking audio channels for content...")
         exportAudioActivity(source_file, output_path="processedData/containsAudio.json", threshold_db=-100)
+        contains_audio_data = channelHasAudio(source_file, threshold_db=-100, printChannelUpdate=False)
         
         print("\nExtracting ADM metadata from WAV file...")
         extracted_metadata = extractMetaData(source_file, "processedData/currentMetaData.xml")
@@ -266,10 +267,10 @@ class PipelineGUI:
             xml_path = "data/POE-ATMOS-FINAL-metadata.xml"
         
         print("\nParsing ADM metadata...")
-        parseMetadata(xml_path, ToggleExportJSON=True, TogglePrintSummary=True)
+        parsed_adm_data = parseMetadata(xml_path, ToggleExportJSON=False, TogglePrintSummary=True)
         
         print("\nPackaging audio for render...")
-        packageForRender(source_file, "processedData")
+        packageForRender(source_file, parsed_adm_data, contains_audio_data, "processedData")
         
         print("\nRunning VBAP spatial renderer...")
         runVBAPRender(

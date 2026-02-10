@@ -136,7 +136,10 @@ def getPositionAtTime(blocks, time_seconds):
     return None
 
 def getGlobalData(xmlPath, outputPath="processedData/globalData.json"):
-    """Extract all fields from the XML file's <Technical> section and save to JSON."""
+    """Extract all fields from the XML file's <Technical> section.
+    
+    If outputPath is None, skip writing to disk and just return the dict.
+    """
     tree = etree.parse(xmlPath)
     technicalData = tree.find(".//Technical")
 
@@ -149,16 +152,19 @@ def getGlobalData(xmlPath, outputPath="processedData/globalData.json"):
         text = elem.text.strip() if elem.text else ""
         global_data[tag] = text
     
-    os.makedirs(os.path.dirname(outputPath), exist_ok=True)
+    if outputPath is not None:
+        os.makedirs(os.path.dirname(outputPath), exist_ok=True)
+        with open(outputPath, 'w') as f:
+            json.dump(global_data, f, indent=2)
+        print(f"Saved technical metadata to {outputPath}")
 
-    with open(outputPath, 'w') as f:
-        json.dump(global_data, f, indent=2)
-
-    print(f"Saved technical metadata to {outputPath}")
     return global_data
 
 def getDirectSpeakerData(xmlPath, outputPath="processedData/directSpeakerData.json"):
-    """Extract all DirectSpeaker channel data from the XML file and save to JSON."""
+    """Extract all DirectSpeaker channel data from the XML file.
+    
+    If outputPath is None, skip writing to disk and just return the dict.
+    """
     ns = {"ebu": "urn:ebu:metadata-schema:ebuCore_2016"}
     tree = etree.parse(xmlPath)
     
@@ -212,30 +218,53 @@ def getDirectSpeakerData(xmlPath, outputPath="processedData/directSpeakerData.js
     if not direct_speakers:
         raise ValueError(f"No DirectSpeaker channels found in {xmlPath}")
     
-    os.makedirs(os.path.dirname(outputPath), exist_ok=True)
+    if outputPath is not None:
+        os.makedirs(os.path.dirname(outputPath), exist_ok=True)
+        with open(outputPath, 'w') as f:
+            json.dump(direct_speakers, f, indent=2)
+        print(f"Saved DirectSpeaker data to {outputPath}")
 
-    with open(outputPath, 'w') as f:
-        json.dump(direct_speakers, f, indent=2)
-
-    print(f"Saved DirectSpeaker data to {outputPath}")
     return direct_speakers
 
 
 def parseMetadata(xmlPath, ToggleExportJSON = True, TogglePrintSummary = True):
-    """CALLS OTHER FUNCTIONS - parses metadata from XML file, optionally exports to JSON and prints summary"""
-    objectsDict = extractObjectPositions(xmlPath)
+    """CALLS OTHER FUNCTIONS - parses metadata from XML file, optionally exports to JSON and prints summary.
 
-    getGlobalData(xmlPath, outputPath="processedData/globalData.json")
+    Returns
+    -------
+    dict
+        A dict with keys: 'objectData', 'globalData', 'directSpeakerData'.
+        All values are the parsed Python dicts (no disk I/O required by callers).
+
+    NOTE (2026-02-10): Intermediate JSON writing is now skipped by default.
+    The returned dicts are passed directly to adm_to_lusid_scene() in memory.
+    TODO: Create a debug/print summary function that works from the LUSID scene
+    object instead of reading from disk.
+    """
+    objectsDict = extractObjectPositions(xmlPath)
+    print("Extracted object position data")
+
+    globalDict = getGlobalData(xmlPath, outputPath=None)
     print("Extracted global technical metadata")
 
-    getDirectSpeakerData(xmlPath, outputPath="processedData/directSpeakerData.json")
+    directSpeakerDict = getDirectSpeakerData(xmlPath, outputPath=None)
     print("Extracted DirectSpeaker channel metadata")
 
     if ToggleExportJSON:
         saveObjectData(objectsDict, outputPath="processedData/objectData.json")
-    if TogglePrintSummary:
-        from src.analyzeADM.analyzeMetadata import printSummary
-        printSummary(objectDataPath="processedData/objectData.json", togglePositionChanges=False)
-    
 
-    return objectsDict
+    if TogglePrintSummary:
+        # TODO: Replace with LUSID scene-based summary function.
+        # For now, only print if the JSON was exported (needs file on disk).
+        if ToggleExportJSON:
+            from src.analyzeADM.analyzeMetadata import printSummary
+            printSummary(objectDataPath="processedData/objectData.json", togglePositionChanges=False)
+        else:
+            print(f"  Parsed {len(objectsDict)} audio objects, "
+                  f"{len(directSpeakerDict)} direct speakers")
+
+    return {
+        'objectData': objectsDict,
+        'globalData': globalDict,
+        'directSpeakerData': directSpeakerDict,
+    }
