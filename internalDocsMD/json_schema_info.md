@@ -18,7 +18,13 @@ As of v0.5.1, the **LUSID scene** is the canonical spatial data format read dire
     {
       "time": 0.0,
       "nodes": [
-        { "id": "1.1", "type": "direct_speaker", "cart": [-1.0, 1.0, 0.0], "speakerLabel": "RC_L", "channelID": "AC_00011001" },
+        {
+          "id": "1.1",
+          "type": "direct_speaker",
+          "cart": [-1.0, 1.0, 0.0],
+          "speakerLabel": "RC_L",
+          "channelID": "AC_00011001"
+        },
         { "id": "4.1", "type": "LFE" },
         { "id": "11.1", "type": "audio_object", "cart": [0.0, 1.0, 0.0] }
       ]
@@ -35,21 +41,21 @@ As of v0.5.1, the **LUSID scene** is the canonical spatial data format read dire
 
 ### Node Types
 
-| Type | ID Pattern | Description |
-|------|------------|-------------|
-| `direct_speaker` | `X.1` (groups 1–10) | Fixed bed channel with position, speakerLabel, channelID |
-| `audio_object` | `X.1` (groups 11+) | Time-varying spatial source |
-| `LFE` | `X.1` | Low-frequency effects — not spatialized |
-| `spectral_features` | `X.2+` | Analysis metadata (ignored by renderer) |
-| `agent_state` | `X.2+` | AI metadata (ignored by renderer) |
+| Type                | ID Pattern          | Description                                              |
+| ------------------- | ------------------- | -------------------------------------------------------- |
+| `direct_speaker`    | `X.1` (groups 1–10) | Fixed bed channel with position, speakerLabel, channelID |
+| `audio_object`      | `X.1` (groups 11+)  | Time-varying spatial source                              |
+| `LFE`               | `X.1`               | Low-frequency effects — not spatialized                  |
+| `spectral_features` | `X.2+`              | Analysis metadata (ignored by renderer)                  |
+| `agent_state`       | `X.2+`              | AI metadata (ignored by renderer)                        |
 
 ### Source ↔ WAV File Mapping
 
-| Node ID | WAV Filename | Notes |
-|---------|-------------|-------|
-| `1.1` | `1.1.wav` | DirectSpeaker |
-| `4.1` | `LFE.wav` | LFE (special naming) |
-| `11.1` | `11.1.wav` | Audio object |
+| Node ID | WAV Filename | Notes                |
+| ------- | ------------ | -------------------- |
+| `1.1`   | `1.1.wav`    | DirectSpeaker        |
+| `4.1`   | `LFE.wav`    | LFE (special naming) |
+| `11.1`  | `11.1.wav`   | Audio object         |
 
 ---
 
@@ -96,18 +102,18 @@ This file defines the speaker positions for the target playback system.
 
 ### Fields
 
-| Field | Type | Description |
-|-------|------|-------------|
+| Field      | Type  | Description                  |
+| ---------- | ----- | ---------------------------- |
 | `speakers` | array | Array of speaker definitions |
 
 ### Speaker Definition
 
-| Field | Type | Unit | Description |
-|-------|------|------|-------------|
-| `azimuth` | number | **radians** | Horizontal angle (0 = front, positive = right) |
-| `elevation` | number | **radians** | Vertical angle (0 = horizon, positive = up) |
-| `radius` | number | meters | Distance from center (typically 5.0 for AlloSphere) |
-| `deviceChannel` | integer | - | Hardware channel number (informational, not used for rendering) |
+| Field           | Type    | Unit        | Description                                                     |
+| --------------- | ------- | ----------- | --------------------------------------------------------------- |
+| `azimuth`       | number  | **radians** | Horizontal angle (0 = front, positive = right)                  |
+| `elevation`     | number  | **radians** | Vertical angle (0 = horizon, positive = up)                     |
+| `radius`        | number  | meters      | Distance from center (typically 5.0 for AlloSphere)             |
+| `deviceChannel` | integer | -           | Hardware channel number (informational, not used for rendering) |
 
 **Note:** The renderer uses consecutive channel indices (0, 1, 2, ...) regardless of `deviceChannel` values. Channel remapping to hardware channels should be done during playback.
 
