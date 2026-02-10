@@ -40,7 +40,7 @@ def runSpatialRender(
     speaker_layout="spatial_engine/speaker_layouts/allosphere_layout.json",
     output_file="processedData/completedRenders/spatial_render.wav",
     spatializer="dbap",
-    dbap_focus=1.5,
+    dbap_focus=1.0,
     lbap_dispersion=0.5
 ):
     """

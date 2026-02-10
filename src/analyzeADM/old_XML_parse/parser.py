@@ -1,3 +1,5 @@
+# ARCHIVED: lxml parseMetadata() replaced by xml_etree_parser.parse_adm_xml_to_lusid_scene(). See LUSID/internalDocs/AGENTS.md#archival-plan
+
 import json
 from lxml import etree
 import os

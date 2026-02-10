@@ -44,7 +44,7 @@ def mapEmptyChannels(data):
     return channel_audio_map
 
 
-def splitChannelsToMono(source_path, processed_dir="processedData", output_dir="processedData/stageForRender"):
+def splitChannelsToMono(source_path, processed_dir="processedData", output_dir="processedData/stageForRender", contains_audio_data=None):
     """
     Split a multichannel audio file into individual mono WAV files.
     Skips empty channels but preserves channel numbering.
@@ -54,17 +54,20 @@ def splitChannelsToMono(source_path, processed_dir="processedData", output_dir="
     source_path : str
         Path to the source multichannel audio file
     processed_dir : str
-        Directory containing processed data JSONs (default: "processedData")
+        Directory containing processed data JSONs (used only if contains_audio_data not provided)
     output_dir : str
         Directory to save the mono channel files (default: "processedData/stageForRender")
-    
-    Returns:
-    --------
-    tuple
-        (total_channels, extracted_channels) - total and number actually written
+    contains_audio_data : dict, optional
+        Pre-loaded contains_audio data dict. If None, reads from JSON file.
     """
     # Load processed data and get empty channel mapping
-    data = loadContainsAudioData(processed_dir)
+    if contains_audio_data is not None:
+        # Use provided in-memory data
+        data = {'containsAudio': contains_audio_data}
+    else:
+        # Fall back to reading from JSON file
+        data = loadContainsAudioData(processed_dir)
+    
     channel_audio_map = mapEmptyChannels(data)
     
     # Use the provided output_dir parameter, convert to absolute path to avoid issues 

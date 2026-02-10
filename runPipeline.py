@@ -1,6 +1,5 @@
 from src.configCPP import setupCppTools
 from src.analyzeADM.extractMetadata import extractMetaData
-from src.analyzeADM.parser import parseMetadata
 from src.analyzeADM.checkAudioChannels import channelHasAudio, exportAudioActivity
 from src.packageADM.packageForRender import packageForRender
 from src.createRender import runVBAPRender
@@ -95,13 +94,15 @@ def run_pipeline(sourceADMFile, sourceSpeakerLayout, createRenderAnalysis=True):
         print("Using default XML metadata file")
         xmlPath = "data/POE-ATMOS-FINAL-metadata.xml"
 
-    # -- Parse ADM metadata into dicts (no intermediate JSON files) --
-    print("Parsing ADM metadata...")
-    parsed_adm_data = parseMetadata(xmlPath, ToggleExportJSON=False, TogglePrintSummary=True)
+    # -- Parse ADM XML directly to LUSID scene (single-step, no intermediate JSONs) --
+    print("Parsing ADM metadata to LUSID scene...")
+    from LUSID.src.xml_etree_parser import parse_adm_xml_to_lusid_scene
+    lusid_scene = parse_adm_xml_to_lusid_scene(xmlPath, contains_audio=contains_audio_data)
+    lusid_scene.summary()
 
-    # -- Package for render: dicts flow directly to LUSID scene builder --
+    # -- Package for render: LUSID scene flows directly to stem splitter --
     print("\nPackaging audio for render...")
-    packageForRender(sourceADMFile, parsed_adm_data, contains_audio_data, processedDataDir)
+    packageForRender(sourceADMFile, lusid_scene, contains_audio_data, processedDataDir)
 
     print("\nRunning DBAP spatial renderer...")
     # Minimal change: call runSpatialRender with DBAP

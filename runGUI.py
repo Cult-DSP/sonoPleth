@@ -15,7 +15,6 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src.analyzeADM.extractMetadata import extractMetaData
-from src.analyzeADM.parser import parseMetadata
 from src.analyzeADM.checkAudioChannels import exportAudioActivity, channelHasAudio
 from src.packageADM.packageForRender import packageForRender
 from src.createRender import runVBAPRender
@@ -266,11 +265,13 @@ class PipelineGUI:
             print("Using default XML metadata file")
             xml_path = "data/POE-ATMOS-FINAL-metadata.xml"
         
-        print("\nParsing ADM metadata...")
-        parsed_adm_data = parseMetadata(xml_path, ToggleExportJSON=False, TogglePrintSummary=True)
+        print("\nParsing ADM metadata to LUSID scene...")
+        from LUSID.src.xml_etree_parser import parse_adm_xml_to_lusid_scene
+        lusid_scene = parse_adm_xml_to_lusid_scene(xml_path, contains_audio=contains_audio_data)
+        lusid_scene.summary()
         
         print("\nPackaging audio for render...")
-        packageForRender(source_file, parsed_adm_data, contains_audio_data, "processedData")
+        packageForRender(source_file, lusid_scene, contains_audio_data, "processedData")
         
         print("\nRunning VBAP spatial renderer...")
         runVBAPRender(
