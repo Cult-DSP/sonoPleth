@@ -1,3 +1,10 @@
+### 2/10/26
+
+# AlloSphere Testing
+
+- For the AlloSphere, Dbap focus 1.0 has a better soundquality than 1.5, with slightly less localization.
+- LBAP sounds great but is rendering positions incorrectly, need to investigate rendering code
+
 #### 2/3/26
 
 ### Configuring focus parameter
