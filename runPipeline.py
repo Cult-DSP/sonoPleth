@@ -49,7 +49,7 @@ def check_initialization():
     return False
 
 
-def run_pipeline(sourceADMFile, sourceSpeakerLayout, createRenderAnalysis=True):
+def run_pipeline(sourceADMFile, sourceSpeakerLayout, renderMode="dbap", resolution = 1.5,createRenderAnalysis=True):
     """
     Run the complete ADM to spatial audio pipeline
     
@@ -104,15 +104,23 @@ def run_pipeline(sourceADMFile, sourceSpeakerLayout, createRenderAnalysis=True):
     print("\nPackaging audio for render...")
     packageForRender(sourceADMFile, lusid_scene, contains_audio_data, processedDataDir)
 
-    print("\nRunning DBAP spatial renderer...")
-    # Minimal change: call runSpatialRender with DBAP
+    print(f"\nRunning {renderMode.upper()} spatial renderer...")
+    # Call runSpatialRender with appropriate parameters based on renderMode
     from src.createRender import runSpatialRender
+    spatializer = renderMode
+    extra_kwargs = {}
+    if renderMode == "dbapfocus":
+        spatializer = "dbap"
+        extra_kwargs['dbap_focus'] = resolution
+    elif renderMode == "lbap":
+        extra_kwargs['lbap_dispersion'] = resolution
     runSpatialRender(
         source_folder="processedData/stageForRender",
         render_instructions="processedData/stageForRender/scene.lusid.json",
         speaker_layout=sourceSpeakerLayout,
         output_file=finalOutputRenderFile,
-        spatializer="dbap"
+        spatializer=spatializer,
+        **extra_kwargs
     )
 
     if createRenderAnalysis:
@@ -130,13 +138,15 @@ if __name__ == "__main__":
     if len(sys.argv) >= 2:
         sourceADMFile = sys.argv[1]
         sourceSpeakerLayout = sys.argv[2] if len(sys.argv) >= 3 else "spatial_engine/speaker_layouts/allosphere_layout.json"
-        createRenderAnalysis = True if len(sys.argv) < 4 else sys.argv[3].lower() in ['true', '1', 'yes']
+        renderMode = sys.argv[3] if len(sys.argv) >= 4 else "dbap"
+        resolution = float(sys.argv[4]) if len(sys.argv) >= 5 else 1.5
+        createRenderAnalysis = True if len(sys.argv) < 6 else sys.argv[5].lower() in ['true', '1', 'yes']
         
-        run_pipeline(sourceADMFile, sourceSpeakerLayout, createRenderAnalysis)
+        run_pipeline(sourceADMFile, sourceSpeakerLayout, renderMode, resolution, createRenderAnalysis)
     
     else:
         # default mode
-        print("Usage: python runPipeline.py <sourceADMFile> [sourceSpeakerLayout] [createAnalysis]")
+        print("Usage: python runPipeline.py <sourceADMFile> [sourceSpeakerLayout] [renderMode] [resolution] [createAnalysis]")
         print("\nRunning with default configuration...")
         
         sourceADMFile = "sourceData/driveExampleSpruce.wav"
