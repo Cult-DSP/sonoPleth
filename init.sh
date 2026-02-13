@@ -42,7 +42,7 @@ echo ""
 
 # Step 3: Setup C++ tools using Python script
 echo "Step 3: Setting up C++ tools (bwfmetaedit, allolib, VBAP renderer)..."
-if sonoPleth/bin/python -c "from utils.configCPP import setupCppTools; exit(0 if setupCppTools() else 1)"; then
+if sonoPleth/bin/python -c "from src.configCPP import setupCppTools; exit(0 if setupCppTools() else 1)"; then
     echo "✓ C++ tools setup complete"
 else
     echo "⚠ Warning: C++ tools setup had issues, but continuing..."
