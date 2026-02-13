@@ -41,7 +41,7 @@ def check_initialization():
     return False
 
 
-def run_pipeline(source_lusid_package, source_speaker_layout, spatializer="dbap", create_render_analysis=True):
+def run_pipeline_from_LUSID(source_lusid_package, source_speaker_layout, spatializer="dbap", create_render_analysis=True):
     """
     Run the complete LUSID package to spatial audio pipeline
     

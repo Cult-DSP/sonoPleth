@@ -4,9 +4,12 @@ from src.analyzeADM.checkAudioChannels import channelHasAudio, exportAudioActivi
 from src.packageADM.packageForRender import packageForRender
 from src.createRender import runVBAPRender
 from src.analyzeRender import analyzeRenderOutput
+from createFromLUSID import run_pipeline_from_LUSID
 from pathlib import Path
 import subprocess
 import sys
+import os
+
 
 
 # Current pipeline:
@@ -49,7 +52,8 @@ def check_initialization():
     return False
 
 
-def run_pipeline(sourceADMFile, sourceSpeakerLayout, renderMode="dbap", resolution = 1.5,createRenderAnalysis=True):
+
+def run_pipeline_from_ADM(sourceADMFile, sourceSpeakerLayout, renderMode="dbap", resolution = 1.5,createRenderAnalysis=True):
     """
     Run the complete ADM to spatial audio pipeline
     
@@ -132,9 +136,26 @@ def run_pipeline(sourceADMFile, sourceSpeakerLayout, renderMode="dbap", resoluti
 
     print("\nDone")
 
+    
+def checkSourceType(arg):
+    if not os.path.exists(arg):
+        return "Path does not exist"
+    
+    if os.path.isfile(arg):
+        if arg.lower().endswith('.wav'):
+            return "ADM"
+    
+    if os.path.isdir(arg):
+        if os.path.basename(arg) == "lusid_package":
+            return "LUSID"
+    
+    return "Wrong Input Type"
+
 
 if __name__ == "__main__":
     # CLI mode - parse arguments
+    
+    sourceType = checkSourceType(sys.argv[1])
     if len(sys.argv) >= 2:
         sourceADMFile = sys.argv[1]
         sourceSpeakerLayout = sys.argv[2] if len(sys.argv) >= 3 else "spatial_engine/speaker_layouts/allosphere_layout.json"
@@ -142,7 +163,12 @@ if __name__ == "__main__":
         resolution = float(sys.argv[4]) if len(sys.argv) >= 5 else 1.5
         createRenderAnalysis = True if len(sys.argv) < 6 else sys.argv[5].lower() in ['true', '1', 'yes']
         
-        run_pipeline(sourceADMFile, sourceSpeakerLayout, renderMode, resolution, createRenderAnalysis)
+        if sourceType == "ADM":
+            print("Running pipeline from ADM source...")
+            run_pipeline_from_ADM(sourceADMFile, sourceSpeakerLayout, renderMode, resolution, createRenderAnalysis)
+        elif sourceType == "LUSID":
+            print("Running pipeline from LUSID source...")
+            run_pipeline_from_LUSID(sourceADMFile, sourceSpeakerLayout, renderMode, createRenderAnalysis)
     
     else:
         # default mode
@@ -153,5 +179,5 @@ if __name__ == "__main__":
         sourceSpeakerLayout = "spatial_engine/speaker_layouts/allosphere_layout.json"
         createRenderAnalysis = True
         
-        run_pipeline(sourceADMFile, sourceSpeakerLayout, createRenderAnalysis)
+        run_pipeline_from_ADM(sourceADMFile, sourceSpeakerLayout, createRenderAnalysis)
 
