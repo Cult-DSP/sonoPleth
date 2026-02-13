@@ -1,6 +1,6 @@
 # sonoPleth — Comprehensive Agent Context
 
-**Last Updated:** February 10, 2026  
+**Last Updated:** February 12, 2026  
 **Project:** sonoPleth - Open Spatial Audio Infrastructure  
 **Lead Developer:** Lucian Parisi
 
@@ -251,8 +251,11 @@ Core dataclasses for LUSID Scene v0.5:
 
 #### `runPipeline.py` — Main Entry Point
 
-- **Purpose**: Orchestrate full ADM → spatial render pipeline
-- **Flow**:
+- **Purpose**: Orchestrate full ADM → spatial render pipeline or render from LUSID package
+- **Input Types**:
+  - ADM WAV file (.wav): Full pipeline from ADM extraction to render
+  - LUSID package folder: Direct render from pre-packaged LUSID scene
+- **Flow (ADM)**:
   1. Check initialization (`checkInit()`)
   2. Extract ADM XML (`extractMetadata()`)
   3. Detect audio channels (`channelHasAudio()`)
@@ -261,6 +264,20 @@ Core dataclasses for LUSID Scene v0.5:
   6. Build C++ renderer (`buildSpatialRenderer()`)
   7. Run spatial render (`runSpatialRender()`)
   8. Analyze render (`analyzeRender()` — optional PDF)
+- **Flow (LUSID)**:
+  1. Check initialization (`checkInit()`)
+  2. Build C++ renderer (`buildSpatialRenderer()`)
+  3. Run spatial render (`runSpatialRender()`)
+  4. Analyze render (`analyzeRender()` — optional PDF)
+- **CLI Usage**:
+  ```bash
+  python runPipeline.py <source> [speakerLayout] [renderMode] [resolution] [createAnalysis]
+  ```
+  - `<source>`: Path to ADM .wav file or LUSID package folder (named "lusid_package")
+  - `[speakerLayout]`: Path to speaker layout JSON (default: allosphere_layout.json)
+  - `[renderMode]`: Spatializer mode - "dbap", "vbap", "lbap", "dbapfocus", "lbap" (default: "dbap")
+  - `[resolution]`: Focus/dispersion parameter for dbapfocus/lbap (default: 1.5)
+  - `[createAnalysis]`: Create PDF analysis (true/false, default: true)
 
 #### `runGUI.py` — Jupyter Notebook GUI
 
