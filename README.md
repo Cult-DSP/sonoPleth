@@ -229,7 +229,7 @@ Options:
 
 ### JSON Time Units
 
-The spatial trajectory JSON supports an explicit `timeUnit` field:
+The LUSID scene JSON supports an explicit `timeUnit` field:
 
 ```json
 {

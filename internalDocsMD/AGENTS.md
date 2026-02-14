@@ -33,7 +33,8 @@ sonoPleth is a Python+C++ prototype for decoding and rendering Audio Definition 
 - **Multi-format Input**: Dolby Atmos ADM BWF WAV files
 - **Multi-spatializer Support**: DBAP (default), VBAP, LBAP
 - **Arbitrary Speaker Layouts**: JSON-defined speaker positions
-- **LUSID Scene Format**: v0.5.1 - canonical time-sequenced node graph for spatial audio
+- **LUSID Scene Format**: v0.5.2 - canonical time-sequenced node graph for spatial audio
+- **ADM Duration Preservation**: Extracts and uses authoritative duration from ADM metadata (fixes truncated renders)
 - **Zero-dependency Parser**: Python stdlib only for LUSID
 - **Subwoofer/LFE Handling**: Automatic routing to designated subwoofer channels
 - **Comprehensive Testing**: 106 LUSID tests + renderer tests
@@ -94,13 +95,12 @@ The C++ renderer reads LUSID directly — no intermediate format conversion.
 - Data flows as Python dicts in memory: `parseMetadata()` → `packageForRender()` → `adm_to_lusid_scene()`
 - Only `containsAudio.json` written to disk (consumed by stem splitter)
 
-**XML Parsing Migration:**
+**ADM Duration Preservation (v0.5.2):**
 
-- Created `xml_etree_parser.py` using Python stdlib (`xml.etree.ElementTree`)
-- Eliminates `lxml` dependency from active LUSID code
-- 2.3x faster than old lxml two-step pipeline (547ms vs 1253ms on 25MB XML)
-- 5.5x more memory (175MB vs 32MB) — acceptable for typical ADM files (<100MB)
-- Output parity confirmed — identical LUSID scenes
+- **Problem**: Renderer was calculating duration from longest WAV file length, causing truncated renders when keyframes ended early
+- **Solution**: Extract authoritative duration from ADM `<Duration>` field, store in LUSID `duration` field
+- **Impact**: Ensures full composition duration is rendered (e.g., 9:26 ADM file now renders 9:26, not truncated 2:47)
+- **Implementation**: Updated `xml_etree_parser.py`, `SpatialRenderer.cpp`, `VBAPRenderer.cpp`, and JSON schema
 
 ---
 
@@ -131,13 +131,13 @@ The C++ renderer reads LUSID directly — no intermediate format conversion.
 - **Output**: `processedData/containsAudio.json`
 - **Why**: Skip silent channels in stem splitting (common in ADM beds)
 
-### 2. LUSID Scene Format (v0.5.1)
+### 2. LUSID Scene Format (v0.5.2)
 
 #### `LUSID/src/scene.py` — Data Model
 
-Core dataclasses for LUSID Scene v0.5:
+Core dataclasses for LUSID Scene v0.5.2:
 
-- `LusidScene`: Top-level container (version, sampleRate, timeUnit, metadata, frames)
+- `LusidScene`: Top-level container (version, sampleRate, timeUnit, **duration**, metadata, frames)
 - `Frame`: Timestamped snapshot of all active nodes
 - **5 Node Types**:
   - `AudioObjectNode`: Spatial source with `cart` [x,y,z]
@@ -147,6 +147,13 @@ Core dataclasses for LUSID Scene v0.5:
   - `AgentStateNode`: AI/agent state data (ignored by renderer)
 
 **Zero external dependencies** — stdlib only.
+
+#### Duration Field (v0.5.2)
+
+- **Purpose**: Preserve authoritative ADM duration to prevent truncated renders
+- **Source**: Extracted from ADM `<Duration>` field (e.g., "00:09:26.000" → 566.0 seconds)
+- **Usage**: C++ renderer prioritizes LUSID `duration` over WAV file length calculations
+- **Type**: `float` (seconds), optional field (defaults to -1.0 if missing)
 
 #### `LUSID/src/parser.py` — JSON Loader
 
@@ -303,13 +310,14 @@ Core dataclasses for LUSID Scene v0.5:
 
 ## LUSID Scene Format
 
-### JSON Structure (v0.5.1)
+### JSON Structure (v0.5.2)
 
 ```json
 {
   "version": "0.5",
   "sampleRate": 48000,
   "timeUnit": "seconds",
+  "duration": 566.0,
   "metadata": {
     "title": "Scene name",
     "sourceFormat": "ADM",
@@ -340,6 +348,15 @@ Core dataclasses for LUSID Scene v0.5:
   ]
 }
 ```
+
+### Top-Level Fields
+
+- **version**: LUSID format version (currently "0.5")
+- **sampleRate**: Sample rate in Hz (must match audio files)
+- **timeUnit**: Time unit for keyframes: `"seconds"` (default), `"samples"`, or `"milliseconds"`
+- **duration**: **NEW in v0.5.2** - Total scene duration in seconds (from ADM metadata). Critical fix: ensures renderer uses authoritative ADM duration instead of calculating from WAV file lengths. Prevents truncated renders when keyframes end before composition end.
+- **metadata**: Optional metadata object (source format, original duration string, etc.)
+- **frames**: Array of time-ordered frames containing spatial nodes
 
 ### Node Types & ID Convention
 
@@ -1086,7 +1103,7 @@ python LUSID/tests/benchmark_xml_parsers.py
 
 ### Version History
 
-- **v0.5.2** (2026-02-10): XML parser migration, eliminate intermediate JSONs, benchmarking
+- **v0.5.2** (2026-02-13): Duration field added to LUSID scene, ADM duration preservation, XML parser migration, eliminate intermediate JSONs
 - **v0.5.1** (2026-02-09): DirectSpeaker node type, LUSID as canonical format, xmlParser
 - **v0.5.0** (2026-02-05): Initial LUSID Scene format
 - **PUSH 3** (2026-01-28): LFE routing, multi-spatializer support (DBAP/VBAP/LBAP)

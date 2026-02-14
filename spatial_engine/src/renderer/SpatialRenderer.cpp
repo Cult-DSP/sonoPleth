@@ -719,7 +719,17 @@ MultiWavData SpatialRenderer::render(const RenderConfig &config) {
         totalSamples = std::max(totalSamples, wav.samples.size());
     }
     
-    double durationSec = (double)totalSamples / sr;
+    // Use LUSID scene duration if available, otherwise calculate from WAV files
+    double durationSec;
+    if (mSpatial.duration > 0.0) {
+        durationSec = mSpatial.duration;
+        // Update totalSamples to match LUSID duration
+        totalSamples = (size_t)(durationSec * sr);
+        std::cout << "Using LUSID scene duration: " << durationSec << " seconds (" << totalSamples << " samples)\n";
+    } else {
+        durationSec = (double)totalSamples / sr;
+        std::cout << "Using WAV file duration: " << durationSec << " seconds (" << totalSamples << " samples)\n";
+    }
     
     // Reset per-render tracking state
     resetPerRenderState();

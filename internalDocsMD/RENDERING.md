@@ -13,7 +13,7 @@ The rendering pipeline supports three spatializers:
 The pipeline takes:
 
 1. **Mono source audio files** - individual audio stems
-2. **Spatial trajectory data** - JSON with position keyframes over time
+2. **LUSID scene data** - JSON with spatial nodes and keyframes over time
 3. **Speaker layout** - Speaker configuration (e.g., AlloSphere 54-speaker)
 
 And produces:
@@ -49,7 +49,7 @@ And produces:
 | `spatial_engine/src/main.cpp`                     | CLI entry point, argument parsing |
 | `spatial_engine/src/renderer/SpatialRenderer.cpp` | Core rendering logic              |
 | `spatial_engine/src/renderer/SpatialRenderer.hpp` | Renderer class and config structs |
-| `spatial_engine/src/JSONLoader.cpp`               | Parses spatial trajectory JSON    |
+| `spatial_engine/src/JSONLoader.cpp`               | Parses LUSID scene JSON    |
 | `spatial_engine/src/LayoutLoader.cpp`             | Parses speaker layout JSON        |
 | `spatial_engine/src/WavUtils.cpp`                 | WAV I/O utilities                 |
 | `spatial_engine/speaker_layouts/*.json`           | Speaker layout configurations     |
@@ -71,7 +71,7 @@ And produces:
 | Flag               | Description                                              |
 | ------------------ | -------------------------------------------------------- |
 | `--layout FILE`    | Speaker layout JSON (typically `allosphere_layout.json`) |
-| `--positions FILE` | Spatial trajectory JSON with source keyframes            |
+| `--positions FILE` | LUSID scene JSON with spatial nodes and keyframes            |
 | `--sources FOLDER` | Directory containing mono source WAV files               |
 | `--out FILE`       | Output multichannel WAV path                             |
 
@@ -211,30 +211,53 @@ Designed for multi-layer speaker setups.
   --master_gain 1.0
 ```
 
-## Spatial Trajectory JSON Format
+## LUSID Scene JSON Format (Primary)
 
-The `--positions` file defines source trajectories:
+The `--positions` file uses the **LUSID scene format** (v0.5.2) as the canonical spatial data format:
 
 ```json
 {
+  "version": "0.5",
   "sampleRate": 48000,
   "timeUnit": "seconds",
-  "sources": {
-    "source_1": [
-      { "time": 0.0, "cart": [0.0, 1.0, 0.0] },
-      { "time": 5.0, "cart": [1.0, 0.0, 0.0] }
-    ],
-    "source_2": [{ "time": 0.0, "cart": [-0.707, 0.707, 0.0] }]
-  }
+  "duration": 566.0,
+  "metadata": { "sourceFormat": "ADM", "duration": "00:09:26.000" },
+  "frames": [
+    {
+      "time": 0.0,
+      "nodes": [
+        { "id": "1.1", "type": "direct_speaker", "cart": [0.0, 1.0, 0.0] },
+        { "id": "11.1", "type": "audio_object", "cart": [1.0, 0.0, 0.0] }
+      ]
+    },
+    {
+      "time": 5.0,
+      "nodes": [
+        { "id": "11.1", "type": "audio_object", "cart": [0.0, -1.0, 0.0] }
+      ]
+    }
+  ]
 }
 ```
 
+### Top-Level Fields
+
+- **version**: LUSID format version (currently "0.5")
 - **sampleRate**: Sample rate in Hz (must match audio files)
 - **timeUnit**: Time unit for keyframes: `"seconds"` (default), `"samples"`, or `"milliseconds"`
-- **time**: Keyframe timestamp (in units specified by `timeUnit`)
-- **cart**: Cartesian direction vector [x, y, z] (will be normalized)
+- **duration**: **NEW in v0.5.2** - Total scene duration in seconds from ADM metadata. If present, renderer uses this authoritative duration instead of calculating from WAV file lengths. Critical for ensuring full composition duration is rendered.
+- **metadata**: Optional metadata (source format, original duration string, etc.)
+- **frames**: Time-ordered array of spatial nodes
 
-**See `json_schema_info.md` for complete schema documentation.**
+### Node Types
+
+| Type             | Description                          | ID Pattern |
+| ---------------- | ------------------------------------ | ---------- |
+| `direct_speaker` | Fixed bed channel with position      | `X.1` (1-10) |
+| `audio_object`   | Time-varying spatial source          | `X.1` (11+) |
+| `LFE`            | Low-frequency effects (not spatial)  | `X.1`     |
+
+**See `json_schema_info.md` for complete LUSID schema documentation.**
 
 ### Time Units
 

@@ -21,6 +21,7 @@ struct SpatialData {
     int sampleRate;
     TimeUnit timeUnit = TimeUnit::Seconds;  // Explicit time unit from JSON
     std::map<std::string, std::vector<Keyframe>> sources;
+    double duration = -1.0; // Duration in seconds from LUSID metadata, -1 if not specified
 };
 
 class JSONLoader {

@@ -4,7 +4,7 @@ This document describes the JSON file formats used by the sonoPleth spatial audi
 
 ## LUSID Scene JSON (`scene.lusid.json`) — Primary Format
 
-As of v0.5.1, the **LUSID scene** is the canonical spatial data format read directly by the C++ renderer. For full documentation see `LUSID/internalDocs/DEVELOPMENT.md` and `LUSID/schema/lusid_scene_v0.5.schema.json`.
+As of v0.5.2, the **LUSID scene** is the canonical spatial data format read directly by the C++ renderer. For full documentation see `LUSID/internalDocs/DEVELOPMENT.md` and `LUSID/schema/lusid_scene_v0.5.schema.json`.
 
 ### Schema (abbreviated)
 
@@ -13,6 +13,7 @@ As of v0.5.1, the **LUSID scene** is the canonical spatial data format read dire
   "version": "0.5",
   "sampleRate": 48000,
   "timeUnit": "seconds",
+  "duration": 566.0,
   "metadata": { "sourceFormat": "ADM", "duration": "00:09:26.000" },
   "frames": [
     {
@@ -38,6 +39,15 @@ As of v0.5.1, the **LUSID scene** is the canonical spatial data format read dire
   ]
 }
 ```
+
+### Top-Level Fields
+
+- **version**: LUSID format version (currently "0.5")
+- **sampleRate**: Sample rate in Hz (must match audio files)
+- **timeUnit**: Time unit for keyframes: `"seconds"` (default), `"samples"`, or `"milliseconds"`
+- **duration**: **NEW in v0.5.2** - Total scene duration in seconds (from ADM metadata). If present, renderer uses this instead of calculating from WAV file lengths. Ensures full composition duration is rendered even if keyframes end early.
+- **metadata**: Optional metadata object (source format, original duration string, etc.)
+- **frames**: Array of time-ordered frames containing spatial nodes
 
 ### Node Types
 

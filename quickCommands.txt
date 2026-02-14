@@ -1,26 +1,28 @@
 
 
 translab LFE: 
-python runPipeline.py sourceData/CANYON-ATMOS-LFE.wav /Users/lucian/projects/sonoPleth/spatial_engine/speaker_layouts/translab-sono-layout.json
+python runPipeline.py sourceData/CANYON-ATMOS-LFE.wav /Users/lucian/projects/sonoPleth/spatial_engine/speaker_layouts/translab-sono-layout.json dbap 1.5
 
-python runPipeline.py sourceData/SWALE-ATMOS-LFE.wav /Users/lucian/projects/sonoPleth/spatial_engine/speaker_layouts/translab-sono-layout.json
+python runPipeline.py sourceData/SWALE-ATMOS-LFE.wav /Users/lucian/projects/sonoPleth/spatial_engine/speaker_layouts/translab-sono-layout.json dbap 1.5
 
-python runPipeline.py sourceData/ASCENT-ATMOS-LFE.wav /Users/lucian/projects/sonoPleth/spatial_engine/speaker_layouts/translab-sono-layout.json
+python runPipeline.py sourceData/ASCENT-ATMOS-LFE.wav /Users/lucian/projects/sonoPleth/spatial_engine/speaker_layouts/translab-sono-layout.json dbap 1.5 
 
-python runPipeline.py sourceData/OFFERING-ATMOS-LFE.wav /Users/lucian/projects/sonoPleth/spatial_engine/speaker_layouts/translab-sono-layout.json
+python runPipeline.py sourceData/OFFERING-ATMOS-LFE.wav /Users/lucian/projects/sonoPleth/spatial_engine/speaker_layouts/translab-sono-layout.json dbap 1.5 
+
+python runPipeline.py sourceData/EDEN-ATMOS-LFE.wav /Users/lucian/projects/sonoPleth/spatial_engine/speaker_layouts/translab-sono-layout.json dbap 1.5
 
 
 
 
 allosphere:
 
-python runPipeline.py sourceData/CANYON-ATMOS-LFE.wav spatial_engine/speaker_layouts/allosphere_layout.json
+python runPipeline.py sourceData/CANYON-ATMOS-LFE.wav spatial_engine/speaker_layouts/allosphere_layout.json dbap 1.0
 
-python runPipeline.py sourceData/OFFERING-ATMOS-LFE.wav spatial_engine/speaker_layouts/allosphere_layout.json
+python runPipeline.py sourceData/OFFERING-ATMOS-LFE.wav spatial_engine/speaker_layouts/allosphere_layout.json dbap 1.0
 
-python runPipeline.py sourceData/SWALE-ATMOS-LFE.wav  spatial_engine/speaker_layouts/allosphere_layout.json
+python runPipeline.py sourceData/SWALE-ATMOS-LFE.wav  spatial_engine/speaker_layouts/allosphere_layout.json dbap 1.0
 
-python runPipeline.py sourceData/ASCENT-ATMOS-LFE.wav spatial_engine/speaker_layouts/allosphere_layout.json
+python runPipeline.py sourceData/ASCENT-ATMOS-LFE.wav spatial_engine/speaker_layouts/allosphere_layout.json dbap 1.0
 
 
 LUSID -> translab:

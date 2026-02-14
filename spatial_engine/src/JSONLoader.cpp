@@ -64,6 +64,14 @@ SpatialData JSONLoader::loadLusidScene(const std::string &path) {
     auto [timeUnit, timeMultiplier] = parseTimeUnit(timeUnitStr, d.sampleRate);
     d.timeUnit = timeUnit;
 
+    // Parse duration field if present (LUSID v0.5.2+)
+    if (j.contains("duration") && j["duration"].is_number()) {
+        d.duration = j["duration"].get<double>();
+        std::cout << "LUSID scene duration: " << d.duration << " seconds\n";
+    } else {
+        d.duration = -1.0; // Not specified, will fall back to WAV file length
+    }
+
     std::string version = j.value("version", "0.5");
     std::cout << "Loading LUSID scene v" << version << "\n";
 
