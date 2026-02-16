@@ -87,7 +87,7 @@ ADM BWF WAV File
 
 The C++ renderer reads LUSID directly — no intermediate format conversion.
 
-### Recent Architecture Changes (v0.5.1 → v0.5.2)
+### Recent Architecture Changes (v0.5.2)
 
 **Eliminated intermediate JSON files:**
 
@@ -1101,10 +1101,32 @@ python LUSID/tests/benchmark_xml_parsers.py
 - [bwfmetaedit Tool](https://mediaarea.net/BWFMetaEdit)
 - [Example ADM Files](https://zenodo.org/records/15268471)
 
+### Known Issues
+
+#### ⚠️ Duration Field — Speaker Layout Dependent Rendering (2026-02-16)
+
+**Issue:** Although LUSID correctly exports duration from ADM metadata, the C++ renderer produces shortened output files when using the **allosphere speaker layout (56 channels)**, but renders correctly with the **translab config (18 channels)**.
+
+**Symptoms:**
+- LUSID scene correctly shows: `"duration": 566.0` ✅
+- Transl ab layout (18 chan): Renders full ADM duration ✅  
+- Allosphere layout (56 chan): Renders truncated duration ❌
+
+**Hypothesis:** Memory/buffer allocation issue in C++ renderer when handling high channel counts. Duration logic may be affected by speaker layout initialization or buffer sizing.
+
+**Status:** Documented for investigation. Core duration preservation logic is correct — issue appears to be speaker-layout specific.
+
+**Investigation Required:**
+- Compare renderer logs between translab (18 chan) and allosphere (56 chan) layouts
+- Check memory allocation differences in `SpatialRenderer::init()` 
+- Verify duration calculation independence from speaker count
+- Test with intermediate channel counts (24, 32, 48) to find threshold
+- Examine buffer allocation in `VBAPRenderer` vs `SpatialRenderer`
+
 ### Version History
 
 - **v0.5.2** (2026-02-13): Duration field added to LUSID scene, ADM duration preservation, XML parser migration, eliminate intermediate JSONs
-- **v0.5.1** (2026-02-09): DirectSpeaker node type, LUSID as canonical format, xmlParser
+- **v0.5.2** (2026-02-13): Duration field added to LUSID scene, ADM duration preservation, XML parser migration, eliminate intermediate JSONs
 - **v0.5.0** (2026-02-05): Initial LUSID Scene format
 - **PUSH 3** (2026-01-28): LFE routing, multi-spatializer support (DBAP/VBAP/LBAP)
 - **PUSH 2** (2026-01-27): Renamed VBAPRenderer → SpatialRenderer
