@@ -725,17 +725,13 @@ MultiWavData SpatialRenderer::render(const RenderConfig &config) {
         durationSec = mSpatial.duration;
         // Update totalSamples to match LUSID duration
         totalSamples = (size_t)(durationSec * sr);
-        std::cout << "Using LUSID scene duration: " << durationSec << " seconds (" << totalSamples << " samples)\n";
+        std::cout << "Using LUSID scene duration: " << std::fixed << std::setprecision(2)
+                  << durationSec << " seconds (" << totalSamples << " samples)\n";
     } else {
         durationSec = (double)totalSamples / sr;
-        std::cout << "Using WAV file duration: " << durationSec << " seconds (" << totalSamples << " samples)\n";
+        std::cout << "Using WAV file duration: " << std::fixed << std::setprecision(2)
+                  << durationSec << " seconds (" << totalSamples << " samples)\n";
     }
-    
-    // DEBUG: Print duration and sample calculations
-    std::cout << "DEBUG: mSpatial.duration = " << mSpatial.duration << "\n";
-    std::cout << "DEBUG: Calculated durationSec = " << durationSec << "\n";
-    std::cout << "DEBUG: Sample rate = " << sr << "\n";
-    std::cout << "DEBUG: Final totalSamples = " << totalSamples << "\n";
     
     // Reset per-render tracking state
     resetPerRenderState();
@@ -757,11 +753,6 @@ MultiWavData SpatialRenderer::render(const RenderConfig &config) {
     }
     
     size_t renderSamples = (endSample > startSample) ? (endSample - startSample) : 0;
-    
-    // DEBUG: Print render range
-    std::cout << "DEBUG: config.t0 = " << config.t0 << ", config.t1 = " << config.t1 << "\n";
-    std::cout << "DEBUG: startSample = " << startSample << ", endSample = " << endSample << "\n";
-    std::cout << "DEBUG: renderSamples = " << renderSamples << "\n";
 
     std::cout << "Rendering " << renderSamples << " samples (" 
               << (double)renderSamples / sr << " sec) to " 

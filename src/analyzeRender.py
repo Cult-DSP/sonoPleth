@@ -2,6 +2,7 @@ import numpy as np
 import soundfile as sf
 import matplotlib.pyplot as plt
 from pathlib import Path
+import os
 
 
 def analyzeRenderOutput(
@@ -12,10 +13,13 @@ def analyzeRenderOutput(
     Analyze the rendered output and create plots of dB levels over time.
     Creates batches of 10 channels per subplot.
     
+    Supports both standard WAV and RF64 formats (RF64 is used automatically
+    by the renderer when output exceeds the WAV 4 GB limit).
+    
     Parameters:
     -----------
     render_file : str
-        Path to the multichannel render WAV file
+        Path to the multichannel render WAV file (WAV or RF64)
     output_pdf : str
         Path to save the output PDF with plots
     
@@ -35,17 +39,41 @@ def analyzeRenderOutput(
     
     print(f"Loading render file: {render_path}")
     
-    # Load the audio file
-    audio, sr = sf.read(str(render_path))
+    # Use sf.info() first to get metadata without loading all audio into memory.
+    # This correctly reads both WAV and RF64 headers.
+    file_info = sf.info(str(render_path))
+    num_channels = file_info.channels
+    sr = file_info.samplerate
+    num_samples = file_info.frames
+    duration = file_info.duration
+    file_format = file_info.format
+    file_subtype = file_info.subtype
     
-    num_channels = audio.shape[1] if len(audio.shape) > 1 else 1
-    num_samples = audio.shape[0]
-    duration = num_samples / sr
+    # Sanity check: cross-check file size against reported sample count.
+    # This catches corrupted WAV headers from pre-RF64 renders where the
+    # 32-bit data-chunk size wrapped around at 4 GB.
+    file_size_bytes = os.path.getsize(str(render_path))
+    bytes_per_sample = 4 if "FLOAT" in file_subtype.upper() else 2  # float32 vs int16
+    expected_data_bytes = num_samples * num_channels * bytes_per_sample
+    # Allow some slack for headers (~100 KB is generous)
+    if file_size_bytes > expected_data_bytes + 1_000_000:
+        actual_data_bytes = file_size_bytes - 128  # approximate header size
+        actual_samples = actual_data_bytes // (num_channels * bytes_per_sample)
+        actual_duration = actual_samples / sr
+        print(f"\n⚠ WARNING: File size ({file_size_bytes / (1024**3):.2f} GB) is much larger")
+        print(f"  than header-reported data ({expected_data_bytes / (1024**3):.2f} GB).")
+        print(f"  Header says {duration:.2f}s but file size suggests ~{actual_duration:.2f}s.")
+        print(f"  This likely indicates a standard WAV file that exceeded the 4 GB limit.")
+        print(f"  Re-render to fix (renderer now auto-selects RF64 for large files).\n")
     
+    print(f"Format: {file_format} / {file_subtype}")
     print(f"Channels: {num_channels}")
     print(f"Sample rate: {sr} Hz")
     print(f"Duration: {duration:.2f} seconds")
     print(f"Samples: {num_samples}")
+    
+    # Load the audio file
+    audio, sr = sf.read(str(render_path))
     
     # Calculate dB at 1-second intervals
     samples_per_second = sr

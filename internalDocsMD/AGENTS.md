@@ -102,6 +102,14 @@ The C++ renderer reads LUSID directly — no intermediate format conversion.
 - **Impact**: Ensures full composition duration is rendered (e.g., 9:26 ADM file now renders 9:26, not truncated 2:47)
 - **Implementation**: Updated `xml_etree_parser.py`, `SpatialRenderer.cpp`, `VBAPRenderer.cpp`, and JSON schema
 
+**RF64 Auto-Selection for Large Renders (v0.5.2, Feb 16 2026):**
+
+- **Problem**: Standard WAV format uses unsigned 32-bit data-chunk size (max ~4.29 GB). Multichannel spatial renders for long compositions (e.g., 56 channels × 566s × 48kHz × 4B = 5.67 GB) caused the header to wrap around, making readers report truncated duration (~166s instead of 566s). The C++ renderer was producing correct output all along — only the WAV header was wrong.
+- **Solution**: `WavUtils::writeMultichannelWav()` auto-selects `SF_FORMAT_RF64` when audio data exceeds 4 GB. RF64 (EBU Tech 3306) uses 64-bit size fields. Falls back to standard WAV for files under 4 GB (maximum compatibility).
+- **Impact**: Renders of any size are now correctly readable by downstream tools.
+- **Detection**: `analyzeRender.py` cross-checks file size against header-reported duration and warns if they disagree (catches pre-fix WAV files).
+- **Implementation**: Updated `WavUtils.cpp`, `analyzeRender.py`
+
 ---
 
 ## Core Components
@@ -756,6 +764,10 @@ speaker.azimuth = s.azimuth * 180.0f / M_PI;
 **Issue:** DBAP sounds wrong / reversed  
 **Cause:** AlloLib DBAP coordinate transform: `(x,y,z) → (x,-z,y)`  
 **Solution:** Renderer compensates automatically in `directionToDBAPPosition()` — no action needed
+
+**Issue:** Render duration appears truncated when read back (e.g., 166s instead of 566s)  
+**Cause:** Standard WAV format header overflow. Audio data exceeds 4 GB (common with 54+ speaker layouts and compositions over ~7 minutes at 48kHz). The 32-bit data-chunk size wraps around modulo 2³², causing readers to see fewer samples than were actually written. The audio data on disk is correct — only the header is wrong.  
+**Solution:** Fixed in Feb 2026 — `WavUtils.cpp` now auto-selects RF64 format for files over 4 GB. Re-render affected files with the updated code. `analyzeRender.py` now detects and warns about this condition.
 
 ### Building C++ Renderer
 

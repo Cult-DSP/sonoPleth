@@ -4,9 +4,9 @@ This document explains the spatial rendering system used to spatialize audio for
 
 ## Duration Handling (Feb 16, 2026)
 
-**FIXED**: The renderer now correctly uses LUSID scene duration instead of WAV file length. The C++ code prioritizes `mSpatial.duration` when available, falling back to WAV file duration only when LUSID duration is not set. Debug output added to verify duration calculations.
+**FIXED**: The renderer now correctly uses LUSID scene duration instead of WAV file length. The C++ code prioritizes `mSpatial.duration` when available, falling back to WAV file duration only when LUSID duration is not set.
 
-**Known Issue**: Full pipeline execution still produces truncated output (~2:47) despite correct debug output showing 566s calculations. Issue isolated to pipeline execution, not core rendering logic.
+**FIXED (Feb 16, 2026): RF64 auto-selection for large renders.** The previous "truncated output" issue was **not** a rendering bug — the C++ renderer was producing the correct 566-second output all along. The root cause was a **standard WAV format header overflow**: with 56 channels × 566s × 48kHz × 4 bytes = 5.67 GB of audio data, the unsigned 32-bit data-chunk size in the WAV header wrapped around modulo 2³², causing readers (including `analyzeRender.py`) to see only ~166 seconds. The fix: `WavUtils::writeMultichannelWav()` now auto-selects `SF_FORMAT_RF64` when audio data exceeds 4 GB. `analyzeRender.py` also now cross-checks file size against header-reported duration and warns if they disagree.
 
 ## Overview
 
@@ -651,6 +651,40 @@ speaker.elevation = s.elevation * 180.0f / M_PI;
 **Cause**: Keyframes with `cart: [0, 0, 0]` (often from distance=0 being applied to coordinates).
 
 **Fix**: JSONLoader now detects zero directions at load time and replaces with front (0,1,0).
+
+### Truncated render duration / wrong duration on read-back
+
+**Cause**: Standard WAV format uses unsigned 32-bit integers for the data chunk size header, capping files at ~4.29 GB. For multichannel spatial renders (e.g., 56 channels × 566 seconds × 48kHz × 4 bytes/sample = 5.67 GB), the header value wraps around modulo 2³². Readers then report a shorter duration.
+
+**Example**: A 566-second render wrapping to `6,085,632,000 mod 4,294,967,296 = 1,790,664,704` bytes → 166.54 seconds reported.
+
+**Fix** (Feb 16, 2026): `WavUtils::writeMultichannelWav()` now auto-selects `SF_FORMAT_RF64` when audio data exceeds 4 GB. RF64 (EBU Tech 3306) is the broadcast-standard extension with 64-bit size fields. Supported by libsndfile, ffmpeg, SoX, Audacity, Reaper, and most DAWs. Files under 4 GB continue to use standard WAV for maximum compatibility.
+
+**Detection**: `analyzeRender.py` cross-checks file size on disk against header-reported sample count and warns if they disagree (indicates a pre-fix WAV file that needs re-rendering).
+
+## Output Format: WAV vs RF64
+
+The renderer auto-selects the output format based on data size:
+
+| Condition | Format | Header Size Fields | Max Data Size |
+| --- | --- | --- | --- |
+| Audio data ≤ 4 GB | Standard WAV (`SF_FORMAT_WAV`) | unsigned 32-bit | ~4.29 GB |
+| Audio data > 4 GB | RF64 (`SF_FORMAT_RF64`) | 64-bit | Virtually unlimited |
+
+**When does data exceed 4 GB?** For 48kHz float32 output:
+
+$$\text{channels} \times \text{duration (s)} \times 48000 \times 4 > 4{,}294{,}967{,}295$$
+
+Approximate duration limits at 48kHz float32:
+
+| Channels | Max Duration (WAV) |
+| --- | --- |
+| 16 | ~1397 s (~23 min) |
+| 32 | ~698 s (~11.6 min) |
+| 54 | ~414 s (~6.9 min) |
+| 56 | ~399 s (~6.6 min) |
+
+The auto-selection is transparent — the console output will print `NOTE: Using RF64 format` when the threshold is exceeded.
 
 ## Building
 

@@ -55,13 +55,30 @@ void WavUtils::writeMultichannelWav(const std::string &path,
     SF_INFO info = {};
     info.channels = mw.channels;
     info.samplerate = mw.sampleRate;
-    info.format = SF_FORMAT_WAV | SF_FORMAT_FLOAT;
 
-    std::cout << "Writing WAV: " << mw.channels << " channels, " 
-              << mw.sampleRate << " Hz\n";
-    std::cout << "Samples per channel: " << mw.samples[0].size() << "\n";
-    std::cout << "DEBUG: Total duration would be: " << (double)mw.samples[0].size() / mw.sampleRate << " seconds\n";
-    std::cout << "DEBUG: Total samples to write: " << mw.samples[0].size() * mw.channels << "\n";
+    // Auto-select RF64 when audio data exceeds the standard WAV 4 GB limit.
+    // Standard WAV uses unsigned 32-bit data-chunk sizes (max ~4.29 GB).
+    // RF64 (EBU Tech 3306) is the broadcast-standard extension with 64-bit sizes.
+    // libsndfile supports RF64 natively — readers that support RF64 include
+    // libsndfile, ffmpeg, SoX, Audacity, Reaper, and most DAWs.
+    size_t dataSizeBytes = (size_t)mw.samples[0].size() * mw.channels * sizeof(float);
+    constexpr size_t kWavMaxBytes = 0xFFFFFFFF;  // ~4.29 GB unsigned 32-bit limit
+
+    if (dataSizeBytes > kWavMaxBytes) {
+        info.format = SF_FORMAT_RF64 | SF_FORMAT_FLOAT;
+        std::cout << "NOTE: Using RF64 format (data size "
+                  << dataSizeBytes / (1024 * 1024) << " MB exceeds WAV 4 GB limit)\n";
+    } else {
+        info.format = SF_FORMAT_WAV | SF_FORMAT_FLOAT;
+    }
+
+    double durationSec = (double)mw.samples[0].size() / mw.sampleRate;
+    std::cout << "Writing " << (dataSizeBytes > kWavMaxBytes ? "RF64" : "WAV")
+              << ": " << mw.channels << " channels, "
+              << mw.sampleRate << " Hz, "
+              << durationSec << " seconds ("
+              << mw.samples[0].size() << " samples/ch, "
+              << dataSizeBytes / (1024 * 1024) << " MB)\n";
 
     SNDFILE *snd = sf_open(path.c_str(), SFM_WRITE, &info);
     if (!snd) {
