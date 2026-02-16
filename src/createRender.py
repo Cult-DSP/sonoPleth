@@ -3,7 +3,7 @@ import os
 from pathlib import Path
 
 
-def deleteRenderOutput(output_file="processedData/completedRenders/spatial_render.wav"):
+def deleteRenderOutput(output_file="processedData/spatial_render.wav"):
     #also calls delete render 
     """
     Delete the rendered output file if it exists.
@@ -38,9 +38,9 @@ def runSpatialRender(
     source_folder="processedData/stageForRender",
     render_instructions="processedData/stageForRender/scene.lusid.json",
     speaker_layout="spatial_engine/speaker_layouts/allosphere_layout.json",
-    output_file="processedData/completedRenders/spatial_render.wav",
+    output_file="processedData/spatial_render.wav",
     spatializer="dbap",
-    dbap_focus=3.0,
+    dbap_focus=1.5,
     lbap_dispersion=0.5
 ):
     """
@@ -142,20 +142,17 @@ def runSpatialRender(
     elif spatializer == 'lbap':
         cmd.extend(["--lbap_dispersion", str(lbap_dispersion)])
     
-    # DEBUG: Print the command being executed
-    print(f"DEBUG: Executing command: {' '.join(cmd)}")
-    
-    # TEMP: Just print, don't execute
-    print("DEBUG: Skipping actual execution for testing")
-    return True
+    print(f"  Full command: {' '.join(cmd)}")
     
     try:
+        print("  Starting C++ renderer execution...")
         result = subprocess.run(
             cmd,
             check=True,
             capture_output=False,
             text=True
         )
+        print("  C++ renderer finished successfully")
         
         # Check if output was created
         if Path(output_file).exists():
@@ -176,7 +173,7 @@ def runVBAPRender(
     source_folder="processedData/stageForRender",
     render_instructions="processedData/stageForRender/scene.lusid.json",
     speaker_layout="spatial_engine/speaker_layouts/allosphere_layout.json",
-    output_file="processedData/completedRenders/spatial_render.wav"
+    output_file="processedData/spatial_render.wav"
 ):
     """
     DEPRECATED: Use runSpatialRender() instead.
