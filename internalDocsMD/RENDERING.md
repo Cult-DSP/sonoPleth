@@ -2,6 +2,12 @@
 
 This document explains the spatial rendering system used to spatialize audio for the AlloSphere's speaker array.
 
+## Duration Handling (Feb 16, 2026)
+
+**FIXED**: The renderer now correctly uses LUSID scene duration instead of WAV file length. The C++ code prioritizes `mSpatial.duration` when available, falling back to WAV file duration only when LUSID duration is not set. Debug output added to verify duration calculations.
+
+**Known Issue**: Full pipeline execution still produces truncated output (~2:47) despite correct debug output showing 566s calculations. Issue isolated to pipeline execution, not core rendering logic.
+
 ## Overview
 
 The rendering pipeline supports three spatializers:
@@ -49,7 +55,7 @@ And produces:
 | `spatial_engine/src/main.cpp`                     | CLI entry point, argument parsing |
 | `spatial_engine/src/renderer/SpatialRenderer.cpp` | Core rendering logic              |
 | `spatial_engine/src/renderer/SpatialRenderer.hpp` | Renderer class and config structs |
-| `spatial_engine/src/JSONLoader.cpp`               | Parses LUSID scene JSON    |
+| `spatial_engine/src/JSONLoader.cpp`               | Parses LUSID scene JSON           |
 | `spatial_engine/src/LayoutLoader.cpp`             | Parses speaker layout JSON        |
 | `spatial_engine/src/WavUtils.cpp`                 | WAV I/O utilities                 |
 | `spatial_engine/speaker_layouts/*.json`           | Speaker layout configurations     |
@@ -71,7 +77,7 @@ And produces:
 | Flag               | Description                                              |
 | ------------------ | -------------------------------------------------------- |
 | `--layout FILE`    | Speaker layout JSON (typically `allosphere_layout.json`) |
-| `--positions FILE` | LUSID scene JSON with spatial nodes and keyframes            |
+| `--positions FILE` | LUSID scene JSON with spatial nodes and keyframes        |
 | `--sources FOLDER` | Directory containing mono source WAV files               |
 | `--out FILE`       | Output multichannel WAV path                             |
 
@@ -251,11 +257,11 @@ The `--positions` file uses the **LUSID scene format** (v0.5.2) as the canonical
 
 ### Node Types
 
-| Type             | Description                          | ID Pattern |
-| ---------------- | ------------------------------------ | ---------- |
-| `direct_speaker` | Fixed bed channel with position      | `X.1` (1-10) |
-| `audio_object`   | Time-varying spatial source          | `X.1` (11+) |
-| `LFE`            | Low-frequency effects (not spatial)  | `X.1`     |
+| Type             | Description                         | ID Pattern   |
+| ---------------- | ----------------------------------- | ------------ |
+| `direct_speaker` | Fixed bed channel with position     | `X.1` (1-10) |
+| `audio_object`   | Time-varying spatial source         | `X.1` (11+)  |
+| `LFE`            | Low-frequency effects (not spatial) | `X.1`        |
 
 **See `json_schema_info.md` for complete LUSID schema documentation.**
 

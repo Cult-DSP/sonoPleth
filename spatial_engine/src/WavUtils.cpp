@@ -60,6 +60,8 @@ void WavUtils::writeMultichannelWav(const std::string &path,
     std::cout << "Writing WAV: " << mw.channels << " channels, " 
               << mw.sampleRate << " Hz\n";
     std::cout << "Samples per channel: " << mw.samples[0].size() << "\n";
+    std::cout << "DEBUG: Total duration would be: " << (double)mw.samples[0].size() / mw.sampleRate << " seconds\n";
+    std::cout << "DEBUG: Total samples to write: " << mw.samples[0].size() * mw.channels << "\n";
 
     SNDFILE *snd = sf_open(path.c_str(), SFM_WRITE, &info);
     if (!snd) {

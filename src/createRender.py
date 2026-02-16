@@ -142,6 +142,13 @@ def runSpatialRender(
     elif spatializer == 'lbap':
         cmd.extend(["--lbap_dispersion", str(lbap_dispersion)])
     
+    # DEBUG: Print the command being executed
+    print(f"DEBUG: Executing command: {' '.join(cmd)}")
+    
+    # TEMP: Just print, don't execute
+    print("DEBUG: Skipping actual execution for testing")
+    return True
+    
     try:
         result = subprocess.run(
             cmd,

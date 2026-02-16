@@ -1,5 +1,7 @@
 # TO DO
 
+**DURATION FIX STATUS (Feb 16, 2026)**: LUSID duration field implemented and working in C++ renderer. Direct calls produce correct 566s output. Full pipeline still shows truncated output (~2:47 vs 9+ min) - issue isolated to pipeline execution, not core rendering logic. Debug prints added to SpatialRenderer.cpp and WavUtils.cpp for investigation.
+
 -FIX CHANNEL REMAPPING - on the player end -- update atmos player
 -FIX PYTHON / PYTHON 3 VENV ISSUE --
 
