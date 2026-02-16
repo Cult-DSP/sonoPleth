@@ -666,10 +666,10 @@ speaker.elevation = s.elevation * 180.0f / M_PI;
 
 The renderer auto-selects the output format based on data size:
 
-| Condition | Format | Header Size Fields | Max Data Size |
-| --- | --- | --- | --- |
-| Audio data ≤ 4 GB | Standard WAV (`SF_FORMAT_WAV`) | unsigned 32-bit | ~4.29 GB |
-| Audio data > 4 GB | RF64 (`SF_FORMAT_RF64`) | 64-bit | Virtually unlimited |
+| Condition         | Format                         | Header Size Fields | Max Data Size       |
+| ----------------- | ------------------------------ | ------------------ | ------------------- |
+| Audio data ≤ 4 GB | Standard WAV (`SF_FORMAT_WAV`) | unsigned 32-bit    | ~4.29 GB            |
+| Audio data > 4 GB | RF64 (`SF_FORMAT_RF64`)        | 64-bit             | Virtually unlimited |
 
 **When does data exceed 4 GB?** For 48kHz float32 output:
 
@@ -678,11 +678,11 @@ $$\text{channels} \times \text{duration (s)} \times 48000 \times 4 > 4{,}294{,}9
 Approximate duration limits at 48kHz float32:
 
 | Channels | Max Duration (WAV) |
-| --- | --- |
-| 16 | ~1397 s (~23 min) |
-| 32 | ~698 s (~11.6 min) |
-| 54 | ~414 s (~6.9 min) |
-| 56 | ~399 s (~6.6 min) |
+| -------- | ------------------ |
+| 16       | ~1397 s (~23 min)  |
+| 32       | ~698 s (~11.6 min) |
+| 54       | ~414 s (~6.9 min)  |
+| 56       | ~399 s (~6.6 min)  |
 
 The auto-selection is transparent — the console output will print `NOTE: Using RF64 format` when the threshold is exceeded.
 

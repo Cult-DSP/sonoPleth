@@ -1,6 +1,6 @@
 # sonoPleth — Comprehensive Agent Context
 
-**Last Updated:** February 12, 2026  
+**Last Updated:** February 16, 2026  
 **Project:** sonoPleth - Open Spatial Audio Infrastructure  
 **Lead Developer:** Lucian Parisi
 
@@ -8,6 +8,7 @@
 
 ## Table of Contents
 
+0. [🔎 Issues Found During Duration/RF64 Investigation](#-issues-found-during-durationrf64-investigation-feb-16-2026)
 1. [Project Overview](#project-overview)
 2. [Architecture & Data Flow](#architecture--data-flow)
 3. [Core Components](#core-components)
@@ -19,6 +20,59 @@
 9. [Development Workflow](#development-workflow)
 10. [Testing & Validation](#testing--validation)
 11. [Future Work & Known Limitations](#future-work--known-limitations)
+
+---
+
+## 🔎 Issues Found During Duration/RF64 Investigation (Feb 16, 2026)
+
+> Comprehensive catalog of all issues discovered while tracing the truncated-render bug.
+> Items marked ✅ are fixed. Items marked ⚠️ need code changes. Items marked ℹ️ are observations.
+
+| # | Status | Severity | Issue | Location |
+|---|--------|----------|-------|----------|
+| 1 | ✅ FIXED | **Critical** | WAV 4 GB header overflow — `SF_FORMAT_WAV` wraps 32-bit size field | `WavUtils.cpp` |
+| 2 | ✅ FIXED | **High** | `analyzeRender.py` trusted corrupted WAV header without cross-check | `src/analyzeRender.py` |
+| 3 | ✅ FIXED | **Low** | Stale `DEBUG` print statements left in renderer | `SpatialRenderer.cpp` |
+| 4 | ⚠️ UNFIXED | **Medium** | `masterGain` default mismatch — hpp declares `0.5`, docs/help say `0.25` | `SpatialRenderer.hpp` · `main.cpp` · `RENDERING.md` |
+| 5 | ⚠️ UNFIXED | **Medium** | `dbap_focus` not forwarded when render mode is plain `"dbap"` | `runPipeline.py` lines 114–120 |
+| 6 | ⚠️ UNFIXED | **Medium** | `master_gain` not exposed in Python pipeline — never passed to C++ | `src/createRender.py` |
+| 7 | ⚠️ UNFIXED | **Low** | Double audio-channel scan — `exportAudioActivity()` then `channelHasAudio()` ~28 s wasted | `runPipeline.py` lines 86–88 |
+| 8 | ⚠️ UNFIXED | **Low** | `sys.argv[1]` accessed before bounds check → potential `IndexError` | `runPipeline.py` line 158 |
+| 9 | ℹ️ NOTE | **Info** | Large interleaved buffer (~11.3 GB peak for 56ch × 566s) allocated in one shot | `WavUtils.cpp` `writeMultichannelWav()` |
+| 10 | ℹ️ NOTE | **Info** | Test file exercises only `audio_object` + `LFE` paths; `direct_speaker` untested at render level | Pipeline integration tests |
+
+### Details for Unfixed Items
+
+**#4 — masterGain default mismatch**
+- `SpatialRenderer.hpp` line 76: `float masterGain = 0.5;`
+- `main.cpp` line 48 (help text): `"default: 0.25"`
+- `main.cpp` line 101 (comment): `// Default master gain: 0.25f`
+- `RENDERING.md`: documents `0.25f`
+- **Risk**: Users relying on help text get 2× louder output than expected.
+
+**#5 — dbap_focus not forwarded for plain "dbap"**
+- `runPipeline.py` sends `--dbap_focus` only when `renderMode == "dbapfocus"`, not when `renderMode == "dbap"`.
+- The C++ side always supports the flag regardless of mode name.
+- **Risk**: DBAP focus parameter from user is silently ignored in default mode.
+
+**#6 — master_gain not exposed**
+- `src/createRender.py` `runSpatialRender()` never builds a `--master_gain` argument.
+- Users cannot control master gain through the Python pipeline at all.
+- **Risk**: Requires direct C++ CLI invocation to change gain.
+
+**#7 — Double audio-channel scan**
+- `runPipeline.py` calls `exportAudioActivity()` (writes `containsAudio.json`) then immediately calls `channelHasAudio()` again.
+- Both functions scan the entire WAV file (~14s each for 566s file).
+- **Fix**: Use result of first scan directly; remove second call.
+
+**#8 — sys.argv bounds check**
+- `runPipeline.py` line 158: `source_path = sys.argv[1]` is reached before the `if len(sys.argv) < 2:` check on line 162.
+- **Fix**: Move bounds check before first access.
+
+**#9 — Large interleaved buffer**
+- `WavUtils.cpp` allocates a single `std::vector<float>` of `totalSamples × channels` (56 × 27,168,000 = 1.52 billion floats ≈ 5.67 GB).
+- Combined with the per-channel buffers already in memory, peak is ~11.3 GB.
+- **Mitigation idea**: Chunked/streaming write (write N blocks at a time instead of all at once).
 
 ---
 
@@ -285,6 +339,7 @@ Core dataclasses for LUSID Scene v0.5.2:
   3. Run spatial render (`runSpatialRender()`)
   4. Analyze render (`analyzeRender()` — optional PDF)
 - **CLI Usage**:
+
   ```bash
   python runPipeline.py <source> [speakerLayout] [renderMode] [resolution] [createAnalysis]
   ```
@@ -769,6 +824,28 @@ speaker.azimuth = s.azimuth * 180.0f / M_PI;
 **Cause:** Standard WAV format header overflow. Audio data exceeds 4 GB (common with 54+ speaker layouts and compositions over ~7 minutes at 48kHz). The 32-bit data-chunk size wraps around modulo 2³², causing readers to see fewer samples than were actually written. The audio data on disk is correct — only the header is wrong.  
 **Solution:** Fixed in Feb 2026 — `WavUtils.cpp` now auto-selects RF64 format for files over 4 GB. Re-render affected files with the updated code. `analyzeRender.py` now detects and warns about this condition.
 
+**Issue:** ⚠️ Master gain is louder than documented default  
+**Cause:** `SpatialRenderer.hpp` declares `float masterGain = 0.5` but `main.cpp` help text and `RENDERING.md` both say `0.25`. Users relying on docs get 2× louder output.  
+**Solution:** Pending — decide on correct default, then update hpp + docs to match.
+
+### Pipeline Orchestration
+
+**Issue:** ⚠️ `dbap_focus` ignored in default `"dbap"` render mode  
+**Cause:** `runPipeline.py` only passes `--dbap_focus` when `renderMode == "dbapfocus"`, not when `renderMode == "dbap"`.  
+**Solution:** Pending — forward `--dbap_focus` for all DBAP-based modes.
+
+**Issue:** ⚠️ `master_gain` not controllable from Python pipeline  
+**Cause:** `src/createRender.py` `runSpatialRender()` never builds a `--master_gain` CLI argument. The parameter is only accessible via direct C++ invocation.  
+**Solution:** Pending — add `master_gain` kwarg to `createRender.py` and forward to C++.
+
+**Issue:** ⚠️ Double audio-channel scan wastes ~28 seconds  
+**Cause:** `runPipeline.py` calls `exportAudioActivity()` (writes `containsAudio.json`) then immediately calls `channelHasAudio()` again — both scan the entire WAV.  
+**Solution:** Pending — use result of first scan directly; remove redundant second call.
+
+**Issue:** ⚠️ `sys.argv[1]` accessed before bounds check  
+**Cause:** `runPipeline.py` line 158 reads `sys.argv[1]` before the `if len(sys.argv) < 2:` guard on line 162. Crashes with `IndexError` when run with no arguments.  
+**Solution:** Pending — move bounds check before first access.
+
 ### Building C++ Renderer
 
 **Issue:** CMake can't find AlloLib  
@@ -958,6 +1035,18 @@ python LUSID/tests/benchmark_xml_parsers.py
 
 #### Renderer Enhancements
 
+- [ ] **Fix masterGain default mismatch** ⚠️ *[Issues list #4]*
+  - `SpatialRenderer.hpp` declares `0.5`, `main.cpp` help/comments say `0.25`, `RENDERING.md` says `0.25f`
+  - Decide canonical default, update all three locations to match
+
+- [ ] **Expose `master_gain` in Python pipeline** ⚠️ *[Issues list #6]*
+  - Add `master_gain` parameter to `createRender.py` `runSpatialRender()`
+  - Forward as `--master_gain` CLI argument to C++ executable
+
+- [ ] **Forward `dbap_focus` for all DBAP modes** ⚠️ *[Issues list #5]*
+  - `runPipeline.py` currently only sends `--dbap_focus` for `"dbapfocus"` mode
+  - Should forward for plain `"dbap"` mode too (C++ supports it regardless)
+
 - [ ] **LFE gain control**
   - Make `dbap_sub_compensation` a configurable parameter (CLI flag or config file)
   - Currently hardcoded global var in `SpatialRenderer.cpp`
@@ -980,6 +1069,15 @@ python LUSID/tests/benchmark_xml_parsers.py
 ### Medium Priority
 
 #### Performance Optimizations
+
+- [ ] **Chunked/streaming WAV write** ℹ️ *[Issues list #9]*
+  - `WavUtils.cpp` currently allocates a single interleaved buffer of `totalSamples × channels` (~5.67 GB for 56ch × 566s)
+  - Peak memory ~11.3 GB with per-channel buffers on top
+  - Write in chunks (e.g., 1s blocks) to reduce peak allocation
+
+- [ ] **Eliminate double audio-channel scan** ⚠️ *[Issues list #7]*
+  - `runPipeline.py` calls `exportAudioActivity()` then `channelHasAudio()` — both scan the full WAV (~14s each)
+  - Use result of first scan directly; remove redundant second call (~28s savings)
 
 - [ ] **Large scene optimization** (1000+ frames)
   - Current: 2823 frames loads in <1ms (acceptable)
@@ -1012,6 +1110,14 @@ python LUSID/tests/benchmark_xml_parsers.py
   - Integration with AlloSphere dome
 
 #### Pipeline Improvements
+
+- [ ] **Fix `sys.argv` bounds check ordering** ⚠️ *[Issues list #8]*
+  - `runPipeline.py` line 158 reads `sys.argv[1]` before the `len(sys.argv) < 2` guard
+  - Move bounds check before first access to prevent `IndexError`
+
+- [ ] **Add `direct_speaker` integration test coverage** ℹ️ *[Issues list #10]*
+  - Current test file (ASCENT-ATMOS-LFE) only exercises `audio_object` + `LFE` paths
+  - Need a test with active DirectSpeaker bed channels to exercise that renderer path
 
 - [ ] **Stem splitting without intermediate files**
   - Currently: splits all channels → mono WAVs → C++ loads them
@@ -1116,31 +1222,39 @@ python LUSID/tests/benchmark_xml_parsers.py
 
 ### Known Issues
 
-#### ⚠️ Duration Field — Speaker Layout Dependent Rendering (2026-02-16)
+#### ✅ RESOLVED — WAV 4 GB Header Overflow (2026-02-16)
 
-**Issue:** Although LUSID correctly exports duration from ADM metadata, the C++ renderer produces shortened output files when using the **allosphere speaker layout (56 channels)**, but renders correctly with the **translab config (18 channels)**.
+**Root Cause:** Standard WAV uses an unsigned 32-bit data-chunk size (max 4,294,967,295 bytes). A 56-channel × 566s × 48 kHz × 4-byte render produces 6,085,632,000 bytes, which wraps to 1,790,664,704 → readers see 166.54 s instead of 566 s. The C++ renderer was correct all along — only the WAV header was wrong.
 
-**Symptoms:**
+**Fix:** `WavUtils.cpp` now auto-selects `SF_FORMAT_RF64` when data exceeds 4 GB. `analyzeRender.py` cross-checks file size vs header.
 
-- LUSID scene correctly shows: `"duration": 566.0` ✅
-- Transl ab layout (18 chan): Renders full ADM duration ✅
-- Allosphere layout (56 chan): Renders truncated duration ❌
+#### ⚠️ OPEN — masterGain Default Mismatch
 
-**Hypothesis:** Memory/buffer allocation issue in C++ renderer when handling high channel counts. Duration logic may be affected by speaker layout initialization or buffer sizing.
+- `SpatialRenderer.hpp` declares `float masterGain = 0.5;`
+- `main.cpp` help text and comments say `0.25`
+- `RENDERING.md` documents `0.25f`
+- **Impact:** Users relying on documentation get 2× louder output than expected.
 
-**Status:** Documented for investigation. Core duration preservation logic is correct — issue appears to be speaker-layout specific.
+#### ⚠️ OPEN — Pipeline Parameter Forwarding Gaps
 
-**Investigation Required:**
+- `dbap_focus` only sent when `renderMode == "dbapfocus"`, ignored for plain `"dbap"` (`runPipeline.py`)
+- `master_gain` never passed to C++ executable (`createRender.py` has no `--master_gain` arg)
+- **Impact:** Users cannot control these parameters through the Python pipeline.
 
-- Compare renderer logs between translab (18 chan) and allosphere (56 chan) layouts
-- Check memory allocation differences in `SpatialRenderer::init()`
-- Verify duration calculation independence from speaker count
-- Test with intermediate channel counts (24, 32, 48) to find threshold
-- Examine buffer allocation in `VBAPRenderer` vs `SpatialRenderer`
+#### ⚠️ OPEN — runPipeline.py Robustness
+
+- `sys.argv[1]` accessed before bounds check (line 158 vs check on line 162)
+- Double audio-channel scan wastes ~28 s per run (calls both `exportAudioActivity()` and `channelHasAudio()`)
+
+#### ℹ️ NOTE — Large Interleaved Buffer Allocation
+
+- `WavUtils.cpp` allocates a single `std::vector<float>` of `totalSamples × channels` (~5.67 GB for the 56-channel test case, ~11.3 GB peak with per-channel buffers).
+- Works on high-memory machines but may OOM on constrained systems.
+- **Mitigation:** Chunked/streaming write (future work).
 
 ### Version History
 
-- **v0.5.2** (2026-02-13): Duration field added to LUSID scene, ADM duration preservation, XML parser migration, eliminate intermediate JSONs
+- **v0.5.2** (2026-02-16): RF64 auto-selection for large renders, WAV header overflow fix, analyzeRender.py file-size cross-check, debug print cleanup
 - **v0.5.2** (2026-02-13): Duration field added to LUSID scene, ADM duration preservation, XML parser migration, eliminate intermediate JSONs
 - **v0.5.0** (2026-02-05): Initial LUSID Scene format
 - **PUSH 3** (2026-01-28): LFE routing, multi-spatializer support (DBAP/VBAP/LBAP)
