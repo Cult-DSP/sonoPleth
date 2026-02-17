@@ -116,7 +116,7 @@ def run_pipeline_from_ADM(sourceADMFile, sourceSpeakerLayout, renderMode="dbap",
     from src.createRender import runSpatialRender
     spatializer = renderMode
     extra_kwargs = {}
-    if renderMode == "dbapfocus":
+    if renderMode in ["dbap", "dbapfocus"]:  # Include default "dbap" mode
         spatializer = "dbap"
         extra_kwargs['dbap_focus'] = resolution
     elif renderMode == "lbap":
