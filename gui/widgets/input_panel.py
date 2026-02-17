@@ -51,8 +51,8 @@ class InputPanel(QFrame):
         self.setObjectName("Card")
 
         lay = QVBoxLayout(self)
-        lay.setContentsMargins(22, 22, 22, 22)
-        lay.setSpacing(20)
+        lay.setContentsMargins(22, 26, 22, 22)
+        lay.setSpacing(16)
 
         title = QLabel("Input", self)
         title.setObjectName("SectionTitle")

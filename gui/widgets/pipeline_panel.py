@@ -12,7 +12,7 @@ class PipelinePanel(QFrame):
         self.setObjectName("Card")
 
         lay = QVBoxLayout(self)
-        lay.setContentsMargins(22, 18, 22, 18)
+        lay.setContentsMargins(22, 26, 22, 22)
         lay.setSpacing(12)
 
         header = QHBoxLayout()
