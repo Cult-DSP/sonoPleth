@@ -93,7 +93,7 @@ And produces:
 
 | Flag                       | Default  | Description                                                                                                                                                       |
 | -------------------------- | -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `--master_gain FLOAT`      | 0.5     | Global gain (prevents clipping from panning sum)                                                                                                                  |
+| `--master_gain FLOAT`      | 0.5      | Global gain (prevents clipping from panning sum)                                                                                                                  |
 | `--solo_source NAME`       | (none)   | Render only this source (for debugging)                                                                                                                           |
 | `--t0 SECONDS`             | 0        | Start rendering at this time                                                                                                                                      |
 | `--t1 SECONDS`             | (end)    | Stop rendering at this time                                                                                                                                       |
@@ -733,6 +733,8 @@ runSpatialRender(spatializer="lbap", lbap_dispersion=0.7)
 
    ```bash
    --solo_source "problematic_source" --debug_dir ./debug/
+   ```
+
 ````
 
 2. **Render a short segment**:
@@ -752,3 +754,4 @@ runSpatialRender(spatializer="lbap", lbap_dispersion=0.7)
 
 5. **Compare against original**:
    A single-source render should match the original mono file (with panning applied).
+````
