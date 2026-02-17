@@ -1,19 +1,64 @@
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, Signal, QRectF
+from PySide6.QtGui import QPainter, QColor, QPen, QFont
 from PySide6.QtWidgets import QFrame, QLabel, QVBoxLayout, QPushButton, QWidget, QHBoxLayout, QFileDialog, QLineEdit
+
+
+class StatusBadge(QWidget):
+    """18×18 circle badge with a check mark for completed states."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setFixedSize(20, 20)
+        self._state = "inactive"  # inactive | ready | active
+
+    def set_state(self, state: str):
+        self._state = state
+        self.update()
+
+    def paintEvent(self, event):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing, True)
+        r = QRectF(1, 1, 18, 18)
+
+        if self._state == "inactive":
+            pen = QPen(QColor(0, 0, 0, 40), 1.2)
+            p.setPen(pen)
+            p.setBrush(Qt.NoBrush)
+            p.drawEllipse(r)
+        elif self._state in ("ready", "active"):
+            # Filled circle
+            fill = QColor(110, 110, 115, 55) if self._state == "ready" else QColor(76, 111, 255, 50)
+            border = QColor(110, 110, 115, 80) if self._state == "ready" else QColor(76, 111, 255, 100)
+            pen = QPen(border, 1.2)
+            p.setPen(pen)
+            p.setBrush(fill)
+            p.drawEllipse(r)
+
+            # Draw check mark
+            check_color = QColor(60, 60, 62) if self._state == "ready" else QColor(76, 111, 255, 220)
+            pen = QPen(check_color, 1.6)
+            pen.setCapStyle(Qt.RoundCap)
+            pen.setJoinStyle(Qt.RoundJoin)
+            p.setPen(pen)
+            p.setBrush(Qt.NoBrush)
+            # Check mark path: short left stroke + long right stroke
+            p.drawLine(6, 10, 9, 13)
+            p.drawLine(9, 13, 14, 7)
+
+        p.end()
+
 
 class StatusRow(QWidget):
     def __init__(self, text: str, parent=None):
         super().__init__(parent)
         lay = QHBoxLayout(self)
-        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setContentsMargins(0, 4, 0, 4)
         lay.setSpacing(10)
 
-        self.icon = QFrame(self)
-        self.icon.setFixedSize(18, 18)
-        self.icon.setStyleSheet("background: rgba(0,0,0,0.08); border-radius: 9px;")
-        lay.addWidget(self.icon, alignment=Qt.AlignVCenter)
+        self.badge = StatusBadge(self)
+        lay.addWidget(self.badge, alignment=Qt.AlignVCenter)
 
         self.label = QLabel(text, self)
         self.label.setObjectName("Muted")
@@ -21,25 +66,24 @@ class StatusRow(QWidget):
 
         lay.addStretch(1)
 
-        self.dot = QFrame(self)
+        # Green active dot
+        self.dot = QWidget(self)
         self.dot.setFixedSize(8, 8)
-        self.dot.setStyleSheet("background: transparent; border-radius: 4px;")
+        self.dot.setVisible(False)
         lay.addWidget(self.dot, alignment=Qt.AlignVCenter)
 
     def set_state(self, state: str):
-        if state == 'inactive':
-            self.icon.setStyleSheet("background: rgba(0,0,0,0.08); border-radius: 9px;")
-            self.dot.setStyleSheet("background: transparent; border-radius: 4px;")
-        elif state == 'ready':
-            self.icon.setStyleSheet(
-                "background: rgba(76,111,255,0.20); border-radius: 9px; border: 1px solid rgba(76,111,255,0.35);"
-            )
-            self.dot.setStyleSheet("background: transparent; border-radius: 4px;")
-        elif state == 'active':
-            self.icon.setStyleSheet("background: rgba(76,111,255,0.55); border-radius: 9px;")
+        self.badge.set_state(state)
+        if state == "active":
+            self.dot.setVisible(True)
             self.dot.setStyleSheet("background: #4CAF82; border-radius: 4px;")
+            self.label.setStyleSheet("color: #1C1C1E; font-size: 12px;")
+        elif state == "ready":
+            self.dot.setVisible(False)
+            self.label.setStyleSheet("color: #3C3C3E; font-size: 12px;")
         else:
-            self.set_state('inactive')
+            self.dot.setVisible(False)
+            self.label.setStyleSheet("color: #6E6E73; font-size: 12px;")
 
 class InputPanel(QFrame):
     file_selected = Signal(str)

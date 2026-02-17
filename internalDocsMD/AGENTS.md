@@ -358,11 +358,88 @@ Core dataclasses for LUSID Scene v0.5.2:
   - `[resolution]`: Focus/dispersion parameter for dbapfocus/lbap (default: 1.5)
   - `[createAnalysis]`: Create PDF analysis (true/false, default: true)
 
-#### `runGUI.py` — Jupyter Notebook GUI
+#### `runGUI.py` — Jupyter Notebook GUI (DEPRECATED)
 
-- **Purpose**: Interactive GUI for running pipeline with file pickers
-- **Features**: File selection, layout picker, progress display
+- **Purpose**: Original interactive GUI for running pipeline with file pickers
+- **Status**: Replaced by PySide6 desktop GUI in `gui/` (Feb 2026)
 - **Flow**: Same as `runPipeline.py` but with UI
+
+#### `gui/` — PySide6 Desktop GUI
+
+- **Purpose**: Native desktop application for configuring and running the spatial render pipeline
+- **Entry point**: `python gui/main.py`
+- **Framework**: PySide6 (Qt 6)
+
+**Architecture — how the GUI connects to the pipeline:**
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  gui/main.py  (MainWindow)                                  │
+│                                                             │
+│  ┌─────────────┐   ┌──────────────┐   ┌────────────────┐   │
+│  │ InputPanel   │   │ RenderPanel  │   │ PipelinePanel  │   │
+│  │ - file pick  │   │ - mode       │   │ - RUN RENDER   │   │
+│  │ - output path│   │ - resolution │   │ - stepper      │   │
+│  │ - status rows│   │ - gain       │   │ - log list     │   │
+│  │              │   │ - layout     │   │ - progress bar │   │
+│  │              │   │ - analysis   │   │ - View Logs    │   │
+│  └──────────────┘   └──────────────┘   └───────┬────────┘   │
+│                                                │ run_clicked │
+│  ┌─────────────────────────────────────────────▼────────┐   │
+│  │ PipelineRunner  (gui/pipeline_runner.py)              │   │
+│  │ - Wraps QProcess                                      │   │
+│  │ - Launches:  python -u runPipeline.py <args...>       │   │
+│  │ - Streams stdout → PipelinePanel.append_text()        │   │
+│  │ - Parses STEP markers → stepper.set_step()            │   │
+│  │ - Parses % progress → progress_bar                    │   │
+│  └───────────────────────┬──────────────────────────────┘   │
+│                          │ QProcess                          │
+└──────────────────────────┼──────────────────────────────────┘
+                           ▼
+               ┌───────────────────────┐
+               │  runPipeline.py (CLI) │
+               │  sys.argv positional: │
+               │   [1] source path     │
+               │   [2] speaker layout  │
+               │   [3] render mode     │
+               │   [4] resolution      │
+               │   [5] master_gain     │
+               │   [6] createAnalysis  │
+               │   [7] output path     │
+               └───────────┬───────────┘
+                           ▼
+               ┌───────────────────────┐
+               │ src/createRender.py   │
+               │ runSpatialRender()    │
+               │  → subprocess.run()   │
+               │    sonoPleth_spatial_  │
+               │    render --layout …  │
+               │    --master_gain …    │
+               └───────────────────────┘
+```
+
+**Key design decisions:**
+
+1. **QProcess, not threading**: The GUI spawns `runPipeline.py` as a child process via `QProcess`. This keeps the pipeline completely independent — any CLI change is automatically reflected in the GUI.
+2. **Positional args**: `PipelineRunner.run()` builds a `sys.argv`-style argument list matching `runPipeline.py`'s `if __name__ == "__main__"` block. The order is: source, layout, mode, resolution, master_gain, createAnalysis, outputPath.
+3. **Signal wiring**: `PipelineRunner` emits `output(str)`, `step_changed(int)`, `progress_changed(int)`, `started()`, and `finished(int)` signals. `MainWindow` connects these to the panel widgets.
+4. **RUN button lives in PipelinePanel**, not RenderPanel, matching the mockup hierarchy.
+
+**Widget inventory:**
+
+| Widget | File | Purpose |
+|---|---|---|
+| `HeaderBar` | `gui/widgets/header.py` | Title bar, subtitle, init status dot |
+| `InputPanel` | `gui/widgets/input_panel.py` | File picker, output path, status badges with ✓ marks |
+| `RenderPanel` | `gui/widgets/render_panel.py` | Mode dropdown, resolution slider+pill, gain slider+pill, layout dropdown, SwitchToggle for analysis |
+| `PipelinePanel` | `gui/widgets/pipeline_panel.py` | RUN RENDER button, stepper, progress bar, structured log list, "View Full Logs" → `LogModal` |
+| `Stepper` | `gui/widgets/stepper.py` | Alternating circle/diamond markers with connector lines, "Analyze" end label |
+| `SwitchToggle` | `gui/widgets/switch_toggle.py` | iOS-style animated toggle (QPainter, QPropertyAnimation) |
+| `LogModal` | `gui/widgets/log_modal.py` | Full raw log dialog |
+| `RadialBackground` | `gui/background.py` | Concentric geometry + central lens gradient |
+| `apply_card_shadow` / `apply_button_shadow` | `gui/utils/effects.py` | `QGraphicsDropShadowEffect` helpers |
+
+**Styling**: `gui/styles.qss` — Qt-compatible stylesheet (no CSS `box-shadow`, no `-apple-system` font). Font stack: SF Pro Display → Helvetica Neue → Arial.
 
 ### 7. Analysis & Debugging
 
@@ -623,8 +700,24 @@ sonoPleth/
 ├── init.sh                          # One-time setup (use: source init.sh)
 ├── requirements.txt                 # Python dependencies (inc. lxml)
 ├── runPipeline.py                   # Main CLI entry point
-├── runGUI.py                        # Jupyter notebook GUI
+├── runGUI.py                        # Jupyter notebook GUI (DEPRECATED)
 ├── README.md                        # User documentation
+├── gui/                             # PySide6 desktop GUI (primary UI)
+│   ├── main.py                      # App entry: MainWindow, QSS loader
+│   ├── styles.qss                   # Qt stylesheet (light mode)
+│   ├── background.py                # Radial geometry + lens focal point
+│   ├── pipeline_runner.py           # QProcess wrapper for runPipeline.py
+│   ├── agentGUI.md                  # GUI spec + implementation status
+│   ├── widgets/
+│   │   ├── header.py                # Title bar
+│   │   ├── input_panel.py           # File picker, status badges
+│   │   ├── render_panel.py          # Render settings (mode, gain, etc.)
+│   │   ├── pipeline_panel.py        # RUN button, stepper, log list
+│   │   ├── stepper.py               # Circle/diamond step markers
+│   │   ├── switch_toggle.py         # iOS-style toggle
+│   │   └── log_modal.py             # Raw log viewer
+│   └── utils/
+│       └── effects.py               # Drop shadow helpers
 ├── internalDocsMD/                  # Main project documentation
 │   ├── AGENTS.md                    # THIS FILE
 │   ├── RENDERING.md                 # Spatial renderer docs

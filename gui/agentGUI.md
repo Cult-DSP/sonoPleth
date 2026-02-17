@@ -1,367 +1,410 @@
-# Agent Instructions: Refine sonoPleth PySide6 GUI to Match Design Goal (Light Mode)
+# agentGUI_v2.md
 
-Goal: Move the current working GUI (screenshot 2026-02-16) closer to the approved light-mode mockup aesthetic: **research-lab instrument × boutique tool**.  
-This is a step-by-step implementation plan for an agent. Execute in order. Make small, controlled changes. Validate after each step.
+## sonoPleth GUI: Visual Parity Pass v2 (PySide6, Light Mode)
 
----
+Goal: Move the current GUI (screenshot 2026-02-17) toward close visual parity with the approved mockup (`sonoPleth-mockup.png`), focusing on layout, hierarchy, and widget fidelity.
 
-## 0) Non-negotiables (Do not deviate)
-
-- No SpatialSeed-style interactive spatial canvas.
-- “Spatial” is **pure vibe only**: subtle geometry background, restrained circular motifs.
-- Light mode only for this pass.
-- Minimize scope creep: do not add new sections/tabs unless explicitly instructed.
-- Make changes incrementally, committing after each stage.
+This spec is written for a strong coding model. It assumes the GUI already runs and the pipeline works.
 
 ---
 
-## 1) Create a controlled baseline
-
-### 1.1 Snapshot the current state
-
-- Create a branch: `gui/light-polish-v1`.
-- Take a screenshot of the current UI in the same window size as the mockup (1100×720) and save to `docs/gui/screenshots/before.png`.
-
-### 1.2 Confirm the code path being run
-
-- Ensure `python gui/main.py` launches the same UI shown in the screenshot.
-- If there are multiple entry points, standardize: only `gui/main.py` is used for the GUI.
-
-### 1.3 Add a quick “UI debug toggle” (temporary)
-
-- Add a boolean in `gui/main.py` (or a config file): `UI_DEBUG=False`.
-- When `UI_DEBUG=True`, show widget boundaries by applying a thin colored border via stylesheet.
-- This is to rapidly diagnose spacing/overlap issues.
-- Remove or disable before final merge.
-
-Acceptance:
-
-- Agent can reproduce the screenshot state consistently.
-
----
-
-## 2) Fix the largest visual mismatch: background vs card contrast
-
-Current issue: geometry background is too visible through the cards. The UI reads washed out and cluttered.
-
-### 2.1 Reduce background visibility (RadialBackground)
-
-Edit `gui/background.py`:
-
-- Reduce overall opacity by ~2–3×.
-  - Example: circles from `0.045` → `0.018`
-  - crosshair from `0.035` → `0.012`
-  - diagonals from `0.025` → `0.008`
-- Increase circle step spacing to reduce density.
-  - Example: `step = 60` → `step = 90` or `120`
-- OPTIONAL but recommended: add radial fade so lines are strongest near center and fade toward edges.
-  - Implement by drawing circles with opacity scaled by `(1 - r/max_r)`.
-
-Acceptance:
-
-- Background geometry is barely visible; only noticeable as a subtle technical texture.
-
-### 2.2 Increase card opacity
-
-Edit `gui/styles.qss`:
-
-- Increase `QFrame#Card` background alpha.
-  - Example: `rgba(255,255,255,0.72)` → `rgba(255,255,255,0.90)`
-- Keep hairline border: `rgba(0,0,0,0.06)`.
-- Add _one_ soft shadow style (subtle). If QSS shadow support is limited, do NOT fake it with heavy borders.
-  - Prefer leaving shadows minimal rather than over-styling.
-
-Acceptance:
-
-- Cards read as stable surfaces sitting on top of the geometry field.
-
-Commit: `chore(gui): reduce background + increase card opacity`
-
----
-
-## 3) Fix the Render Settings header/field overlap bug
-
-Current issue: “Render Settings” appears visually corrupted/overlapping with dropdowns.
-
-### 3.1 Diagnose
-
-- Enable `UI_DEBUG=True` to show widget boundaries.
-- Inspect the render panel layout for:
-  - insufficient top padding
-  - label sitting in the same layout row as the combo box
-  - editable QComboBox text rendering weirdly
-
-### 3.2 Fix
-
-In `gui/widgets/render_panel.py`:
-
-- Ensure `self.mode.setEditable(False)`.
-- Ensure the header label is in its own row above controls:
-  - `QLabel("Render Settings")`
-  - then `QComboBox`
-- Increase card top padding slightly if needed:
-  - `lay.setContentsMargins(22, 26, 22, 22)` (add +4 top)
-- Add consistent spacing between label/control blocks:
-  - `lay.setSpacing(16)` (if currently too tight)
-
-Acceptance:
-
-- “Render Settings” title renders cleanly and does not collide with any control.
-- Dropdown text is crisp; no stacked text artifacts.
-
-Commit: `fix(gui): resolve Render Settings overlap`
-
----
-
-## 4) Replace radio-button-like status indicators with custom status rows
-
-Current issue: left-side statuses look like default Qt radios (breaks Apple/boutique vibe).
-
-### 4.1 Replace with non-interactive status chips
-
-In `gui/widgets/input_panel.py`:
-
-- Do NOT use `QRadioButton` / `QCheckBox` for status.
-- Use a `StatusRow` widget with:
-  - Left: 18px circular badge
-  - Right: optional 8px green dot for “active”
-  - Text: muted gray
-- States:
-  - `inactive`: gray badge, no dot
-  - `ready`: accent-outline badge, optional check glyph later (not required)
-  - `active`: accent badge + green dot
-
-### 4.2 Make them visually consistent
-
-- Align text baseline.
-- Ensure row spacing is 14–16px.
-
-Acceptance:
-
-- Status list reads like an instrument status panel, not interactive form controls.
-
-Commit: `refactor(gui): replace status radios with custom StatusRow`
-
----
-
-## 5) Restore primary CTA fidelity during RUNNING state
-
-Current issue: “RUNNING…” should still look like the main button; not a floating label.
-
-### 5.1 Keep the button shape constant
-
-In `gui/widgets/render_panel.py`:
-
-- When running:
-  - `setEnabled(False)`
-  - keep pill button styling unchanged
-  - change text to `RUNNING…`
-- Optional: add a tiny spinner icon (only if minimal and easy). If not, skip.
-
-### 5.2 Ensure hover/press states don’t break when disabled
-
-In QSS:
-
-- Ensure disabled state is subtle:
-  - slightly lower opacity, but keep readable.
-
-Acceptance:
-
-- The primary button remains visually dominant even while disabled.
-
-Commit: `polish(gui): improve RUNNING button state`
-
----
-
-## 6) Convert console percent spam into a real progress indicator
-
-Current issue: console prints block percentages; user should not need to read logs to know progress.
-
-### 6.1 Parse percentage from stdout
-
-In `gui/pipeline_runner.py` or `gui/main.py`:
-
-- Add regex: `r"(\\d{1,3})%"`
-- Track latest percent (0–100).
-- Emit a new signal `progress_changed(int)` from PipelineRunner OR update UI in main.
-
-### 6.2 Display progress in the Pipeline panel
-
-In `gui/widgets/pipeline_panel.py`:
-
-- Add a slim progress bar under the stepper OR a small percent pill near the stepper.
-  Preferred:
-- A thin `QProgressBar` styled minimally (height ~4–6px, rounded ends).
-  Or:
-- A `Pill` showing `57%`.
-
-Keep it subtle.
-
-Acceptance:
-
-- When rendering, progress updates smoothly as new `%` lines appear.
-- Console remains available for detail but progress is visible at a glance.
-
-Commit: `feat(gui): add progress indicator from pipeline output`
-
----
-
-## 7) Typography + hierarchy tightening
-
-Goal: match mockup calmness: clear hierarchy, restrained weights.
-
-### 7.1 Update QSS font sizes/weights
-
-In `gui/styles.qss`:
-
-- Title: 18px medium
-- Section titles: 16px medium
-- Muted labels: 12px gray
-- Console: 12px
-
-### 7.2 Normalize spacing
-
-- Ensure consistent internal card padding (22–26px).
-- Ensure card headings have breathing room above first control (12–16px).
-
-Acceptance:
-
-- Text hierarchy matches mockup: calm, readable, uncluttered.
-
-Commit: `polish(gui): typography and spacing normalization`
-
----
-
-## 8) Micro-polish: scrollbars, focus, alignment
-
-### 8.1 Minimal scrollbars
-
-- Style QTextEdit scrollbar to be thin and low contrast.
-- Avoid high-contrast track.
-
-### 8.2 Focus outlines
-
-- Reduce harsh focus rings.
-- Replace with subtle accent outline on focused fields (hairline).
-
-### 8.3 Align cards and elements
-
-- Ensure left and right top cards align vertically and have similar heights.
-- Ensure consistent corner radii across cards/buttons/pills.
-
-Acceptance:
-
-- UI feels cohesive and “designed,” not “default Qt.”
-
-Commit: `polish(gui): scrollbars, focus, alignment`
-
----
-
-## 9) Stepper semantics improvement (optional if needed)
-
-If the pipeline does not emit `STEP N` reliably:
-
-- Map important phrases from `runPipeline.py` output to steps:
-  - “Verifying C++ tools” → step 1
-  - “Extracting ADM metadata” → step 2
-  - “Channel activity” → step 3
-  - “Parsing ADM → LUSID” → step 4
-  - “Packaging audio” → step 5
-  - “Running … renderer” → step 6
-  - “Analyzing …” → step 7
-
-Acceptance:
-
-- Stepper advances meaningfully even without explicit STEP markers.
-
-Commit: `feat(gui): robust step mapping from log phrases`
-
----
-
-## 10) Final validation + deliverables
-
-### 10.1 Side-by-side comparison
-
-- Capture `docs/gui/screenshots/after.png`
-- Create `docs/gui/screenshots/compare.png` (before/after montage if easy).
-
-### 10.2 Run-through checklist
-
-- Launch GUI at 1100×720.
-- Select ADM file.
-- Start render.
-- Confirm:
-  - No overlap artifacts
-  - Button state is correct
-  - Progress updates
-  - Background is subtle
-  - Console autoscroll behaves correctly
-
-### 10.3 Remove debug styling
-
-- Ensure `UI_DEBUG=False` by default.
-- Remove debug borders if any were introduced.
-
-Commit: `chore(gui): finalize light-mode polish v1`
-
----
-
-## 11) Definition of Done
-
-- Visual: matches mockup direction (soft panels, subtle geometry, crisp typography).
-- Usability: progress visible without reading logs; logs remain accessible.
-- Stability: UI does not freeze during pipeline run.
-- Consistency: no default Qt “form” look (especially status indicators).
-
----
-
-## Implementation Summary
-
-The GUI refinement has been successfully implemented according to the above plan. All steps were completed on the `light-polish-v1` branch.
+## Implementation Status
+
+> All items from the v2 spec have been implemented. See acceptance checklist at bottom.
+
+### Changes Made (Feb 17, 2026)
+
+| Section | File(s) Changed | Status |
+|---|---|---|
+| §1.1 Remove `box-shadow` CSS | `gui/styles.qss` | ✅ Done |
+| §1.2 Fix font alias warnings | `gui/styles.qss` | ✅ Done |
+| §2.1 Move RUN RENDER to Pipeline | `gui/widgets/pipeline_panel.py`, `gui/widgets/render_panel.py`, `gui/main.py` | ✅ Done |
+| §2.2 Structured log list | `gui/widgets/pipeline_panel.py`, `gui/widgets/log_modal.py` (new) | ✅ Done |
+| §3.1 StatusRow check badges | `gui/widgets/input_panel.py` | ✅ Done |
+| §3.2 Dropdown styling | `gui/styles.qss` | ✅ Done |
+| §3.3 Slider styling | `gui/styles.qss`, `gui/widgets/render_panel.py` | ✅ Done |
+| §3.4 Toggle switch | `gui/widgets/switch_toggle.py` (new) | ✅ Done |
+| §4 Background lens | `gui/background.py` | ✅ Done |
+| §5 Spacing/hierarchy | `gui/styles.qss`, all widget files | ✅ Done |
+| §6 Stepper redesign | `gui/widgets/stepper.py` | ✅ Done |
+| §7 Logging logic | `gui/widgets/pipeline_panel.py` | ✅ Done |
+| Drop shadow effects | `gui/utils/effects.py` (new), `gui/main.py` | ✅ Done |
+
+### Files Added
+- `gui/utils/__init__.py`
+- `gui/utils/effects.py` — `apply_card_shadow()`, `apply_button_shadow()` helpers
+- `gui/widgets/switch_toggle.py` — iOS-style animated toggle
+- `gui/widgets/log_modal.py` — raw log viewer modal
 
 ### Files Modified
+- `gui/styles.qss` — removed `-apple-system`, `box-shadow`, `opacity`; refined slider/dropdown/button/list styles
+- `gui/widgets/stepper.py` — alternating circle/diamond markers, connector lines, "Analyze" end label
+- `gui/widgets/input_panel.py` — `StatusBadge` with QPainter check marks replaces plain QFrame circles
+- `gui/widgets/render_panel.py` — removed RUN button, added `SwitchToggle`, master gain slider now 0.0–1.0 with value pill
+- `gui/widgets/pipeline_panel.py` — RUN RENDER in header row, `QListWidget` structured log, throttled noisy lines, raw log modal
+- `gui/background.py` — central lens (radial gradient + highlight ring + center dot), fewer circles, edge fade
+- `gui/main.py` — wired `pipeline_panel.run_clicked`, applied `QGraphicsDropShadowEffect` to cards and CTA button
 
-- `gui/main.py`: Added UI debug toggle, dynamic repo root detection, window activation
-- `gui/background.py`: Reduced geometry opacity and density, added radial fade
-- `gui/styles.qss`: Increased card opacity, added shadows, updated typography, scrollbars, focus outlines
-- `gui/pipeline_runner.py`: Added progress signal and regex parsing, phrase-based step mapping
-- `gui/widgets/input_panel.py`: Replaced radio buttons with custom StatusRow widget (inactive/ready/active states)
-- `gui/widgets/render_panel.py`: Fixed combo box editable state, adjusted margins and spacing
-- `gui/widgets/pipeline_panel.py`: Added progress bar, updated spacing
+---
 
-### Key Features Implemented
+## 0) Inputs and golden references
 
-1. **Background Polish**: Subtle concentric circles, crosshair, and diagonals with reduced opacity (0.018-0.008) and radial fade for depth.
+### 0.1 Golden target
 
-2. **Card Contrast**: Increased card background opacity to 90%, added soft box-shadow for elevation.
+- `docs/gui/reference/sonoPleth-mockup.png` (copy from your source mockup)
 
-3. **Status Indicators**: Custom StatusRow widgets with circular badges and dot indicators for inactive/ready/active states.
+### 0.2 Current output to improve
 
-4. **Progress Tracking**: Real-time progress bar parsing percentages from pipeline output, updates smoothly during rendering.
+- `docs/gui/screenshots/current.png` (captured at 1100×720)
 
-5. **Typography & Spacing**: Consistent 16px medium section titles, 12px muted text, normalized 22-26px card padding.
+### 0.3 Definition of done (visual)
 
-6. **UI Polish**: Thin scrollbars, subtle focus outlines, consistent corner radii.
+- The app reads like the mockup at a glance:
+  - The RUN RENDER button lives in the Pipeline area (not in Render Settings).
+  - The Pipeline area is a structured list, not a giant console box.
+  - Status rows are check badges, not radio circles.
+  - Cards and controls have subtle depth (Qt-appropriate shadows).
+  - The background geometry is subtle and centered with a “lens” feel.
 
-7. **Stepper Enhancement**: Fallback phrase mapping for robust step advancement.
+---
 
-### Technical Details
+## 1) Critical corrections (stop Qt warnings, improve fidelity)
 
-- **Framework**: PySide6 (Qt for Python)
-- **Layout**: QVBoxLayout/QHBoxLayout with proper margins and spacing
-- **Styling**: QSS-based theming with light-mode aesthetic
-- **Signals**: Qt signal/slot system for inter-widget communication
-- **Progress Parsing**: Regex-based extraction from stdout with fallback step mapping
+### 1.1 Remove unsupported CSS like `box-shadow`
 
-### Validation
+Qt stylesheets do not support CSS `box-shadow`. Replace any attempts with Qt effects:
 
-- GUI launches at 1100×800 (resizable, min 1000×700)
-- All widgets render correctly with polished styling
-- Pipeline execution shows progress and status updates
-- Console output remains accessible
-- No Qt default styling remains
+- Use `QGraphicsDropShadowEffect` for:
+  - Cards
+  - The primary RUN RENDER button
+  - Optional: dropdown fields
+- Keep shadows subtle:
+  - Cards: blur 28–36, alpha 20–35, offset (0, 8)
+  - Primary button: blur 36–46, alpha 35–55, offset (0, 10)
 
-The implementation achieves the "research-lab instrument × boutique tool" aesthetic while maintaining full functionality and usability. The GUI provides an intuitive interface for spatial audio processing with real-time feedback. 
+Acceptance:
 
-Branch: `light-polish-v1`  
-Status: ✅ Complete and tested
+- Terminal warnings about `Unknown property box-shadow` disappear.
+- Cards and button match the soft elevation seen in the mockup.
+
+### 1.2 Fix font alias warnings
+
+Qt does not recognize `-apple-system` the way browsers do.
+
+- Use this font family stack in QSS:
+  - `SF Pro Display`, `SF Pro Text`, `Helvetica Neue`, `Arial`
+- Do not include `-apple-system` in QSS.
+
+Acceptance:
+
+- Terminal warnings about missing font family aliases are gone.
+- Typography looks calmer and closer to the mockup.
+
+---
+
+## 2) Layout restructure to match mockup
+
+### 2.1 Move RUN RENDER into Pipeline section
+
+Target behavior from mockup:
+
+- Render Settings card contains:
+  - render mode dropdown
+  - resolution slider with value pill
+  - master gain slider with tick labels
+  - Create Analysis toggle
+- Pipeline card contains:
+  - stepper centered in header row
+  - RUN RENDER button on the right side of the Pipeline header row
+  - View Full Logs button is lower right or near header right, secondary style
+
+Implementation:
+
+- Remove RUN button from Render Settings panel.
+- Add a primary `RUN RENDER` pill button to `PipelinePanel` header row.
+
+Acceptance:
+
+- When the pipeline is running, the Pipeline header button becomes `RUNNING…` and stays visually dominant.
+- Render Settings card no longer has a bottom-run CTA.
+
+### 2.2 Pipeline card structure (replace big console)
+
+The current giant QTextEdit is visually unlike the mockup.
+
+Replace with a “structured log list” UI:
+
+- Use `QListWidget` or `QTableWidget`:
+  - Column 1: time (muted, narrow)
+  - Column 2: message (primary)
+- Add subtle row spacing and avoid heavy borders.
+- Keep scrolling, but the list should feel like a timeline, not a terminal.
+
+Implementation details:
+
+- Create a small “log model” wrapper:
+  - `add_log_line(timestamp: str, message: str, level: optional)`
+- When stdout arrives:
+  - parse step lines and important messages into the list
+  - do not dump every raw line by default
+- Keep raw logs accessible via “View Full Logs”:
+  - click opens a modal with a raw `QPlainTextEdit` showing full stdout stream
+
+Acceptance:
+
+- Pipeline area resembles mockup: a concise list with timestamps and steps.
+- Raw output still accessible, but not visually dominant.
+
+---
+
+## 3) Widget fidelity upgrades
+
+### 3.1 Input status rows (remove radio look completely)
+
+Mockup uses:
+
+- circular check badge on the left
+- label text
+- optional green active dot on the right of the first item
+
+Implementation:
+
+- Replace any QRadioButton usage with a custom `StatusRow` widget:
+  - left: 18px circle badge
+  - inside badge: check mark for completed states (drawn via QPainter, or a simple “✓” label centered)
+  - label: muted gray
+  - optional right dot: 8px green
+
+States:
+
+- inactive: gray circle outline, no check, no dot
+- complete: slightly darker outline + check
+- active: complete + green dot
+
+Acceptance:
+
+- No UI element looks like a selectable radio group.
+- Status rows match the mockup visual language.
+
+### 3.2 Dropdown styling (match pill field)
+
+Mockup dropdown is a rounded field with a subtle arrow.
+
+- Ensure `QComboBox` has:
+  - radius 12
+  - background high opacity
+  - subtle border
+- Replace the default arrow if it looks too “Qt”.
+  - Option: provide a small custom down-chevron icon in QSS using `image: url(...)` for the drop-down indicator.
+
+Acceptance:
+
+- The dropdown reads like a macOS style field, not a default Qt box.
+
+### 3.3 Slider styling to match mockup
+
+Mockup sliders:
+
+- thin track
+- subtle filled portion
+- knob feels soft and dimensional
+- resolution has a value pill on the right
+
+Implementation:
+
+- Use QSS for track and handle.
+- Consider adding a subtle knob shadow via a custom paint handle only if needed.
+- For master gain, include tick labels:
+  - left: -20
+  - center: +
+  - right: +20
+
+Acceptance:
+
+- Sliders look closer to the mockup than default Qt.
+
+### 3.4 Toggle switch (Create Analysis)
+
+Qt checkbox indicator styling is rarely enough to look like the mockup toggle.
+Implement a custom `SwitchToggle` widget:
+
+- state: on/off
+- painted pill track + circular thumb using QPainter
+- hover effect subtle
+- size close to the mockup (about 44×24)
+
+Acceptance:
+
+- The toggle looks like an iOS-style switch and sits cleanly on the row.
+
+---
+
+## 4) Background system to match mockup (center “lens” + subtle geometry)
+
+The current background is too uniform and lacks the central focal element seen in the mockup.
+
+### 4.1 Geometry density and opacity
+
+- Reduce line opacity overall.
+- Reduce the number of circles.
+- Ensure lines fade toward edges.
+
+### 4.2 Add a central “lens” focal element
+
+Mockup includes a subtle center disk with depth.
+Implement:
+
+- In the background paint:
+  - draw a soft radial gradient circle at center
+  - add a faint highlight ring
+  - add a tiny dot or inner ring
+
+Keep it extremely subtle. This should not compete with UI.
+
+Acceptance:
+
+- Background reads as a technical field with a soft center focal point.
+- Cards remain high readability.
+
+---
+
+## 5) Spacing and hierarchy pass (match mockup proportions)
+
+### 5.1 Card padding and alignment
+
+- Input and Render Settings cards should align top edges and share similar padding.
+- Increase internal padding to feel airy:
+  - 24–30px range depending on density
+
+### 5.2 Header spacing
+
+Mockup header is light and calm:
+
+- add breathing room around the title
+- keep divider line hairline
+
+### 5.3 Pipeline header row composition
+
+Pipeline row in mockup:
+
+- left: “Pipeline”
+- center: stepper
+- right: RUN RENDER (primary)
+- View Full Logs is secondary and does not steal attention
+
+Acceptance:
+
+- Layout matches mockup structure without requiring user to interpret.
+
+---
+
+## 6) Stepper redesign to match mockup
+
+Mockup stepper is not plain dots. It alternates shapes (circle, diamond) and has a faint label “Analyze”.
+
+Implementation:
+
+- Replace current dot-only stepper with a custom-painted `StepperWidget`:
+  - 7 markers total
+  - shapes alternate: circle and diamond
+  - active marker filled with accent
+  - completed markers slightly darker than inactive
+  - optional end label: “Analyze” in muted text
+
+Acceptance:
+
+- Stepper reads like the mockup and is centered in the Pipeline header.
+
+---
+
+## 7) Logging logic changes (to support the new Pipeline list)
+
+### 7.1 Parse and summarize instead of dumping raw
+
+In `PipelineRunner`:
+
+- Keep full raw buffer for “View Full Logs” modal.
+- Create a filter layer for the main list:
+  - show step changes
+  - show key events (extract, package, render, analyze)
+  - optionally throttle spam lines like “Channel X/Y scanned…”
+
+### 7.2 Throttle noisy lines
+
+If lines match patterns like:
+
+- `Channel \d+/\d+ scanned`
+- `Block \d+ \(\d+%\)`
+  Then:
+- update a single rolling entry instead of adding a new row each time
+- or update a progress bar/pill only
+
+Acceptance:
+
+- Pipeline list remains readable and calm during long runs.
+
+---
+
+## 8) Build a visual regression harness (strongly recommended)
+
+To drive parity with the mockup, add a simple screenshot export:
+
+- `python gui/tools/capture_ui.py`
+  - launches the app
+  - sets fixed window size 1100×720
+  - waits 250 ms
+  - captures `window.grab()` to `docs/gui/screenshots/latest.png`
+
+Optional pixel diff:
+
+- `python gui/tools/diff_mockup.py`
+  - loads `reference/sonoPleth-mockup.png` and `latest.png`
+  - outputs a diff heatmap and a numeric score
+
+Acceptance:
+
+- Agent can iterate and verify progress without subjective guessing.
+
+---
+
+## 9) File plan (what to change)
+
+Expected files:
+
+- `gui/styles.qss`: remove browser-only properties, refine fields and typography
+- `gui/widgets/pipeline_panel.py`: move RUN button here, rebuild pipeline UI structure
+- `gui/widgets/render_panel.py`: remove run button, refine dropdown and sliders
+- `gui/widgets/input_panel.py`: implement StatusRow check badges
+- `gui/widgets/stepper.py`: rebuild as custom stepper with alternating shapes
+- `gui/background.py`: implement faded geometry + central lens
+- `gui/pipeline_runner.py`: add filtered log stream + raw log buffer
+- `gui/widgets/log_modal.py` (new): raw logs modal
+- `gui/utils/effects.py` (new): apply_drop_shadow helpers
+
+---
+
+## 10) Acceptance checklist (must pass)
+
+Visual:
+
+- [x] RUN RENDER button is in Pipeline header row and looks like a floating pill with shadow.
+- [x] Pipeline area is a clean list with timestamps, not a large console box.
+- [x] Status indicators are check badges, not radio circles.
+- [x] Toggle switch looks like a real switch.
+- [x] Background has subtle geometry with a centered lens focal point.
+- [x] No Qt warnings about unsupported CSS properties.
+
+Functional:
+
+- [x] Pipeline still runs, output streams.
+- [x] "View Full Logs" shows raw text.
+- [x] UI remains responsive.
+- [x] Noisy log lines (channel scans, block progress) are throttled to a single rolling entry.
+
+---
+
+## 11) Delivery requirements
+
+- [x] Update `gui/agentGUI.md` with this v2 plan and implementation status.
+- [ ] Add before/after screenshots in `docs/gui/screenshots/`.
+- [x] Make small commits per section with clear messages.

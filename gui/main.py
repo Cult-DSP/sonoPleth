@@ -7,6 +7,7 @@ from PySide6.QtWidgets import QApplication, QWidget, QVBoxLayout, QHBoxLayout, Q
 
 from background import RadialBackground
 from pipeline_runner import PipelineRunner, PipelineConfig
+from utils.effects import apply_card_shadow, apply_button_shadow
 
 from widgets.header import HeaderBar
 from widgets.input_panel import InputPanel
@@ -53,15 +54,21 @@ class MainWindow(QWidget):
         main_row.addWidget(self.input_panel, 1)
 
         self.render_panel = RenderPanel(self)
-        self.render_panel.run_clicked.connect(self._run_pipeline)
         main_row.addWidget(self.render_panel, 1)
 
         root.addLayout(main_row)
 
         self.pipeline_panel = PipelinePanel(self)
+        self.pipeline_panel.run_clicked.connect(self._run_pipeline)
         root.addWidget(self.pipeline_panel)
 
         self.runner.progress_changed.connect(self.pipeline_panel.set_progress)
+
+        # Apply drop shadows to cards and primary button
+        apply_card_shadow(self.input_panel)
+        apply_card_shadow(self.render_panel)
+        apply_card_shadow(self.pipeline_panel, blur=28, alpha=22, offset_y=6)
+        apply_button_shadow(self.pipeline_panel.run_btn)
 
         self._source_path = None
         self._output_path = self.input_panel.get_output_path()
@@ -99,7 +106,7 @@ class MainWindow(QWidget):
         self.runner.run(cfg)
 
     def _on_started(self):
-        self.render_panel.set_running(True)
+        self.pipeline_panel.set_running(True)
         self.pipeline_panel.append_text("Starting pipeline...\n")
 
     def _on_output(self, text: str):
@@ -114,7 +121,7 @@ class MainWindow(QWidget):
         self.pipeline_panel.set_step(step)
 
     def _on_finished(self, exit_code: int):
-        self.render_panel.set_running(False)
+        self.pipeline_panel.set_running(False)
         if exit_code == 0:
             self.pipeline_panel.set_done_all()
             self.pipeline_panel.append_text("\nDone.\n")
