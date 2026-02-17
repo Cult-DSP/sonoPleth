@@ -312,3 +312,56 @@ Commit: `chore(gui): finalize light-mode polish v1`
 - Usability: progress visible without reading logs; logs remain accessible.
 - Stability: UI does not freeze during pipeline run.
 - Consistency: no default Qt “form” look (especially status indicators).
+
+---
+
+## Implementation Summary
+
+The GUI refinement has been successfully implemented according to the above plan. All steps were completed on the `light-polish-v1` branch.
+
+### Files Modified
+
+- `gui/main.py`: Added UI debug toggle, dynamic repo root detection, window activation
+- `gui/background.py`: Reduced geometry opacity and density, added radial fade
+- `gui/styles.qss`: Increased card opacity, added shadows, updated typography, scrollbars, focus outlines
+- `gui/pipeline_runner.py`: Added progress signal and regex parsing, phrase-based step mapping
+- `gui/widgets/input_panel.py`: Replaced radio buttons with custom StatusRow widget (inactive/ready/active states)
+- `gui/widgets/render_panel.py`: Fixed combo box editable state, adjusted margins and spacing
+- `gui/widgets/pipeline_panel.py`: Added progress bar, updated spacing
+
+### Key Features Implemented
+
+1. **Background Polish**: Subtle concentric circles, crosshair, and diagonals with reduced opacity (0.018-0.008) and radial fade for depth.
+
+2. **Card Contrast**: Increased card background opacity to 90%, added soft box-shadow for elevation.
+
+3. **Status Indicators**: Custom StatusRow widgets with circular badges and dot indicators for inactive/ready/active states.
+
+4. **Progress Tracking**: Real-time progress bar parsing percentages from pipeline output, updates smoothly during rendering.
+
+5. **Typography & Spacing**: Consistent 16px medium section titles, 12px muted text, normalized 22-26px card padding.
+
+6. **UI Polish**: Thin scrollbars, subtle focus outlines, consistent corner radii.
+
+7. **Stepper Enhancement**: Fallback phrase mapping for robust step advancement.
+
+### Technical Details
+
+- **Framework**: PySide6 (Qt for Python)
+- **Layout**: QVBoxLayout/QHBoxLayout with proper margins and spacing
+- **Styling**: QSS-based theming with light-mode aesthetic
+- **Signals**: Qt signal/slot system for inter-widget communication
+- **Progress Parsing**: Regex-based extraction from stdout with fallback step mapping
+
+### Validation
+
+- GUI launches at 1100×800 (resizable, min 1000×700)
+- All widgets render correctly with polished styling
+- Pipeline execution shows progress and status updates
+- Console output remains accessible
+- No Qt default styling remains
+
+The implementation achieves the "research-lab instrument × boutique tool" aesthetic while maintaining full functionality and usability. The GUI provides an intuitive interface for spatial audio processing with real-time feedback. 
+
+Branch: `light-polish-v1`  
+Status: ✅ Complete and tested

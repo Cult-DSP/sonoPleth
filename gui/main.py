@@ -123,33 +123,26 @@ class MainWindow(QWidget):
 
 
 def main():
-    print("Starting main")
     UI_DEBUG = False  # Set to True to show widget boundaries for debugging
-    try:
-        app = QApplication(sys.argv)
-        print("App created")
-        here = Path(__file__).resolve().parent
-        load_qss(app, here / "styles.qss")
-        print("QSS loaded")
-        
-        if UI_DEBUG:
-            # Add debug borders to all widgets
-            debug_style = """
-            QWidget {
-                border: 1px solid red;
-            }
-            """
-            app.setStyleSheet(app.styleSheet() + debug_style)
+    app = QApplication(sys.argv)
+    here = Path(__file__).resolve().parent
+    load_qss(app, here / "styles.qss")
+    
+    if UI_DEBUG:
+        # Add debug borders to all widgets
+        debug_style = """
+        QWidget {
+            border: 1px solid red;
+        }
+        """
+        app.setStyleSheet(app.styleSheet() + debug_style)
 
-        repo_root = str(Path(__file__).resolve().parent.parent)
-        print(f"Repo root: {repo_root}")
-        win = MainWindow(repo_root=repo_root)
-        print("Window created")
-        win.show()
-        win.activateWindow()
-        print("Window shown")
-        sys.exit(app.exec())
-    except Exception as e:
-        print(f"Error: {e}")
-        import traceback
-        traceback.print_exc()
+    repo_root = str(Path(__file__).resolve().parent.parent)
+    win = MainWindow(repo_root=repo_root)
+    win.show()
+    win.activateWindow()
+    sys.exit(app.exec())
+
+
+if __name__ == "__main__":
+    main()
