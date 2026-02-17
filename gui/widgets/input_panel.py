@@ -26,18 +26,20 @@ class StatusRow(QWidget):
         self.dot.setStyleSheet("background: transparent; border-radius: 4px;")
         lay.addWidget(self.dot, alignment=Qt.AlignVCenter)
 
-    def set_checked(self, checked: bool, active_dot: bool = False):
-        if checked:
+    def set_state(self, state: str):
+        if state == 'inactive':
+            self.icon.setStyleSheet("background: rgba(0,0,0,0.08); border-radius: 9px;")
+            self.dot.setStyleSheet("background: transparent; border-radius: 4px;")
+        elif state == 'ready':
             self.icon.setStyleSheet(
                 "background: rgba(76,111,255,0.20); border-radius: 9px; border: 1px solid rgba(76,111,255,0.35);"
             )
-        else:
-            self.icon.setStyleSheet("background: rgba(0,0,0,0.08); border-radius: 9px;")
-
-        if active_dot:
+            self.dot.setStyleSheet("background: transparent; border-radius: 4px;")
+        elif state == 'active':
+            self.icon.setStyleSheet("background: rgba(76,111,255,0.55); border-radius: 9px;")
             self.dot.setStyleSheet("background: #4CAF82; border-radius: 4px;")
         else:
-            self.dot.setStyleSheet("background: transparent; border-radius: 4px;")
+            self.set_state('inactive')
 
 class InputPanel(QFrame):
     file_selected = Signal(str)
@@ -84,9 +86,9 @@ class InputPanel(QFrame):
         lay.addWidget(self.row_activity)
         lay.addStretch(1)
 
-        self.row_adm.set_checked(False)
-        self.row_meta.set_checked(False)
-        self.row_activity.set_checked(False)
+        self.row_adm.set_state('inactive')
+        self.row_meta.set_state('inactive')
+        self.row_activity.set_state('inactive')
 
     def _on_output_path_changed(self, text):
         self.output_path_changed.emit(text)
@@ -109,11 +111,13 @@ class InputPanel(QFrame):
         )
         if path:
             self.file_selected.emit(path)
-            self.row_adm.set_checked(True, active_dot=True)
+            self.row_adm.set_state('ready')
 
     def set_progress_flags(self, metadata: bool, activity: bool):
-        self.row_meta.set_checked(metadata, active_dot=metadata)
-        self.row_activity.set_checked(activity, active_dot=activity)
+        if metadata:
+            self.row_meta.set_state('active')
+        if activity:
+            self.row_activity.set_state('active')
 
     def get_output_path(self) -> str:
         return self.output_path or "processedData/spatial_render.wav"
