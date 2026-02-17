@@ -11,8 +11,8 @@ class RenderPanel(QFrame):
         self.setObjectName("Card")
 
         lay = QVBoxLayout(self)
-        lay.setContentsMargins(22, 22, 22, 22)
-        lay.setSpacing(20)
+        lay.setContentsMargins(22, 26, 22, 22)
+        lay.setSpacing(16)
 
         title = QLabel("Render Settings", self)
         title.setObjectName("SectionTitle")
@@ -20,6 +20,7 @@ class RenderPanel(QFrame):
 
         self.mode = QComboBox(self)
         self.mode.addItems(["dbap", "lbap"])
+        self.mode.setEditable(False)
         lay.addWidget(self.mode)
 
         layout_label = QLabel("Speaker Layout", self)
