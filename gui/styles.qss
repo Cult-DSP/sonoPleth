@@ -110,3 +110,24 @@ QProgressBar::chunk {
     background: rgba(76,111,255,0.50);
     border-radius: 3px;
 }
+
+QScrollBar:vertical {
+    width: 8px;
+    background: transparent;
+}
+QScrollBar::handle:vertical {
+    background: rgba(0,0,0,0.25);
+    border-radius: 4px;
+    min-height: 20px;
+}
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+    border: none;
+    background: none;
+}
+QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {
+    background: none;
+}
+
+QPushButton:focus, QComboBox:focus {
+    outline: 1px solid rgba(76,111,255,0.4);
+}
