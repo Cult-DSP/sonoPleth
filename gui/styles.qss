@@ -32,11 +32,8 @@ QPushButton#PrimaryButton {
     font-size: 14px;
     font-weight: 500;
 }
-QPushButton#PrimaryButton:hover {
-    background: rgba(250,250,250,0.95);
-    border: 1px solid rgba(76,111,255,0.35);
-}
 QPushButton#PrimaryButton:pressed { background: rgba(245,245,245,0.95); }
+QPushButton#PrimaryButton:disabled { background: rgba(255,255,255,0.85); opacity: 0.7; }
 
 QPushButton#SecondaryButton {
     background: rgba(255,255,255,0.55);
