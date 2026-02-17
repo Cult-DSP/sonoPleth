@@ -36,6 +36,7 @@ class MainWindow(QWidget):
         self.runner.step_changed.connect(self._on_step)
         self.runner.started.connect(self._on_started)
         self.runner.finished.connect(self._on_finished)
+        self.runner.progress_changed.connect(self.pipeline_panel.set_progress)
 
         root = QVBoxLayout(self)
         root.setContentsMargins(24, 24, 24, 24)

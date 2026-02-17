@@ -100,4 +100,13 @@ QCheckBox::indicator {
     border-radius: 9px;
     background: rgba(0,0,0,0.12);
 }
-QCheckBox::indicator:checked { background: rgba(76,111,255,0.55); }
+QProgressBar {
+    border: none;
+    border-radius: 3px;
+    background: rgba(0,0,0,0.10);
+    text-align: center;
+}
+QProgressBar::chunk {
+    background: rgba(76,111,255,0.50);
+    border-radius: 3px;
+}

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QTextCursor
-from PySide6.QtWidgets import QFrame, QLabel, QVBoxLayout, QHBoxLayout, QTextEdit, QPushButton
+from PySide6.QtWidgets import QFrame, QLabel, QVBoxLayout, QHBoxLayout, QTextEdit, QPushButton, QProgressBar
 
 from .stepper import Stepper
 
@@ -35,6 +35,12 @@ class PipelinePanel(QFrame):
 
         lay.addLayout(header)
 
+        self.progress_bar = QProgressBar(self)
+        self.progress_bar.setRange(0, 100)
+        self.progress_bar.setValue(0)
+        self.progress_bar.setFixedHeight(6)
+        lay.addWidget(self.progress_bar)
+
         hint = QLabel("Pipeline init → Run pipeline to render spatial audio", self)
         hint.setObjectName("Muted")
         lay.addWidget(hint)
@@ -60,6 +66,9 @@ class PipelinePanel(QFrame):
 
     def set_step(self, step_1based: int):
         self.stepper.set_step(step_1based)
+
+    def set_progress(self, percent: int):
+        self.progress_bar.setValue(percent)
 
     def set_done_all(self):
         self.stepper.set_done_all()
