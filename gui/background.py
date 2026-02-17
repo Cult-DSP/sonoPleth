@@ -29,22 +29,24 @@ class RadialBackground(QWidget):
         p.setPen(pen)
 
         # Concentric circles
-        p.setOpacity(0.045)
+        base_opacity = 0.018
         max_r = max(w, h) * 0.65
-        step = 60.0
+        step = 90.0
         r = step
         while r < max_r:
+            opacity = base_opacity * (1 - r / max_r)
+            p.setOpacity(opacity)
             rect = QRectF(cx - r, cy - r, 2 * r, 2 * r)
             p.drawEllipse(rect)
             r += step
 
         # Crosshair
-        p.setOpacity(0.035)
+        p.setOpacity(0.012)
         p.drawLine(0, int(cy), w, int(cy))
         p.drawLine(int(cx), 0, int(cx), h)
 
         # Diagonals
-        p.setOpacity(0.025)
+        p.setOpacity(0.008)
         p.drawLine(0, 0, w, h)
         p.drawLine(0, h, w, 0)
 

@@ -121,14 +121,19 @@ class MainWindow(QWidget):
 
 
 def main():
+    UI_DEBUG = False  # Set to True to show widget boundaries for debugging
     app = QApplication(sys.argv)
     here = Path(__file__).resolve().parent
     load_qss(app, here / "styles.qss")
-
-    repo_root = "/Users/lucian/Projects/sonoPleth"
-    win = MainWindow(repo_root=repo_root)
-    win.show()
-    sys.exit(app.exec())
+    
+    if UI_DEBUG:
+        # Add debug borders to all widgets
+        debug_style = """
+        QWidget {
+            border: 1px solid red;
+        }
+        """
+        app.setStyleSheet(app.styleSheet() + debug_style)
 
 
 if __name__ == "__main__":
