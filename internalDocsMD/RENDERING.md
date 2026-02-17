@@ -93,7 +93,7 @@ And produces:
 
 | Flag                       | Default  | Description                                                                                                                                                       |
 | -------------------------- | -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `--master_gain FLOAT`      | 0.25     | Global gain (prevents clipping from panning sum)                                                                                                                  |
+| `--master_gain FLOAT`      | 0.5     | Global gain (prevents clipping from panning sum)                                                                                                                  |
 | `--solo_source NAME`       | (none)   | Render only this source (for debugging)                                                                                                                           |
 | `--t0 SECONDS`             | 0        | Start rendering at this time                                                                                                                                      |
 | `--t1 SECONDS`             | (end)    | Stop rendering at this time                                                                                                                                       |
@@ -327,7 +327,7 @@ struct RenderConfig {
     float lbapDispersion = 0.5f;                // LBAP dispersion threshold (0.0-1.0)
 
     // General render options
-    float masterGain = 0.25f;                   // Prevent summation clipping
+    float masterGain = 0.5f;                   // Prevent summation clipping
     std::string soloSource = "";                // Solo mode: only render this source
     double t0 = -1.0;                           // Start time (-1 = beginning)
     double t1 = -1.0;                           // End time (-1 = end)
@@ -344,7 +344,7 @@ struct RenderConfig {
 
 All spatializers work by distributing each source's energy across multiple speakers. When multiple sources are rendered, their contributions **accumulate**. With many sources pointing at similar directions, this can cause clipping.
 
-The default `masterGain = 0.25f` provides ~12dB of headroom. Adjust based on your source count and panning density.
+The default `masterGain = 0.5f` provides ~6dB of headroom. Adjust based on your source count and panning density.
 
 ## Render Statistics
 
@@ -354,7 +354,7 @@ After rendering, statistics are computed and logged:
 Rendering 1234567 samples (25.72 sec) to 16 speakers from 8 sources
 Spatializer: DBAP (focus=1.0)
   NOTE: DBAP uses coordinate transform (x,y,z)->(x,z,-y) for AlloLib compatibility
-  Master gain: 0.25
+  Master gain: 0.5
   Render resolution: block (block size: 64)
   Elevation mode: rescale_atmos_up
 
@@ -726,8 +726,6 @@ runSpatialRender(spatializer="vbap")
 # Or use LBAP with custom dispersion
 runSpatialRender(spatializer="lbap", lbap_dispersion=0.7)
 ```
-
-````
 
 ## Debugging Workflow
 

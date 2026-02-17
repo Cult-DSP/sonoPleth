@@ -141,6 +141,10 @@ int main(int argc, char *argv[]) {
             }
         } else if (arg == "--master_gain") {
             config.masterGain = std::stof(argv[++i]);
+            if (config.masterGain < 0.0f || config.masterGain > 1.0f) {
+                std::cerr << "Error: --master_gain must be in range [0.0, 1.0]\n";
+                return 1;
+            }
         } else if (arg == "--solo_source") {
             config.soloSource = argv[++i];
         } else if (arg == "--t0") {

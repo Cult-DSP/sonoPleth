@@ -53,14 +53,17 @@ def check_initialization():
 
 
 
-def run_pipeline_from_ADM(sourceADMFile, sourceSpeakerLayout, renderMode="dbap", resolution = 1.5,createRenderAnalysis=True):
+def run_pipeline_from_ADM(sourceADMFile, sourceSpeakerLayout, renderMode="dbap", resolution=1.5, createRenderAnalysis=True, master_gain=0.5):
     """
     Run the complete ADM to spatial audio pipeline
     
     Args:
         sourceADMFile: path to source ADM WAV file
         sourceSpeakerLayout: path to speaker layout JSON
+        renderMode: spatializer type (default: "dbap")
+        resolution: spatializer-specific parameter (e.g., dbap_focus or lbap_dispersion)
         createRenderAnalysis: whether to create render analysis PDF
+        master_gain: master gain for the renderer (default: 0.5)
     """
     # Step 0: Check if project has been initialized
     if not check_initialization():
@@ -124,6 +127,7 @@ def run_pipeline_from_ADM(sourceADMFile, sourceSpeakerLayout, renderMode="dbap",
         speaker_layout=sourceSpeakerLayout,
         output_file=finalOutputRenderFile,
         spatializer=spatializer,
+        master_gain=master_gain,  # Pass master_gain to runSpatialRender
         **extra_kwargs
     )
 
@@ -161,23 +165,25 @@ if __name__ == "__main__":
         sourceSpeakerLayout = sys.argv[2] if len(sys.argv) >= 3 else "spatial_engine/speaker_layouts/allosphere_layout.json"
         renderMode = sys.argv[3] if len(sys.argv) >= 4 else "dbap"
         resolution = float(sys.argv[4]) if len(sys.argv) >= 5 else 1.5
-        createRenderAnalysis = True if len(sys.argv) < 6 else sys.argv[5].lower() in ['true', '1', 'yes']
-        
+        master_gain = float(sys.argv[5]) if len(sys.argv) >= 6 else 0.5  # Added master_gain argument
+        createRenderAnalysis = True if len(sys.argv) < 7 else sys.argv[6].lower() in ['true', '1', 'yes']
+
         if sourceType == "ADM":
             print("Running pipeline from ADM source...")
-            run_pipeline_from_ADM(sourceADMFile, sourceSpeakerLayout, renderMode, resolution, createRenderAnalysis)
+            run_pipeline_from_ADM(sourceADMFile, sourceSpeakerLayout, renderMode, resolution, createRenderAnalysis, master_gain)
         elif sourceType == "LUSID":
             print("Running pipeline from LUSID source...")
             run_pipeline_from_LUSID(sourceADMFile, sourceSpeakerLayout, renderMode, createRenderAnalysis)
     
     else:
         # default mode
-        print("Usage: python runPipeline.py <sourceADMFile> [sourceSpeakerLayout] [renderMode] [resolution] [createAnalysis]")
+        print("Usage: python runPipeline.py <sourceADMFile> [sourceSpeakerLayout] [renderMode] [resolution] [master_gain] [createAnalysis]")
         print("\nRunning with default configuration...")
-        
+
         sourceADMFile = "sourceData/driveExampleSpruce.wav"
         sourceSpeakerLayout = "spatial_engine/speaker_layouts/allosphere_layout.json"
+        master_gain = 0.5
         createRenderAnalysis = True
-        
-        run_pipeline_from_ADM(sourceADMFile, sourceSpeakerLayout, createRenderAnalysis)
+
+        run_pipeline_from_ADM(sourceADMFile, sourceSpeakerLayout, "dbap", 1.5, createRenderAnalysis, master_gain)
 

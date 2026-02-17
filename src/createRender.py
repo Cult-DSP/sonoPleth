@@ -41,7 +41,8 @@ def runSpatialRender(
     output_file="processedData/spatial_render.wav",
     spatializer="dbap",
     dbap_focus=1.5,
-    lbap_dispersion=0.5
+    lbap_dispersion=0.5,
+    master_gain=0.5  # New parameter for master gain
 ):
     """
     Run the spatial renderer with the specified spatializer.
@@ -67,6 +68,8 @@ def runSpatialRender(
         DBAP focus/rolloff exponent (default: 1.5, range: 0.2-5.0)
     lbap_dispersion : float
         LBAP dispersion threshold (default: 0.5, range: 0.0-1.0)
+    master_gain : float
+        Master gain applied to the output (default: 0.5, range: 0.0-1.0)
     
     Returns:
     --------
@@ -118,6 +121,11 @@ def runSpatialRender(
         print(f"Error: Invalid spatializer '{spatializer}'. Must be one of: {valid_spatializers}")
         return False
     
+    # Validate master_gain
+    if not (0.0 <= master_gain <= 1.0):
+        print(f"Error: Invalid master_gain '{master_gain}'. Must be in range [0.0, 1.0].")
+        return False
+    
     # Run the renderer
     print(f"\nRunning Spatial Renderer...")
     print(f"  Spatializer: {spatializer.upper()}")
@@ -142,6 +150,9 @@ def runSpatialRender(
     elif spatializer == 'lbap':
         cmd.extend(["--lbap_dispersion", str(lbap_dispersion)])
     
+    # Add master_gain parameter
+    cmd.extend(["--master_gain", str(master_gain)])
+
     print(f"  Full command: {' '.join(cmd)}")
     
     try:
