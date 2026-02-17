@@ -24,6 +24,8 @@ python runPipeline.py sourceData/SWALE-ATMOS-LFE.wav  spatial_engine/speaker_lay
 
 python runPipeline.py sourceData/ASCENT-ATMOS-LFE.wav spatial_engine/speaker_layouts/allosphere_layout.json dbap 1.0
 
+python runPipeline.py sourceData/sphere-ascent-atmos.wav spatial_engine/speaker_layouts/allosphere_layout.json dbap 1.0
+
 
 LUSID -> translab:
 python createFromLUSID.py sourceData/lusid_package /Users/lucian/projects/sonoPleth/spatial_engine/speaker_layouts/translab-sono-layout.json
