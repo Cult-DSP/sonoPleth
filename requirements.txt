@@ -5,3 +5,5 @@ matplotlib
 pandas
 jupyter
 gdown
+
+PySide6>=6.6

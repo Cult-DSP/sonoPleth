@@ -1,0 +1,1 @@
+# PySide6>=6.6 -- ignored, moved to main requirements at project root
