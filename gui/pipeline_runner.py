@@ -11,6 +11,16 @@ from PySide6.QtCore import QObject, QProcess, Signal
 STEP_RE = re.compile(r"\bSTEP\s*([1-9]\d*)\b", re.IGNORECASE)
 PROGRESS_RE = re.compile(r"(\d{1,3})%")
 
+STEP_PHRASES = {
+    "Verifying C++ tools": 1,
+    "Extracting ADM metadata": 2,
+    "Channel activity": 3,
+    "Parsing ADM → LUSID": 4,
+    "Packaging audio": 5,
+    "Running … renderer": 6,
+    "Analyzing …": 7,
+}
+
 @dataclass
 class PipelineConfig:
     source_path: str
@@ -83,6 +93,11 @@ class PipelineRunner(QObject):
         for m in STEP_RE.finditer(data):
             step = int(m.group(1))
             if step > self._last_step:
+                self._last_step = step
+                self.step_changed.emit(step)
+
+        for phrase, step in STEP_PHRASES.items():
+            if phrase.lower() in data.lower() and step > self._last_step:
                 self._last_step = step
                 self.step_changed.emit(step)
 
