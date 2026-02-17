@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtWidgets import QFrame, QLabel, QVBoxLayout, QPushButton, QWidget, QHBoxLayout, QFileDialog
+from PySide6.QtWidgets import QFrame, QLabel, QVBoxLayout, QPushButton, QWidget, QHBoxLayout, QFileDialog, QLineEdit
 
 class StatusRow(QWidget):
     def __init__(self, text: str, parent=None):
@@ -41,6 +41,8 @@ class StatusRow(QWidget):
 
 class InputPanel(QFrame):
     file_selected = Signal(str)
+    output_path_changed = Signal(str)
+
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -60,6 +62,19 @@ class InputPanel(QFrame):
         self.select_btn.setMinimumHeight(44)
         lay.addWidget(self.select_btn)
 
+        # Output path field with file dialog
+        output_row = QHBoxLayout()
+        output_label = QLabel("Output Path:", self)
+        output_label.setObjectName("Muted")
+        output_row.addWidget(output_label)
+        self.output_path_btn = QPushButton("Select Output File", self)
+        self.output_path_btn.setObjectName("SecondaryButton")
+        self.output_path_btn.clicked.connect(self._choose_output_path)
+        output_row.addWidget(self.output_path_btn)
+        self.output_path = "processedData/spatial_render.wav"
+        self.output_path_btn.setToolTip(self.output_path)
+        lay.addLayout(output_row)
+
         self.row_adm = StatusRow("ADM Source", self)
         lay.addWidget(self.row_adm)
         self.row_meta = StatusRow("Metadata Extracted", self)
@@ -73,6 +88,21 @@ class InputPanel(QFrame):
         self.row_meta.set_checked(False)
         self.row_activity.set_checked(False)
 
+    def _on_output_path_changed(self, text):
+        self.output_path_changed.emit(text)
+
+    def _choose_output_path(self):
+        path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Select Output File",
+            self.output_path,
+            "WAV Files (*.wav);;All Files (*)"
+        )
+        if path:
+            self.output_path = path
+            self.output_path_btn.setToolTip(path)
+            self.output_path_changed.emit(path)
+
     def _choose_file(self):
         path, _ = QFileDialog.getOpenFileName(
             self, "Select ADM WAV", "", "Audio/ADM (*.wav *.WAV);;All Files (*)"
@@ -84,3 +114,6 @@ class InputPanel(QFrame):
     def set_progress_flags(self, metadata: bool, activity: bool):
         self.row_meta.set_checked(metadata, active_dot=metadata)
         self.row_activity.set_checked(activity, active_dot=activity)
+
+    def get_output_path(self) -> str:
+        return self.output_path or "processedData/spatial_render.wav"

@@ -18,6 +18,7 @@ class PipelineConfig:
     resolution: Optional[float] = None
     master_gain: Optional[float] = None
     create_analysis: bool = True
+    output_path: Optional[str] = None
 
 class PipelineRunner(QObject):
     output = Signal(str)
@@ -52,7 +53,7 @@ class PipelineRunner(QObject):
         args: List[str] = ["-u", script, cfg.source_path]
 
         # Signature:
-        # runPipeline.py <sourceADMFile> [speakerLayout] [renderMode] [resolution] [master_gain] [createAnalysis]
+        # runPipeline.py <sourceADMFile> [speakerLayout] [renderMode] [resolution] [master_gain] [createAnalysis] [outputRenderPath]
         if cfg.speaker_layout is not None:
             args.append(cfg.speaker_layout)
         if cfg.render_mode is not None:
@@ -62,6 +63,8 @@ class PipelineRunner(QObject):
         if cfg.master_gain is not None:
             args.append(str(cfg.master_gain))
         args.append("1" if cfg.create_analysis else "0")
+        if cfg.output_path:
+            args.append(cfg.output_path)
 
         self._last_step = 0
         self.proc.setWorkingDirectory(self.repo_root)

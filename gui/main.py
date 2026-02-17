@@ -49,6 +49,7 @@ class MainWindow(QWidget):
 
         self.input_panel = InputPanel(self)
         self.input_panel.file_selected.connect(self._on_file_selected)
+        self.input_panel.output_path_changed.connect(self._on_output_path_changed)
         main_row.addWidget(self.input_panel, 1)
 
         self.render_panel = RenderPanel(self)
@@ -61,6 +62,9 @@ class MainWindow(QWidget):
         root.addWidget(self.pipeline_panel)
 
         self._source_path = None
+        self._output_path = self.input_panel.get_output_path()
+    def _on_output_path_changed(self, path: str):
+        self._output_path = path.strip() or "processedData/spatial_render.wav"
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
@@ -76,6 +80,7 @@ class MainWindow(QWidget):
             return
 
         mode, resolution, gain, create_analysis, speaker_layout = self.render_panel.get_values()
+        output_path = self.input_panel.get_output_path()
 
         cfg = PipelineConfig(
             source_path=self._source_path,
@@ -84,6 +89,7 @@ class MainWindow(QWidget):
             resolution=resolution,
             master_gain=gain,
             create_analysis=create_analysis,
+            output_path=output_path,
         )
 
         self.pipeline_panel.clear()
