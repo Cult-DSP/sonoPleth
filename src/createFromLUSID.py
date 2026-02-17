@@ -41,7 +41,7 @@ def check_initialization():
     return False
 
 
-def run_pipeline_from_LUSID(source_lusid_package, source_speaker_layout, spatializer="dbap", create_render_analysis=True):
+def run_pipeline_from_LUSID(source_lusid_package, source_speaker_layout, spatializer="dbap", create_render_analysis=True, outputRenderPath="processedData/spatial_render.wav", **kwargs):
     """
     Run the complete LUSID package to spatial audio pipeline
     
@@ -90,8 +90,8 @@ def run_pipeline_from_LUSID(source_lusid_package, source_speaker_layout, spatial
     print(f"✓ Speaker layout: {layout_path}")
 
     # Set up output paths
-    final_output_render_file = "processedData/spatial_render.wav"
-    final_output_render_analysis_pdf = "processedData/spatial_render_analysis.pdf"
+    final_output_render_file = outputRenderPath
+    final_output_render_analysis_pdf = outputRenderPath.replace(".wav", ".pdf")
 
     # Step 3: Run spatial renderer
     # The C++ renderer handles all the complex LUSID scene parsing, audio file loading, etc.
@@ -99,12 +99,14 @@ def run_pipeline_from_LUSID(source_lusid_package, source_speaker_layout, spatial
     print("STEP 3: Running spatial renderer")
     print("="*80)
     
+    # Accept extra kwargs for spatializer params (e.g., master_gain, dbap_focus, lbap_dispersion)
     success = runSpatialRender(
         source_folder=str(package_path),
         render_instructions=str(scene_file),
         speaker_layout=source_speaker_layout,
         output_file=final_output_render_file,
-        spatializer=spatializer
+        spatializer=spatializer,
+        **kwargs
     )
     
     if not success:
@@ -137,23 +139,38 @@ if __name__ == "__main__":
     if len(sys.argv) >= 2:
         source_lusid_package = sys.argv[1]
         source_speaker_layout = sys.argv[2] if len(sys.argv) >= 3 else "spatial_engine/speaker_layouts/allosphere_layout.json"
-        spatializer = sys.argv[4] if len(sys.argv) >= 5 else "dbap"
         create_render_analysis = True if len(sys.argv) < 4 else sys.argv[3].lower() in ['true', '1', 'yes']
-        
-        success = run_pipeline(source_lusid_package, source_speaker_layout, spatializer, create_render_analysis)
+        spatializer = sys.argv[4] if len(sys.argv) >= 5 else "dbap"
+        outputRenderPath = sys.argv[5] if len(sys.argv) >= 6 else "processedData/spatial_render.wav"
+
+        # Optionally parse extra spatializer kwargs from CLI (future-proofing)
+        extra_kwargs = {}
+        # Example: python createFromLUSID.py ... ... ... ... ... master_gain=0.5
+        for arg in sys.argv[6:]:
+            if '=' in arg:
+                k, v = arg.split('=', 1)
+                try:
+                    v = float(v)
+                except ValueError:
+                    pass
+                extra_kwargs[k] = v
+
+        success = run_pipeline_from_LUSID(source_lusid_package, source_speaker_layout, spatializer, create_render_analysis, outputRenderPath, **extra_kwargs)
         sys.exit(0 if success else 1)
     
     else:
         # Default mode - show usage and example
-        print("Usage: python createFromLUSID.py <sourceLUSIDPackage> [sourceSpeakerLayout] [createAnalysis] [spatializer]")
+        print("Usage: python createFromLUSID.py <sourceLUSIDPackage> [sourceSpeakerLayout] [createAnalysis] [spatializer] [outputRenderPath] [spatializer_kwargs...]")
         print("\nParameters:")
         print("  sourceLUSIDPackage:   Path to LUSID package directory")
         print("  sourceSpeakerLayout:  Speaker layout JSON file (default: allosphere_layout.json)")
         print("  createAnalysis:       Create render analysis PDF (default: true)")
         print("  spatializer:          Spatializer type: dbap, vbap, lbap (default: dbap)")
+        print("  outputRenderPath:     Output WAV file path (default: processedData/spatial_render.wav)")
+        print("  spatializer_kwargs:   Additional spatializer parameters as key=value pairs (e.g., master_gain=0.5)")
         print("\nExample:")
         print("  python createFromLUSID.py sourceData/lusid_package")
-        print("  python createFromLUSID.py sourceData/lusid_package spatial_engine/speaker_layouts/custom_layout.json false vbap")
+        print("  python createFromLUSID.py sourceData/lusid_package spatial_engine/speaker_layouts/custom_layout.json false vbap processedData/my_render.wav master_gain=0.7 dbap_focus=1.2")
         print("\nA LUSID package should contain:")
         print("  - scene.lusid.json (required)")
         print("  - Audio files: X.1.wav, LFE.wav, etc.")

@@ -19,7 +19,7 @@ class RenderPanel(QFrame):
         lay.addWidget(title)
 
         self.mode = QComboBox(self)
-        self.mode.addItems(["DBAP", "LBAP"])
+        self.mode.addItems(["dbap", "lbap"])
         lay.addWidget(self.mode)
 
         layout_label = QLabel("Speaker Layout", self)
@@ -28,7 +28,7 @@ class RenderPanel(QFrame):
 
         self.layout = QComboBox(self)
         self.layout.addItem("Allosphere", "spatial_engine/speaker_layouts/allosphere_layout.json")
-        self.layout.addItem("Translab Sono", "spatial_engine/speaker_layouts/translab-sono-layout.json")
+        self.layout.addItem("Translab", "spatial_engine/speaker_layouts/translab-sono-layout.json")
         lay.addWidget(self.layout)
 
         res_label = QLabel("Resolution", self)
@@ -40,7 +40,7 @@ class RenderPanel(QFrame):
 
         self.res_slider = QSlider(Qt.Horizontal, self)
         self.res_slider.setMinimum(10)
-        self.res_slider.setMaximum(100)
+        self.res_slider.setMaximum(200)
         self.res_slider.setValue(50)
         self.res_slider.valueChanged.connect(self._update_res)
         res_row.addWidget(self.res_slider, 1)

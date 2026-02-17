@@ -4,7 +4,7 @@ from src.analyzeADM.checkAudioChannels import channelHasAudio, exportAudioActivi
 from src.packageADM.packageForRender import packageForRender
 from src.createRender import runVBAPRender
 from src.analyzeRender import analyzeRenderOutput
-from createFromLUSID import run_pipeline_from_LUSID
+from src.createFromLUSID import run_pipeline_from_LUSID
 from pathlib import Path
 import subprocess
 import sys
@@ -53,7 +53,7 @@ def check_initialization():
 
 
 
-def run_pipeline_from_ADM(sourceADMFile, sourceSpeakerLayout, renderMode="dbap", resolution=1.5, createRenderAnalysis=True, master_gain=0.5):
+def run_pipeline_from_ADM(sourceADMFile, sourceSpeakerLayout, renderMode="dbap", resolution=1.5, createRenderAnalysis=True, master_gain=0.5, outputRenderPath="processedData/spatial_render.wav"):
     """
     Run the complete ADM to spatial audio pipeline
     
@@ -81,8 +81,8 @@ def run_pipeline_from_ADM(sourceADMFile, sourceSpeakerLayout, renderMode="dbap",
         return False
     
     processedDataDir = "processedData"
-    finalOutputRenderFile = "processedData/spatial_render.wav"
-    finalOutputRenderAnalysisPDF = "processedData/spatial_render_analysis.pdf"
+    finalOutputRenderFile = outputRenderPath
+    finalOutputRenderAnalysisPDF = outputRenderPath.replace(".wav", ".pdf")
 
     # -- Audio channel analysis (still writes containsAudio.json for splitStems) --
     print("\nChecking audio channels for content...")
@@ -172,7 +172,7 @@ if __name__ == "__main__":
             run_pipeline_from_ADM(sourceADMFile, sourceSpeakerLayout, renderMode, resolution, createRenderAnalysis, master_gain)
         elif sourceType == "LUSID":
             print("Running pipeline from LUSID source...")
-            run_pipeline_from_LUSID(sourceADMFile, sourceSpeakerLayout, renderMode, createRenderAnalysis)
+            run_pipeline_from_LUSID(sourceADMFile, sourceSpeakerLayout, renderMode, createRenderAnalysis, outputRenderPath)
     
     else:
         # default mode

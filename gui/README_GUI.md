@@ -18,6 +18,6 @@ python gui/main.py
 
 ## Notes
 
-- The GUI runs `runPipeline.py` via QProcess and streams output to the console.
+- The GUI runs `runPipeline.py` via QProcess and now streams output live to the console using Python's unbuffered mode (`-u` flag). This ensures real-time progress and logs, matching the CLI experience.
 - Render mode / resolution / gain / analysis toggle are wired.
-- Speaker layout selection is a placeholder hook.
+- Speaker layout selection is fully functional.

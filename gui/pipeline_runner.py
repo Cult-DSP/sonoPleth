@@ -48,7 +48,8 @@ class PipelineRunner(QObject):
 
         py = sys.executable or "python"
         script = os.path.join(self.repo_root, "runPipeline.py")
-        args: List[str] = [script, cfg.source_path]
+        # Use unbuffered output for streaming logs
+        args: List[str] = ["-u", script, cfg.source_path]
 
         # Signature:
         # runPipeline.py <sourceADMFile> [speakerLayout] [renderMode] [resolution] [master_gain] [createAnalysis]
