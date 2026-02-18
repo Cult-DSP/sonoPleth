@@ -354,7 +354,7 @@ Core dataclasses for LUSID Scene v0.5.2:
 
   - `<source>`: Path to ADM .wav file or LUSID package folder (named "lusid_package")
   - `[speakerLayout]`: Path to speaker layout JSON (default: allosphere_layout.json)
-  - `[renderMode]`: Spatializer mode - "dbap", "vbap", "lbap", "dbapfocus", "lbap" (default: "dbap")
+  - `[renderMode]`: Spatializer mode - "dbap", "lbap", "lbap" (default: "dbap")
   - `[resolution]`: Focus/dispersion parameter for dbapfocus/lbap (default: 1.5)
   - `[createAnalysis]`: Create PDF analysis (true/false, default: true)
 
@@ -427,17 +427,17 @@ Core dataclasses for LUSID Scene v0.5.2:
 
 **Widget inventory:**
 
-| Widget | File | Purpose |
-|---|---|---|
-| `HeaderBar` | `gui/widgets/header.py` | Title bar, subtitle, init status dot |
-| `InputPanel` | `gui/widgets/input_panel.py` | File picker, output path, status badges with ✓ marks |
-| `RenderPanel` | `gui/widgets/render_panel.py` | Mode dropdown, resolution slider+pill, gain slider+pill, layout dropdown, SwitchToggle for analysis |
-| `PipelinePanel` | `gui/widgets/pipeline_panel.py` | RUN RENDER button, stepper, progress bar, structured log list, "View Full Logs" → `LogModal` |
-| `Stepper` | `gui/widgets/stepper.py` | Alternating circle/diamond markers with connector lines, "Analyze" end label |
-| `SwitchToggle` | `gui/widgets/switch_toggle.py` | iOS-style animated toggle (QPainter, QPropertyAnimation) |
-| `LogModal` | `gui/widgets/log_modal.py` | Full raw log dialog |
-| `RadialBackground` | `gui/background.py` | Concentric geometry + central lens gradient |
-| `apply_card_shadow` / `apply_button_shadow` | `gui/utils/effects.py` | `QGraphicsDropShadowEffect` helpers |
+| Widget                                      | File                            | Purpose                                                                                             |
+| ------------------------------------------- | ------------------------------- | --------------------------------------------------------------------------------------------------- |
+| `HeaderBar`                                 | `gui/widgets/header.py`         | Title bar, subtitle, init status dot                                                                |
+| `InputPanel`                                | `gui/widgets/input_panel.py`    | File picker, output path, status badges with ✓ marks                                                |
+| `RenderPanel`                               | `gui/widgets/render_panel.py`   | Mode dropdown, resolution slider+pill, gain slider+pill, layout dropdown, SwitchToggle for analysis |
+| `PipelinePanel`                             | `gui/widgets/pipeline_panel.py` | RUN RENDER button, stepper, progress bar, structured log list, "View Full Logs" → `LogModal`        |
+| `Stepper`                                   | `gui/widgets/stepper.py`        | Alternating circle/diamond markers with connector lines, "Analyze" end label                        |
+| `SwitchToggle`                              | `gui/widgets/switch_toggle.py`  | iOS-style animated toggle (QPainter, QPropertyAnimation)                                            |
+| `LogModal`                                  | `gui/widgets/log_modal.py`      | Full raw log dialog                                                                                 |
+| `RadialBackground`                          | `gui/background.py`             | Concentric geometry + central lens gradient                                                         |
+| `apply_card_shadow` / `apply_button_shadow` | `gui/utils/effects.py`          | `QGraphicsDropShadowEffect` helpers                                                                 |
 
 **Styling**: `gui/styles.qss` — Qt-compatible stylesheet (no CSS `box-shadow`, no `-apple-system` font). Font stack: SF Pro Display → Helvetica Neue → Arial.
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QFrame, QLabel, QVBoxLayout, QHBoxLayout, QComboBox, QSlider, QPushButton,
+    QSizePolicy,
 )
 from .switch_toggle import SwitchToggle
 
@@ -15,10 +16,13 @@ class RenderPanel(QFrame):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setObjectName("Card")
-
         lay = QVBoxLayout(self)
-        lay.setContentsMargins(24, 28, 24, 24)
-        lay.setSpacing(18)
+        # slightly reduced margins/spacing so "cards" and their controls
+        # take up less vertical space while remaining readable
+        lay.setContentsMargins(16, 18, 16, 16)
+        # restore a bit more spacing to avoid visual overlap when
+        # stylesheets change widget metrics
+        lay.setSpacing(24)
 
         title = QLabel("Render Settings", self)
         title.setObjectName("SectionTitle")
@@ -26,8 +30,16 @@ class RenderPanel(QFrame):
 
         # --- Render mode dropdown ---
         self.mode = QComboBox(self)
-        self.mode.addItems(["DBAP Focus", "DBAP", "LBAP"])
+        self.mode.addItems(["DBAP", "LBAP"])
         self.mode.setEditable(False)
+        # ensure a minimum height so labels and subsequent controls don't
+        # visually overlap when the stylesheet changes widget metrics.
+        # Use a fixed height + QSizePolicy.Fixed vertically so the combo
+        # doesn't expand and push other controls together.
+        COMBO_HEIGHT = 26
+        self.mode.setMinimumHeight(10)
+        self.mode.setFixedHeight(COMBO_HEIGHT)
+        self.mode.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         lay.addWidget(self.mode)
 
         # --- Speaker layout dropdown ---
@@ -38,6 +50,10 @@ class RenderPanel(QFrame):
         self.layout = QComboBox(self)
         self.layout.addItem("Allosphere", "spatial_engine/speaker_layouts/allosphere_layout.json")
         self.layout.addItem("Translab", "spatial_engine/speaker_layouts/translab-sono-layout.json")
+        # similar minimum height guard for the layout selector
+        self.layout.setMinimumHeight(10)
+        self.layout.setFixedHeight(COMBO_HEIGHT)
+        self.layout.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         lay.addWidget(self.layout)
 
         # --- Resolution slider ---
@@ -58,7 +74,12 @@ class RenderPanel(QFrame):
         self.res_value = QFrame(self)
         self.res_value.setObjectName("Pill")
         pill_lay = QHBoxLayout(self.res_value)
-        pill_lay.setContentsMargins(10, 0, 10, 0)
+        # reduce horizontal padding inside the value "pill" so it uses less
+        # vertical room when stylesheets add extra line-height
+        pill_lay.setContentsMargins(6, 0, 6, 0)
+        # keep the pill vertically compact even if QSS increases line-height
+        self.res_value.setFixedHeight(20)
+        self.res_value.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         self.res_value_label = QLabel("0.5", self.res_value)
         self.res_value_label.setObjectName("Muted")
         pill_lay.addWidget(self.res_value_label, alignment=Qt.AlignCenter)
@@ -84,7 +105,10 @@ class RenderPanel(QFrame):
         self.gain_value = QFrame(self)
         self.gain_value.setObjectName("Pill")
         gpill_lay = QHBoxLayout(self.gain_value)
-        gpill_lay.setContentsMargins(10, 0, 10, 0)
+        gpill_lay.setContentsMargins(6, 0, 6, 0)
+        # keep the gain pill compact
+        self.gain_value.setFixedHeight(20)
+        self.gain_value.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         self.gain_value_label = QLabel("0.50", self.gain_value)
         self.gain_value_label.setObjectName("Muted")
         gpill_lay.addWidget(self.gain_value_label, alignment=Qt.AlignCenter)
@@ -93,7 +117,8 @@ class RenderPanel(QFrame):
         lay.addLayout(gain_row)
 
         ticks = QHBoxLayout()
-        ticks.setContentsMargins(2, 0, 2, 0)
+        # remove small horizontal insets so tick labels sit closer to controls
+        ticks.setContentsMargins(0, 0, 0, 0)
         a = QLabel("0.0", self); a.setObjectName("Muted")
         b = QLabel("0.5", self); b.setObjectName("Muted")
         c = QLabel("1.0", self); c.setObjectName("Muted")
@@ -110,6 +135,13 @@ class RenderPanel(QFrame):
         analysis_row.addWidget(analysis_label)
         analysis_row.addStretch(1)
         self.analysis = SwitchToggle(checked=True, parent=self)
+        # constrain the toggle vertically so it doesn't force row height
+        try:
+            self.analysis.setFixedHeight(18)
+        except Exception:
+            # fallback: some custom widget implementations might not accept
+            # setFixedHeight in the same way during import-time UI-only tests
+            pass
         analysis_row.addWidget(self.analysis)
         lay.addLayout(analysis_row)
 

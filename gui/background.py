@@ -46,12 +46,12 @@ class RadialBackground(QWidget):
         # --- Concentric circles (fewer, fading toward edges) ---
         pen = QPen()
         pen.setWidthF(0.8)
-        max_r = max(w, h) * 0.55
+        max_r = max(w, h) * 0.3
         step = 110.0
         r = step
         while r < max_r:
             fade = max(0.0, 1.0 - (r / max_r))
-            opacity = 0.022 * fade
+            opacity = 0.2 * fade
             pen.setColor(QColor(0, 0, 0, int(255 * opacity)))
             p.setPen(pen)
             p.setBrush(Qt.NoBrush)
@@ -59,7 +59,7 @@ class RadialBackground(QWidget):
             r += step
 
         # --- Crosshair ---
-        p.setOpacity(0.008)
+        p.setOpacity(0.2)
         pen.setColor(QColor(0, 0, 0))
         pen.setWidthF(0.6)
         p.setPen(pen)
@@ -67,7 +67,7 @@ class RadialBackground(QWidget):
         p.drawLine(int(cx), 0, int(cx), h)
 
         # --- Faint diagonals ---
-        p.setOpacity(0.005)
+        p.setOpacity(0.03)
         p.drawLine(0, 0, w, h)
         p.drawLine(0, h, w, 0)
 

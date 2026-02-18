@@ -14,29 +14,31 @@ This spec is written for a strong coding model. It assumes the GUI already runs 
 
 ### Changes Made (Feb 17, 2026)
 
-| Section | File(s) Changed | Status |
-|---|---|---|
-| §1.1 Remove `box-shadow` CSS | `gui/styles.qss` | ✅ Done |
-| §1.2 Fix font alias warnings | `gui/styles.qss` | ✅ Done |
+| Section                          | File(s) Changed                                                               | Status  |
+| -------------------------------- | ----------------------------------------------------------------------------- | ------- |
+| §1.1 Remove `box-shadow` CSS     | `gui/styles.qss`                                                              | ✅ Done |
+| §1.2 Fix font alias warnings     | `gui/styles.qss`                                                              | ✅ Done |
 | §2.1 Move RUN RENDER to Pipeline | `gui/widgets/pipeline_panel.py`, `gui/widgets/render_panel.py`, `gui/main.py` | ✅ Done |
-| §2.2 Structured log list | `gui/widgets/pipeline_panel.py`, `gui/widgets/log_modal.py` (new) | ✅ Done |
-| §3.1 StatusRow check badges | `gui/widgets/input_panel.py` | ✅ Done |
-| §3.2 Dropdown styling | `gui/styles.qss` | ✅ Done |
-| §3.3 Slider styling | `gui/styles.qss`, `gui/widgets/render_panel.py` | ✅ Done |
-| §3.4 Toggle switch | `gui/widgets/switch_toggle.py` (new) | ✅ Done |
-| §4 Background lens | `gui/background.py` | ✅ Done |
-| §5 Spacing/hierarchy | `gui/styles.qss`, all widget files | ✅ Done |
-| §6 Stepper redesign | `gui/widgets/stepper.py` | ✅ Done |
-| §7 Logging logic | `gui/widgets/pipeline_panel.py` | ✅ Done |
-| Drop shadow effects | `gui/utils/effects.py` (new), `gui/main.py` | ✅ Done |
+| §2.2 Structured log list         | `gui/widgets/pipeline_panel.py`, `gui/widgets/log_modal.py` (new)             | ✅ Done |
+| §3.1 StatusRow check badges      | `gui/widgets/input_panel.py`                                                  | ✅ Done |
+| §3.2 Dropdown styling            | `gui/styles.qss`                                                              | ✅ Done |
+| §3.3 Slider styling              | `gui/styles.qss`, `gui/widgets/render_panel.py`                               | ✅ Done |
+| §3.4 Toggle switch               | `gui/widgets/switch_toggle.py` (new)                                          | ✅ Done |
+| §4 Background lens               | `gui/background.py`                                                           | ✅ Done |
+| §5 Spacing/hierarchy             | `gui/styles.qss`, all widget files                                            | ✅ Done |
+| §6 Stepper redesign              | `gui/widgets/stepper.py`                                                      | ✅ Done |
+| §7 Logging logic                 | `gui/widgets/pipeline_panel.py`                                               | ✅ Done |
+| Drop shadow effects              | `gui/utils/effects.py` (new), `gui/main.py`                                   | ✅ Done |
 
 ### Files Added
+
 - `gui/utils/__init__.py`
 - `gui/utils/effects.py` — `apply_card_shadow()`, `apply_button_shadow()` helpers
 - `gui/widgets/switch_toggle.py` — iOS-style animated toggle
 - `gui/widgets/log_modal.py` — raw log viewer modal
 
 ### Files Modified
+
 - `gui/styles.qss` — removed `-apple-system`, `box-shadow`, `opacity`; refined slider/dropdown/button/list styles
 - `gui/widgets/stepper.py` — alternating circle/diamond markers, connector lines, "Analyze" end label
 - `gui/widgets/input_panel.py` — `StatusBadge` with QPainter check marks replaces plain QFrame circles
