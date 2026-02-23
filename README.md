@@ -29,9 +29,16 @@ cd sonoPleth
 .\init.ps1
 ```
 
-**Windows (WSL/Git Bash):** Use the macOS/Linux instructions above.
-
 **Important:** Use `source init.sh` (not `./init.sh`) on macOS/Linux to ensure the virtual environment activates in your current shell. On Windows, the PowerShell/Command Prompt scripts handle activation automatically.
+
+**If you need to reactivate the virtual environment in a new PowerShell session:**
+
+```powershell
+cd sonoPleth
+. .\sonoPleth\bin\Activate.ps1
+```
+
+You'll know the virtual environment is active when you see `(sonoPleth)` in your PowerShell prompt.
 
 The setup scripts will:
 

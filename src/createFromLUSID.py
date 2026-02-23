@@ -1,4 +1,4 @@
-from src.configCPP import setupCppTools
+from src.config.configCPP import setupCppTools
 from src.createRender import runSpatialRender
 from src.analyzeRender import analyzeRenderOutput
 from pathlib import Path

@@ -699,7 +699,7 @@ The executable is `sonoPleth_spatial_render` in the build directory.
 Or use the Python setup:
 
 ```python
-from src.configCPP import setupCppTools
+from src.config.configCPP import setupCppTools
 setupCppTools()
 ```
 

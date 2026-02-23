@@ -92,7 +92,7 @@ def runSpatialRender(
     # Check if executable exists
     if not executable.exists():
         print(f"Error: Executable not found at {executable}")
-        print("Run setupCppTools() from src.configCPP to build the renderer")
+        print("Run setupCppTools() from src.config.configCPP to build the renderer")
         return False
     
     # Make paths absolute

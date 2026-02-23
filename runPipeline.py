@@ -1,4 +1,4 @@
-from src.configCPP import setupCppTools
+from src.config.configCPP import setupCppTools
 from src.analyzeADM.extractMetadata import extractMetaData
 from src.analyzeADM.checkAudioChannels import channelHasAudio, exportAudioActivity
 from src.packageADM.packageForRender import packageForRender
@@ -157,10 +157,10 @@ def checkSourceType(arg):
 
 if __name__ == "__main__":
     # CLI mode - parse arguments
-    
-    sourceType = checkSourceType(sys.argv[1])
+
     if len(sys.argv) >= 2:
         sourceADMFile = sys.argv[1]
+        sourceType = checkSourceType(sourceADMFile)
         sourceSpeakerLayout = sys.argv[2] if len(sys.argv) >= 3 else "spatial_engine/speaker_layouts/allosphere_layout.json"
         renderMode = sys.argv[3] if len(sys.argv) >= 4 else "dbap"
         resolution = float(sys.argv[4]) if len(sys.argv) >= 5 else 1.5
@@ -173,7 +173,7 @@ if __name__ == "__main__":
         elif sourceType == "LUSID":
             print("Running pipeline from LUSID source...")
             run_pipeline_from_LUSID(sourceADMFile, sourceSpeakerLayout, renderMode, createRenderAnalysis, outputRenderPath)
-    
+
     else:
         # default mode
         print("Usage: python runPipeline.py <sourceADMFile> [sourceSpeakerLayout] [renderMode] [resolution] [master_gain] [createAnalysis]")

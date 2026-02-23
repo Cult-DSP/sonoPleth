@@ -29,13 +29,23 @@ function Section($title) {
 $ProjectRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 Set-Location $ProjectRoot
 
-Section "sonoPleth Initialization"
+# Detect OS and set appropriate paths
+$IsWindowsOS = $PSVersionTable.Platform -eq "Win32NT" -or $env:OS -eq "Windows_NT"
+if ($IsWindowsOS) {
+    $ScriptsDir = "Scripts"
+    $PythonExe = "python.exe"
+    $PipExe = "pip.exe"
+    $ActivateScript = "Activate.ps1"
+} else {
+    $ScriptsDir = "bin"
+    $PythonExe = "python"
+    $PipExe = "pip"
+    $ActivateScript = "activate"
+}
 
-Write-Host "Step 1: Setting up Python virtual environment..."
-
-$venvScripts = Join-Path $ProjectRoot "$VenvDir\Scripts"
-$venvPython  = Join-Path $venvScripts "python.exe"
-$venvPip     = Join-Path $venvScripts "pip.exe"
+$venvScripts = Join-Path (Join-Path $ProjectRoot $VenvDir) $ScriptsDir
+$venvPython = Join-Path $venvScripts $PythonExe
+$venvPip = Join-Path $venvScripts $PipExe
 
 $pythonCmd = $null
 if (Get-Command python3 -ErrorAction SilentlyContinue) { $pythonCmd = "python3" }
@@ -72,13 +82,26 @@ try {
 Write-Host ""
 
 Write-Host "Step 3: Setting up C++ tools (allolib, embedded ADM extractor, VBAP renderer)..."
+Write-Host "  Project root: $ProjectRoot"
+Write-Host "  Venv Python: $venvPython"
+Write-Host "  Venv exists: $(Test-Path $venvPython)"
 
 $cppOk = $true
 try {
-  # Import from OS-specific router module
-  & $venvPython -c "from src.config.configCPP import setupCppTools; import sys; sys.exit(0 if setupCppTools() else 1)" | Out-Host
+  Write-Host "  Running: $venvPython -c 'from src.config.configCPP import setupCppTools; ...'"
+  Push-Location $ProjectRoot
+  $args = @("-c", "from src.config.configCPP import setupCppTools; import sys; result = setupCppTools(); sys.exit(0 if result else 1)")
+  & $venvPython $args
+  $exitCode = $LASTEXITCODE
+  Pop-Location
+  Write-Host "  Exit code: $exitCode"
+  if ($exitCode -ne 0) {
+    $cppOk = $false
+    Write-Host "  C++ setup failed with exit code $exitCode" -ForegroundColor Yellow
+  }
 } catch {
   $cppOk = $false
+  Write-Host "  Exception during C++ setup: $($_.Exception.Message)" -ForegroundColor Red
 }
 
 if ($cppOk) {
@@ -107,12 +130,28 @@ Section "✓ Initialization complete!"
 
 Write-Host "Activating virtual environment..."
 
-$activatePs1 = Join-Path $venvScripts "Activate.ps1"
-if (Test-Path $activatePs1) {
-  . $activatePs1
-  Write-Host "✓ Virtual environment activated in current PowerShell session"
+# Try to find the activation script - check both Windows (Scripts/) and Unix (bin/) paths
+$activateScript = $null
+$possiblePaths = @(
+    (Join-Path $venvScripts $ActivateScript),  # Windows path: Scripts/Activate.ps1
+    (Join-Path $venvScripts "../bin/Activate.ps1")  # Unix path: bin/Activate.ps1
+)
+
+foreach ($path in $possiblePaths) {
+    if (Test-Path $path) {
+        $activateScript = $path
+        break
+    }
+}
+
+if ($activateScript) {
+    Write-Host "Found activation script at: $activateScript"
+    . $activateScript
+    Write-Host "✓ Virtual environment activated in current PowerShell session"
 } else {
-  Write-Host "⚠ Warning: Could not find Activate.ps1 script" -ForegroundColor Yellow
+    Write-Host "⚠ Warning: Could not find activation script at any expected location" -ForegroundColor Yellow
+    Write-Host "  Checked paths:" -ForegroundColor Yellow
+    $possiblePaths | ForEach-Object { Write-Host "    $_" -ForegroundColor Yellow }
 }
 
 Write-Host ""
@@ -121,7 +160,7 @@ Write-Host "  python utils/getExamples.py          # Download example files"
 Write-Host "  python runPipeline.py <file.wav>     # Run the pipeline"
 Write-Host ""
 Write-Host "To reactivate the environment later, run:"
-Write-Host "  .\$VenvDir\Scripts\Activate.ps1"
+Write-Host "  .\sonoPleth\bin\Activate.ps1"
 Write-Host ""
 Write-Host "If you encounter dependency errors, delete .init_complete and re-run:"
 Write-Host "  Remove-Item .init_complete; .\init.ps1"
