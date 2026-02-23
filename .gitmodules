@@ -1,6 +1,7 @@
 [submodule "thirdparty/allolib"]
 	path = thirdparty/allolib
 	url = https://github.com/AlloSphere-Research-Group/AlloLib.git
+	shallow = true
 
 [submodule "LUSID"]
 	path = LUSID

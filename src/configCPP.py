@@ -74,9 +74,9 @@ def initializeSubmodules(project_root=None):
     
     # Submodule not initialized, proceed with initialization
     try:
-        print("Initializing git submodules (allolib)...")
+        print("Initializing git submodules (allolib, depth=1)...")
         result = subprocess.run(
-            ["git", "submodule", "update", "--init", "--recursive"],
+            ["git", "submodule", "update", "--init", "--recursive", "--depth", "1"],
             cwd=str(project_root),
             check=True,
             capture_output=True,
@@ -84,7 +84,7 @@ def initializeSubmodules(project_root=None):
         )
         if result.stdout:
             print(result.stdout)
-        print("✓ Git submodules initialized")
+        print("✓ Git submodules initialized (shallow, depth=1)")
         return True
         
     except subprocess.CalledProcessError as e:
@@ -267,9 +267,9 @@ def initializeEbuSubmodules(project_root=None):
             capture_output=True,
             text=True
         )
-        # Step 2: clone / update them
+        # Step 2: clone / update them (shallow depth=1 to reduce clone size)
         result = subprocess.run(
-            ["git", "submodule", "update",
+            ["git", "submodule", "update", "--depth", "1",
              "thirdparty/libbw64", "thirdparty/libadm"],
             cwd=str(project_root),
             check=True,

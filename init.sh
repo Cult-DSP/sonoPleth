@@ -41,6 +41,10 @@ fi
 echo ""
 
 # Step 3: Setup C++ tools using Python script
+# Note: submodule init uses --depth 1 (shallow clone) to keep clone size small.
+# AlloLib full history is ~511 MB; shallow reduces it to a few MB.
+# To deepen later: git -C thirdparty/allolib fetch --unshallow
+# To apply opt-in sparse checkout (trims working tree): ./scripts/sparse-allolib.sh
 echo "Step 3: Setting up C++ tools (allolib, embedded ADM extractor, VBAP renderer)..."
 if sonoPleth/bin/python -c "from src.configCPP import setupCppTools; exit(0 if setupCppTools() else 1)"; then
     echo "✓ C++ tools setup complete"

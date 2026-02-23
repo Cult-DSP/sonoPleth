@@ -143,7 +143,7 @@ After making changes to C++ source files (`spatial_engine/src/`), rebuild the VB
 
 ```bash
 # Remove existing build and rebuild from scratch
-rm -rf spatial_engine/vbapRender/build/
+rm -rf spatial_engine/spatialRender/build/
 python -c "from src.configCPP import buildVBAPRenderer; buildVBAPRenderer()"
 ```
 
@@ -151,7 +151,7 @@ python -c "from src.configCPP import buildVBAPRenderer; buildVBAPRenderer()"
 
 ```bash
 # Clean existing build artifacts and rebuild
-cd spatial_engine/vbapRender/build/
+cd spatial_engine/spatialRender/build/
 make clean
 make -j$(sysctl -n hw.ncpu)
 cd ../../../
@@ -161,7 +161,7 @@ cd ../../../
 
 ```bash
 # Full manual rebuild
-cd spatial_engine/vbapRender/
+cd spatial_engine/spatialRender/
 rm -rf build/
 mkdir build && cd build/
 cmake ..
