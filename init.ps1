@@ -2,7 +2,7 @@
 # Mirrors init.sh steps:
 # 1) Create Python venv
 # 2) Install Python deps
-# 3) Run setupCppTools() (warning-only on failure, like init.sh)
+# 3) Run setupCppTools() from src.config.configCPP (OS-specific router)
 # 4) Write .init_complete
 #
 # Usage:
@@ -17,7 +17,7 @@ param(
   [string]$VenvDir = "sonoPleth"
 )
 
-$ErrorActionPreference = "Stop"
+$ErrorActionPreference = "Continue"  # Don't stop on errors, handle them explicitly
 
 function Section($title) {
   Write-Host "============================================================"
@@ -38,9 +38,10 @@ $venvPython  = Join-Path $venvScripts "python.exe"
 $venvPip     = Join-Path $venvScripts "pip.exe"
 
 $pythonCmd = $null
-if (Get-Command py -ErrorAction SilentlyContinue) { $pythonCmd = "py" }
+if (Get-Command python3 -ErrorAction SilentlyContinue) { $pythonCmd = "python3" }
 elseif (Get-Command python -ErrorAction SilentlyContinue) { $pythonCmd = "python" }
-else { throw "Python not found. Install Python 3 and ensure it's on PATH (or install the 'py' launcher)." }
+elseif (Get-Command py -ErrorAction SilentlyContinue) { $pythonCmd = "py" }
+else { throw "Python not found. Install Python 3 and ensure it's on PATH." }
 
 if (Test-Path $venvPython) {
   Write-Host "✓ Virtual environment already exists at $VenvDir/"
@@ -66,7 +67,7 @@ try {
   Write-Host "✓ Python dependencies installed"
 } catch {
   Write-Host "✗ Error installing Python dependencies" -ForegroundColor Red
-  exit 1
+  throw
 }
 Write-Host ""
 
@@ -74,7 +75,7 @@ Write-Host "Step 3: Setting up C++ tools (allolib, embedded ADM extractor, VBAP 
 
 $cppOk = $true
 try {
-  # NEW import path (router):
+  # Import from OS-specific router module
   & $venvPython -c "from src.config.configCPP import setupCppTools; import sys; sys.exit(0 if setupCppTools() else 1)" | Out-Host
 } catch {
   $cppOk = $false
@@ -107,26 +108,20 @@ Section "✓ Initialization complete!"
 Write-Host "Activating virtual environment..."
 
 $activatePs1 = Join-Path $venvScripts "Activate.ps1"
-$wasDotSourced =
-  ($MyInvocation.InvocationName -eq '.') -or
-  ($MyInvocation.Line -match '^\s*\.\s+')
-
-if ($wasDotSourced -and (Test-Path $activatePs1)) {
+if (Test-Path $activatePs1) {
   . $activatePs1
   Write-Host "✓ Virtual environment activated in current PowerShell session"
 } else {
-  Write-Host ""
-  Write-Host "To activate manually (PowerShell):"
-  Write-Host "  .\$VenvDir\Scripts\Activate.ps1"
-  Write-Host ""
-  Write-Host "To auto-activate like 'source init.sh', dot-source init.ps1:"
-  Write-Host "  . .\init.ps1"
+  Write-Host "⚠ Warning: Could not find Activate.ps1 script" -ForegroundColor Yellow
 }
 
 Write-Host ""
 Write-Host "You can now run:"
 Write-Host "  python utils/getExamples.py          # Download example files"
 Write-Host "  python runPipeline.py <file.wav>     # Run the pipeline"
+Write-Host ""
+Write-Host "To reactivate the environment later, run:"
+Write-Host "  .\$VenvDir\Scripts\Activate.ps1"
 Write-Host ""
 Write-Host "If you encounter dependency errors, delete .init_complete and re-run:"
 Write-Host "  Remove-Item .init_complete; .\init.ps1"
