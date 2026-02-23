@@ -12,7 +12,8 @@ with mapping to speaker arrays using multiple spatializers (DBAP, VBAP, LBAP).
 ### First Time Setup
 
 Run this **once** to set up everything:
-MAC:
+
+**macOS/Linux:**
 
 ```bash
 git clone https://github.com/lucianpar/sonoPleth.git
@@ -20,24 +21,28 @@ cd sonoPleth
 source init.sh
 ```
 
-WINDOWS:
+**Windows (PowerShell):**
 
+```powershell
+git clone https://github.com/lucianpar/sonoPleth.git
+cd sonoPleth
+.\init.ps1
 ```
 
-```
+**Windows (WSL/Git Bash):** Use the macOS/Linux instructions above.
 
-**Important:** Use `source init.sh` (not `./init.sh`) to ensure the virtual environment activates in your current shell.
+**Important:** Use `source init.sh` (not `./init.sh`) on macOS/Linux to ensure the virtual environment activates in your current shell. On Windows, the PowerShell/Command Prompt scripts handle activation automatically.
 
-The `init.sh` script will:
+The setup scripts will:
 
 - Create a Python virtual environment (`sonoPleth/`)
 - Install all Python dependencies
 - Initialize git submodules (AlloLib, libbw64, libadm)
-- Build the embedded ADM extractor (`sonopleth_adm_extract`)
+- Build the embedded ADM extractor (`sonopleth_adm_extract[.exe]`)
 - Build the Spatial renderer (supports DBAP, VBAP, LBAP)
 - Activate the virtual environment automatically
 
-After `source init.sh` completes, you'll see `(sonoPleth)` in your terminal prompt
+After setup completes, you'll see `(sonoPleth)` in your terminal prompt.
 
 ### Get Example Files
 
@@ -90,7 +95,7 @@ If you need to rebuild after code changes:
 
 ```bash
 rm -rf spatial_engine/spatialRender/build
-python -c "from src.configCPP import buildSpatialRenderer; buildSpatialRenderer()"
+python -c "from src.config.configCPP import buildSpatialRenderer; buildSpatialRenderer()"
 ```
 
 Or manually:
@@ -151,7 +156,7 @@ After making changes to C++ source files (`spatial_engine/src/`), rebuild the VB
 ```bash
 # Remove existing build and rebuild from scratch
 rm -rf spatial_engine/spatialRender/build/
-python -c "from src.configCPP import buildVBAPRenderer; buildVBAPRenderer()"
+python -c "from src.config.configCPP import buildVBAPRenderer; buildVBAPRenderer()"
 ```
 
 **Option 2: Clean and rebuild**
@@ -189,7 +194,7 @@ python3 -m venv sonoPleth
 sonoPleth/bin/pip install -r requirements.txt
 
 # 3. Initialize submodules and build all C++ tools (ADM extractor + renderer)
-sonoPleth/bin/python -c "from src.configCPP import setupCppTools; setupCppTools()"
+sonoPleth/bin/python -c "from src.config.configCPP import setupCppTools; setupCppTools()"
 ```
 
 ## Utilities
@@ -198,7 +203,7 @@ sonoPleth/bin/python -c "from src.configCPP import setupCppTools; setupCppTools(
 - `activate.sh` - Reactivates the virtual environment in new terminal sessions (use: `source activate.sh`)
 - `utils/getExamples.py` - Downloads example ADM files
 - `utils/deleteData.py` - Cleans processed data directory
-- `src/configCPP.py` - C++ build utilities (use `buildVBAPRenderer()` to rebuild VBAP renderer)
+- `src/config/configCPP.py` - C++ build utilities (use `buildVBAPRenderer()` to rebuild VBAP renderer)
 
 ## Pipeline Overview
 
