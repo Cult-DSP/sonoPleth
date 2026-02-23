@@ -1496,6 +1496,47 @@ python LUSID/tests/benchmark_xml_parsers.py
 - Works on high-memory machines but may OOM on constrained systems.
 - **Mitigation:** Chunked/streaming write (future work).
 
+## OS-Specific C++ Tool Configuration
+
+**Updated:** February 23, 2026
+
+sonoPleth now supports cross-platform C++ tool building with OS-specific implementations. The configuration system automatically detects the operating system and routes to the appropriate build scripts.
+
+### Architecture
+
+- **Router:** `src/config/configCPP.py` - Tiny OS detection and import routing
+- **POSIX (Linux/macOS):** `src/config/configCPP_posix.py` - Uses `make -jN` for builds
+- **Windows:** `src/config/configCPP_windows.py` - Uses `cmake --build --config Release` for Visual Studio compatibility
+
+### Key Differences
+
+| Aspect               | POSIX                                 | Windows                                         |
+| -------------------- | ------------------------------------- | ----------------------------------------------- |
+| Build Command        | `make -jN`                            | `cmake --build . --parallel N --config Release` |
+| Executable Extension | None                                  | `.exe`                                          |
+| Repo Root Resolution | `Path(__file__).resolve().parents[2]` | `Path(__file__).resolve().parents[2]`           |
+
+### Functions
+
+All OS implementations provide the same API:
+
+- `setupCppTools()` - Main entry point, orchestrates all builds
+- `initializeSubmodules()` - Initialize AlloLib submodule
+- `initializeEbuSubmodules()` - Initialize libbw64/libadm submodules
+- `buildAdmExtractor()` - Build ADM XML extraction tool
+- `buildSpatialRenderer()` - Build spatial audio renderer
+
+### Build Products
+
+- **ADM Extractor:** `src/adm_extract/build/sonopleth_adm_extract[.exe]`
+- **Spatial Renderer:** `spatial_engine/spatialRender/build/sonoPleth_spatial_render[.exe]`
+
+### Integration
+
+- **Init Script:** `init.sh` imports `src.config.configCPP` (updated path)
+- **Idempotent:** All builds check for existing executables before rebuilding
+- **Error Handling:** Clear error messages for missing dependencies (CMake, compilers)
+
 ### Version History
 
 - **v0.5.2** (2026-02-16): RF64 auto-selection for large renders, WAV header overflow fix, analyzeRender.py file-size cross-check, debug print cleanup

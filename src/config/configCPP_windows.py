@@ -1,46 +1,276 @@
-# src/configCPP_windows.py
-import os
 import subprocess
 from pathlib import Path
 
-def _cpu_count() -> int:
-    return os.cpu_count() or 4
 
-def _run(cmd, cwd=None) -> None:
-    subprocess.check_call(cmd, cwd=cwd)
+def get_repo_root() -> Path:
+    # __file__ = repo/src/config/configCPP_windows.py
+    return Path(__file__).resolve().parents[2]
 
-def _cmake_build(build_dir: Path, parallel: int) -> None:
-    # Visual Studio generators are multi-config; Ninja is single-config.
-    # Safe default: always pass --config Release; it is ignored by single-config generators.
-    cfg = os.environ.get("SONOPLETH_CMAKE_CONFIG", "Release")
-    _run(["cmake", "--build", str(build_dir), "--parallel", str(parallel), "--config", cfg])
+
+def exe(name: str) -> str:
+    return f"{name}.exe"
+
 
 def setupCppTools() -> bool:
-    """
-    Windows-only C++ tool setup.
-    Keep behavior aligned with configCPP.py:
-    - create/build required subprojects
-    - return True on success, False on failure
-    """
-    try:
-        parallel = int(os.environ.get("SONOPLETH_BUILD_PARALLEL", str(_cpu_count())))
+    print("\n" + "=" * 60)
+    print("Setting up C++ tools and dependencies (Windows)...")
+    print("=" * 60)
 
-        # TODO: Mirror your existing directory layout:
-        # - locate repo root relative to this file
-        repo_root = Path(__file__).resolve().parents[1]
+    if not initializeSubmodules():
+        print("\n✗ Error: Failed to initialize allolib submodule")
+        return False
 
-        # Example: call your same build directories as in posix config:
-        # build_dir = repo_root / "build" / "adm_extract"
-        # source_dir = repo_root / "dependencies" / "adm_extract"
-        #
-        # Replace these with your real paths from your existing configCPP.py.
-        #
-        # _run(["cmake", "-S", str(source_dir), "-B", str(build_dir)], cwd=repo_root)
-        # _cmake_build(build_dir, parallel)
+    if not initializeEbuSubmodules():
+        print("\n✗ Error: EBU submodule initialization failed — cannot build ADM extractor")
+        return False
 
-        # If you have multiple tools to build, do each in sequence.
+    if not buildAdmExtractor():
+        print("\n✗ Error: ADM extractor build failed")
+        return False
 
+    if not buildSpatialRenderer():
+        print("\n✗ Error: Failed to build Spatial renderer")
+        return False
+
+    print("\n" + "=" * 60)
+    print("✓ C++ tools setup complete!")
+    print("=" * 60 + "\n")
+    return True
+
+
+def initializeSubmodules(project_root=None) -> bool:
+    if project_root is None:
+        project_root = get_repo_root()
+    else:
+        project_root = Path(project_root).resolve()
+
+    allolib_path = project_root / "thirdparty" / "allolib"
+    allolib_include = allolib_path / "include"
+
+    if allolib_include.exists():
+        print("✓ Git submodules already initialized")
         return True
+
+    try:
+        print("Initializing git submodules (allolib, depth=1).")
+        result = subprocess.run(
+            ["git", "submodule", "update", "--init", "--recursive", "--depth", "1"],
+            cwd=str(project_root),
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        if result.stdout:
+            print(result.stdout)
+        print("✓ Git submodules initialized (shallow, depth=1)")
+        return True
+
+    except subprocess.CalledProcessError as e:
+        print(f"\n✗ Submodule initialization failed with error code {e.returncode}")
+        print(f"stdout: {e.stdout}")
+        print(f"stderr: {e.stderr}")
+        return False
     except Exception as e:
-        print(f"[Windows configCPP] setupCppTools failed: {e}")
+        print(f"\n✗ Unexpected error during submodule initialization: {e}")
+        return False
+
+
+def buildSpatialRenderer(
+    build_dir="spatial_engine/spatialRender/build",
+    source_dir="spatial_engine/spatialRender",
+) -> bool:
+    project_root = get_repo_root()
+    build_path = project_root / build_dir
+    executable = build_path / exe("sonoPleth_spatial_render")
+
+    if executable.exists():
+        print(f"✓ Spatial renderer already built at: {executable}")
+        return True
+
+    print("Building Spatial renderer.")
+    return runCmake(build_dir, source_dir)
+
+
+def runCmake(build_dir="spatialRender/build", source_dir="spatialRender") -> bool:
+    project_root = get_repo_root()
+    build_path = project_root / build_dir
+    source_path = project_root / source_dir
+
+    cmake_file = source_path / "CMakeLists.txt"
+    if not cmake_file.exists():
+        print(f"✗ Error: CMakeLists.txt not found at {cmake_file}")
+        return False
+
+    build_path.mkdir(parents=True, exist_ok=True)
+
+    print(f"  Source: {source_path}")
+    print(f"  Build dir: {build_path}")
+
+    try:
+        if not initializeSubmodules(project_root):
+            return False
+
+        print("\n  Running CMake configuration.")
+        result = subprocess.run(
+            ["cmake", "-DCMAKE_POLICY_VERSION_MINIMUM=3.5", str(source_path)],
+            cwd=str(build_path),
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        if result.stdout:
+            print(result.stdout)
+
+        import multiprocessing
+        num_cores = multiprocessing.cpu_count()
+        print(f"\n  Running cmake --build ({num_cores} cores)...")
+
+        # Visual Studio generators are multi-config -> include --config Release.
+        result = subprocess.run(
+            ["cmake", "--build", ".", "--parallel", str(num_cores), "--config", "Release"],
+            cwd=str(build_path),
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        if result.stdout:
+            print(result.stdout)
+
+        print("✓ Spatial renderer build complete!")
+        return True
+
+    except subprocess.CalledProcessError as e:
+        print(f"\n✗ Build failed with error code {e.returncode}")
+        print(f"stdout: {e.stdout}")
+        print(f"stderr: {e.stderr}")
+        return False
+    except FileNotFoundError:
+        print("\n✗ Error: cmake not found. Please install CMake and build tools.")
+        return False
+    except Exception as e:
+        print(f"\n✗ Unexpected error during build: {e}")
+        return False
+
+
+def initializeEbuSubmodules(project_root=None) -> bool:
+    if project_root is None:
+        project_root = get_repo_root()
+    else:
+        project_root = Path(project_root).resolve()
+
+    libbw64_path = project_root / "thirdparty" / "libbw64"
+    libadm_path = project_root / "thirdparty" / "libadm"
+
+    already_init = (
+        libbw64_path.exists()
+        and any(libbw64_path.iterdir())
+        and libadm_path.exists()
+        and any(libadm_path.iterdir())
+    )
+
+    if already_init:
+        print("✓ EBU submodules (libbw64, libadm) already initialized")
+        return True
+
+    print("Initializing EBU submodules (libbw64, libadm).")
+    try:
+        subprocess.run(
+            ["git", "submodule", "init", "thirdparty/libbw64", "thirdparty/libadm"],
+            cwd=str(project_root),
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        result = subprocess.run(
+            ["git", "submodule", "update", "--depth", "1", "thirdparty/libbw64", "thirdparty/libadm"],
+            cwd=str(project_root),
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        if result.stdout:
+            print(result.stdout)
+        print("✓ EBU submodules initialized")
+        return True
+
+    except subprocess.CalledProcessError as e:
+        print(f"\n✗ EBU submodule initialization failed (exit {e.returncode})")
+        print(f"stdout: {e.stdout}")
+        print(f"stderr: {e.stderr}")
+        return False
+    except Exception as e:
+        print(f"\n✗ Unexpected error initializing EBU submodules: {e}")
+        return False
+
+
+def buildAdmExtractor(build_dir="src/adm_extract/build", source_dir="src/adm_extract") -> bool:
+    project_root = get_repo_root()
+    build_path = project_root / build_dir
+    source_path = project_root / source_dir
+    executable = build_path / exe("sonopleth_adm_extract")
+
+    if executable.exists():
+        print(f"✓ ADM extractor already built at: {executable}")
+        return True
+
+    cmake_file = source_path / "CMakeLists.txt"
+    if not cmake_file.exists():
+        print(f"✗ ADM extractor source not found at {cmake_file}")
+        print("  Run: git submodule update --init thirdparty/libbw64 thirdparty/libadm")
+        return False
+
+    libbw64_include = project_root / "thirdparty" / "libbw64" / "include"
+    if not libbw64_include.exists():
+        print("✗ thirdparty/libbw64 not initialized — run initializeEbuSubmodules() first")
+        return False
+
+    build_path.mkdir(parents=True, exist_ok=True)
+
+    print("Building embedded ADM extractor (sonopleth_adm_extract)...")
+    print(f"  Source:    {source_path}")
+    print(f"  Build dir: {build_path}")
+
+    try:
+        import multiprocessing
+        num_cores = multiprocessing.cpu_count()
+
+        print("\n  Running CMake configuration...")
+        result = subprocess.run(
+            ["cmake", str(source_path)],
+            cwd=str(build_path),
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        if result.stdout:
+            print(result.stdout)
+
+        print(f"\n  Running cmake --build ({num_cores} cores)...")
+        result = subprocess.run(
+            ["cmake", "--build", ".", "--parallel", str(num_cores), "--config", "Release"],
+            cwd=str(build_path),
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        if result.stdout:
+            print(result.stdout)
+
+        if executable.exists():
+            print(f"✓ ADM extractor built successfully: {executable}")
+            return True
+
+        print("✗ Build completed but executable not found — check CMake target name")
+        return False
+
+    except subprocess.CalledProcessError as e:
+        print(f"\n✗ ADM extractor build failed (exit {e.returncode})")
+        print(f"stdout: {e.stdout}")
+        print(f"stderr: {e.stderr}")
+        return False
+    except FileNotFoundError:
+        print("\n✗ cmake not found — install CMake and build tools")
+        return False
+    except Exception as e:
+        print(f"\n✗ Unexpected error building ADM extractor: {e}")
         return False

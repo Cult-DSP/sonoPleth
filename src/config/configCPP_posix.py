@@ -2,6 +2,11 @@ import subprocess
 from pathlib import Path
 
 
+def get_repo_root() -> Path:
+    # __file__ = repo/src/config/configCPP_posix.py
+    return Path(__file__).resolve().parents[2]
+
+
 def setupCppTools():
     """
     Complete setup for C++ tools and dependencies.
@@ -60,7 +65,7 @@ def initializeSubmodules(project_root=None):
         True if submodules initialized successfully, False otherwise
     """
     if project_root is None:
-        project_root = Path(__file__).parent.parent.resolve()
+        project_root = get_repo_root()
     else:
         project_root = Path(project_root).resolve()
     
@@ -116,7 +121,7 @@ def buildSpatialRenderer(build_dir="spatial_engine/spatialRender/build", source_
     bool
         True if build succeeded or executable already exists, False otherwise
     """
-    project_root = Path(__file__).parent.parent.resolve()
+    project_root = get_repo_root()
     build_path = project_root / build_dir
     executable = project_root / build_dir / "sonoPleth_spatial_render"
     
@@ -157,7 +162,7 @@ def runCmake(build_dir="spatialRender/build", source_dir="spatialRender"):
     bool
         True if build succeeded, False otherwise
     """
-    project_root = Path(__file__).parent.parent.resolve()
+    project_root = get_repo_root()
     build_path = project_root / build_dir
     source_path = project_root / source_dir
     
@@ -239,7 +244,7 @@ def initializeEbuSubmodules(project_root=None):
         True if submodules are present after this call, False on error.
     """
     if project_root is None:
-        project_root = Path(__file__).parent.parent.resolve()
+        project_root = get_repo_root()
     else:
         project_root = Path(project_root).resolve()
 
@@ -315,7 +320,7 @@ def buildAdmExtractor(
     bool
         True if the executable exists (or was built successfully), False otherwise.
     """
-    project_root = Path(__file__).parent.parent.resolve()
+    project_root = get_repo_root()
     build_path   = project_root / build_dir
     source_path  = project_root / source_dir
     executable   = build_path / "sonopleth_adm_extract"

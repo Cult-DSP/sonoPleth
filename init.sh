@@ -46,7 +46,7 @@ echo ""
 # To deepen later: git -C thirdparty/allolib fetch --unshallow
 # To apply opt-in sparse checkout (trims working tree): ./scripts/sparse-allolib.sh
 echo "Step 3: Setting up C++ tools (allolib, embedded ADM extractor, VBAP renderer)..."
-if sonoPleth/bin/python -c "from src.configCPP import setupCppTools; exit(0 if setupCppTools() else 1)"; then
+if sonoPleth/bin/python -c "from src.config.configCPP import setupCppTools; exit(0 if setupCppTools() else 1)"; then
     echo "✓ C++ tools setup complete"
 else
     echo "⚠ Warning: C++ tools setup had issues — run ./init.sh again or check CMake logs"
