@@ -3,7 +3,7 @@
 # This script handles:
 # 1. Python virtual environment creation
 # 2. Python dependencies installation
-# 3. C++ tools setup (bwfmetaedit, allolib submodules, VBAP renderer build)
+# 3. C++ tools setup (allolib submodules, embedded ADM extractor, VBAP renderer build)
 
 set -e  # Exit on any error
 
@@ -41,12 +41,11 @@ fi
 echo ""
 
 # Step 3: Setup C++ tools using Python script
-echo "Step 3: Setting up C++ tools (bwfmetaedit, allolib, VBAP renderer)..."
+echo "Step 3: Setting up C++ tools (allolib, embedded ADM extractor, VBAP renderer)..."
 if sonoPleth/bin/python -c "from src.configCPP import setupCppTools; exit(0 if setupCppTools() else 1)"; then
     echo "✓ C++ tools setup complete"
 else
-    echo "⚠ Warning: C++ tools setup had issues, but continuing..."
-    echo "  You may need to manually install bwfmetaedit: brew install bwfmetaedit"
+    echo "⚠ Warning: C++ tools setup had issues — run ./init.sh again or check CMake logs"
 fi
 echo ""
 

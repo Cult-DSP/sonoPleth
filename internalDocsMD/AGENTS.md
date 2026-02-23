@@ -1,6 +1,6 @@
 # sonoPleth — Comprehensive Agent Context
 
-**Last Updated:** February 16, 2026  
+**Last Updated:** February 22, 2026  
 **Project:** sonoPleth - Open Spatial Audio Infrastructure  
 **Lead Developer:** Lucian Parisi
 
@@ -38,15 +38,15 @@
 | 6   | ✅ FIXED | **Medium**   | `master_gain` exposed in Python pipeline — passed to C++ renderer as `--master_gain` | `src/createRender.py`                               |
 
 CURRENT PROJECT:
-Switching from BWF MetaEdit to embedded EBU parsing submodules (TRACK A ONLY — incremental plumbing swap)
+Switching from BWF MetaEdit to embedded EBU parsing submodules (TRACK A — COMPLETE)
 
 ### Goal
 
-Replace the external `bwfmetaedit` dependency with **embedded EBU libraries** while keeping the existing ADM parsing + LUSID conversion behavior unchanged.
+Replace the external `bwfmetaedit` dependency with **embedded EBU libraries** while keeping the existing ADM parsing + LUSID conversion behavior unchanged. **Completed.**
 
-- Output must remain: `processedData/currentMetaData.xml` (ADM XML string extracted from WAV)
-- Downstream modules remain unchanged for now: `src/analyzeADM/parser.py` (lxml) and `LUSID/src/xmlParser.py` continue to operate on the extracted XML file
-- This is a **plumbing swap only**. Do NOT broaden ADM support in this task (Track B is documented below as future work).
+- Output: `processedData/currentMetaData.xml` (ADM XML string extracted from WAV via `sonopleth_adm_extract`)
+- Downstream modules unchanged: `src/analyzeADM/parser.py` (lxml) and `LUSID/src/xmlParser.py` continue to operate on the extracted XML file
+- This is a **plumbing swap only**. ADM support not broadened in Track A (Track B documented below as future work).
 
 ### Documentation update obligations (MANDATORY)
 
@@ -55,13 +55,13 @@ Whenever a change impacts the toolchain dataflow, CLI flags, on-disk artifacts, 
 For Track A (embedded ADM extractor) the following docs MUST be kept consistent:
 
 - `AGENTS.md` (this file): Track A plan + non-goals + build wiring
-- `LUSID/LUSID_AGENTS.md`: update the pipeline diagram to reflect `sonopleth_adm_extract` (embedded) with fallback to `bwfmetaedit`, and add a short note that Track A does **not** change LUSID parsing semantics
+- `LUSID/LUSID_AGENTS.md`: pipeline diagram reflects `sonopleth_adm_extract` (embedded); note added that Track A does **not** change LUSID parsing semantics
 - `toolchain_AGENTS.md`: if any contract-level path/filename/artifact changes (should not happen in Track A), update it
 - `CHANGELOG_TOOLCHAIN.md`: add an entry if the contract changes (new required/optional dependency, new artifact, changed path, new validation step). If Track A only changes the preferred extractor implementation but preserves outputs, record it as an **implementation** note only if your changelog policy allows; otherwise omit.
 
 Rules:
 
-- Do not leave docs in a contradictory state (e.g., diagram still shows `bwfmetaedit` after embedding extractor).
+- Do not leave docs in a contradictory state.
 - If docs disagree, `toolchain_AGENTS.md` is the contract authority; resolve conflicts by updating the other docs accordingly.
 - Keep changes minimal: Track A should only require a small pipeline-diagram + note update in `LUSID_AGENTS.md`.
 
@@ -94,9 +94,9 @@ Rules:
    - Keep the output stable: `processedData/currentMetaData.xml` remains the same format (raw ADM XML string).
 
 3. Wire the pipeline to use the new tool (no semantic changes)
-   - Update `src/analyzeADM/extractMetadata.py` to prefer the embedded tool:
-     - If `sonopleth_adm_extract` exists (built artifact), run it to generate `processedData/currentMetaData.xml`.
-     - If not present, fall back to `bwfmetaedit` (for now), with a clear warning.
+   - Update `src/analyzeADM/extractMetadata.py` to use the embedded tool exclusively:
+     - Run `sonopleth_adm_extract` to generate `processedData/currentMetaData.xml`.
+     - Raise `FileNotFoundError` with a clear message if the binary is not built.
    - Preserve current filenames and directories so everything downstream stays compatible.
 
 4. Update `init.sh` to build the tool
@@ -210,7 +210,7 @@ sonoPleth is a Python+C++ prototype for decoding and rendering Audio Definition 
 - **Python 3.8+**: Pipeline orchestration, ADM parsing, data processing
 - **C++17**: High-performance spatial audio renderer (AlloLib-based)
 - **AlloLib**: Audio spatialization framework (DBAP, VBAP, LBAP)
-- **sonopleth_adm_extract**: Embedded EBU/libbw64-based tool for extracting ADM XML from WAV files (built by `init.sh`; falls back to `bwfmetaedit` if not present)
+- **sonopleth_adm_extract**: Embedded EBU/libbw64-based tool for extracting ADM XML from WAV files (built by `init.sh`)
 - **CMake 3.12+**: Build system for C++ components
 
 ---
@@ -223,7 +223,6 @@ sonoPleth is a Python+C++ prototype for decoding and rendering Audio Definition 
 ADM BWF WAV File
     │
     ├─► sonopleth_adm_extract (embedded) → currentMetaData.xml (ADM XML)
-    │   └─ fallback: bwfmetaedit (system-installed, if embedded tool not built)
     │
     ├─► checkAudioChannels.py → containsAudio.json
     │
@@ -289,7 +288,7 @@ The C++ renderer reads LUSID directly — no intermediate format conversion.
 - **Type**: Embedded C++ CLI tool, built by `init.sh` / `src/configCPP.py`
 - **Source**: `src/adm_extract/` — compiled to `src/adm_extract/build/sonopleth_adm_extract`
 - **Output**: `processedData/currentMetaData.xml`
-- **Fallback**: If the binary is not present, `extractMetadata.py` falls back to `bwfmetaedit` with a warning
+- **Error handling**: Raises `FileNotFoundError` with instructions to run `./init.sh` if binary not built
 
 #### `src/analyzeADM/parser.py`
 
@@ -859,7 +858,7 @@ sonoPleth/
 │   ├── analyzeADM/
 │   │   ├── parser.py                # lxml ADM XML parser
 │   │   ├── checkAudioChannels.py   # Detect silent channels
-│   │   └── extractMetadata.py      # ADM extractor wrapper (embedded tool + bwfmetaedit fallback)
+│   │   └── extractMetadata.py      # ADM extractor wrapper (sonopleth_adm_extract)
 │   ├── packageADM/
 │   │   ├── packageForRender.py     # Orchestrator
 │   │   ├── splitStems.py           # Multichannel → mono
@@ -967,7 +966,6 @@ python LUSID/tests/benchmark*.py    # venv has lxml
 **External Tools:**
 
 - `sonopleth_adm_extract` — embedded ADM metadata extractor (built by `init.sh`; see `src/adm_extract/`)
-- `bwfmetaedit` — fallback ADM extractor if embedded tool is not built (`brew install bwfmetaedit`)
 - `cmake`, `make`, C++ compiler — C++ renderer build
 
 ---
@@ -979,8 +977,8 @@ python LUSID/tests/benchmark*.py    # venv has lxml
 **Issue:** `ModuleNotFoundError: No module named 'lxml'`  
 **Solution:** Activate venv: `source activate.sh`
 
-**Issue:** `bwfmetaedit command not found`  
-**Solution:** The embedded `sonopleth_adm_extract` tool should be used instead — run `./init.sh` to build it. If you still need `bwfmetaedit` as a fallback: `brew install bwfmetaedit` (macOS)
+**Issue:** `sonopleth_adm_extract` binary not found  
+**Solution:** Run `./init.sh` to build the embedded ADM extractor.
 
 **Issue:** Empty `objectData.json` after parsing  
 **Solution:** Check ADM XML format. Some ADM files have non-standard structure.
@@ -1426,7 +1424,7 @@ python LUSID/tests/benchmark_xml_parsers.py
 - [Dolby Atmos ADM Interoperability Guidelines](https://dolby.my.site.com/professionalsupport/s/article/Dolby-Atmos-IMF-IAB-interoperability-guidelines)
 - [EBU Tech 3364: Audio Definition Model](https://tech.ebu.ch/publications/tech3364)
 - [AlloLib Documentation](https://github.com/AlloSphere-Research-Group/AlloLib)
-- [bwfmetaedit Tool](https://mediaarea.net/BWFMetaEdit)
+- [libbw64 (EBU)](https://github.com/ebu/libbw64)
 - [Example ADM Files](https://zenodo.org/records/15268471)
 
 ### Known Issues

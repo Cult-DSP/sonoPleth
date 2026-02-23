@@ -35,7 +35,7 @@ def check_initialization():
     print("\nThis will:")
     print("  1. Create Python virtual environment")
     print("  2. Install Python dependencies")
-    print("  3. Setup C++ tools (bwfmetaedit, allolib, VBAP renderer)")
+    print("  3. Setup C++ tools (allolib, embedded ADM extractor, VBAP renderer)")
     print("\nAfter initialization, run the pipeline again.")
     print("="*80 + "\n")
     return False

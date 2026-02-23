@@ -15,7 +15,7 @@ import os
 # Current pipeline:
 # 0. Check initialization - if not initialized, prompt to run ./init.sh
 # 1. Setup C++ tools - initialize git submodules (allolib, libbw64, libadm), build spatial renderer and ADM extractor (only if needed)
-# 2. Extract ADM metadata from source WAV using sonopleth_adm_extract (embedded; falls back to bwfmetaedit if not built)
+# 2. Extract ADM metadata from source WAV using sonopleth_adm_extract (embedded EBU tool)
 # 3. Parse ADM metadata into internal data structure (optionally export JSON for analysis)
 # 4. Analyze audio channels for content (generate containsAudio.json)
 # 5. Run packageForRender - split stems (X.1.wav naming) and build LUSID scene (scene.lusid.json)

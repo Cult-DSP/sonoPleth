@@ -197,7 +197,7 @@ sonoPleth/bin/python -c "from src.configCPP import setupCppTools; setupCppTools(
 
 1. **Check Initialization** - Verify all dependencies are installed
 2. **Setup C++ Tools** - Initialize AlloLib, libbw64, libadm submodules; build embedded ADM extractor and spatial renderer
-3. **Extract Metadata** - Use embedded `sonopleth_adm_extract` to extract ADM XML from WAV (falls back to `bwfmetaedit` if not built)
+3. **Extract Metadata** - Use embedded `sonopleth_adm_extract` to extract ADM XML from WAV
 4. **Parse ADM** - Convert ADM XML to internal data structure
 5. **Analyze Audio** - Detect which channels contain audio content
 6. **Package for Render** - Split audio stems (X.1.wav naming) and build LUSID scene (scene.lusid.json)
@@ -257,12 +257,9 @@ Example ADM files: https://zenodo.org/records/15268471
 
 ### Platform-specific notes
 
-- **macOS**: Fully supported via `./init.sh`. `bwfmetaedit` is no longer required but can still be installed as a fallback: `brew install bwfmetaedit`
-- **Windows/Linux**: CMake + make/ninja required to build `sonopleth_adm_extract`. `bwfmetaedit` fallback available from [MediaArea website](https://mediaarea.net/BWFMetaEdit)
+- **macOS**: Fully supported via `./init.sh`
+- **Windows/Linux**: CMake + make/ninja required to build `sonopleth_adm_extract`
 
 ### ADM extraction
 
 - **Primary**: `sonopleth_adm_extract` (embedded, built by `init.sh`) — no external install needed
-- **Fallback**: `bwfmetaedit` — used automatically if embedded tool is not built
-  - macOS: `brew install bwfmetaedit`
-  - Other platforms: Download from https://mediaarea.net/BWFMetaEdit

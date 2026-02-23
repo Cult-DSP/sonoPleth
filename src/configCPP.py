@@ -5,8 +5,8 @@ from pathlib import Path
 def setupCppTools():
     """
     Complete setup for C++ tools and dependencies.
-    Orchestrates installation of bwfmetaedit, submodule initialization,
-    Spatial renderer build, and the embedded ADM extractor build.
+    Orchestrates submodule initialization, Spatial renderer build,
+    and the embedded ADM extractor build.
     Only performs actions that are needed (idempotent).
 
     Returns:
@@ -18,24 +18,22 @@ def setupCppTools():
     print("Setting up C++ tools and dependencies...")
     print("="*60)
 
-    # Step 1: Install bwfmetaedit if needed (kept as fallback)
-    if not installBwfmetaedit():
-        print("\n⚠ Warning: bwfmetaedit installation failed — will use embedded extractor instead")
-
-    # Step 2: Initialize git submodules (allolib) if needed
+    # Step 1: Initialize git submodules (allolib) if needed
     if not initializeSubmodules():
         print("\n✗ Error: Failed to initialize allolib submodule")
         return False
 
-    # Step 3: Initialize EBU submodules (libbw64 + libadm) if needed
+    # Step 2: Initialize EBU submodules (libbw64 + libadm) if needed
     if not initializeEbuSubmodules():
-        print("\n⚠ Warning: EBU submodule initialization failed — embedded ADM extractor will not be built")
-    else:
-        # Step 4: Build the embedded ADM extractor tool
-        if not buildAdmExtractor():
-            print("\n⚠ Warning: ADM extractor build failed — bwfmetaedit fallback will be used")
+        print("\n✗ Error: EBU submodule initialization failed — cannot build ADM extractor")
+        return False
 
-    # Step 5: Build Spatial renderer if needed
+    # Step 3: Build the embedded ADM extractor tool
+    if not buildAdmExtractor():
+        print("\n✗ Error: ADM extractor build failed")
+        return False
+
+    # Step 4: Build Spatial renderer if needed
     if not buildSpatialRenderer():
         print("\n✗ Error: Failed to build Spatial renderer")
         return False
@@ -44,69 +42,6 @@ def setupCppTools():
     print("✓ C++ tools setup complete!")
     print("="*60 + "\n")
     return True
-
-
-def installBwfmetaedit():
-    """
-    Install bwfmetaedit using Homebrew.
-    
-    Returns:
-    --------
-    bool
-        True if installation succeeded or already installed, False otherwise
-    """
-    print("\nChecking for bwfmetaedit...")
-    
-    # Check if already installed
-    try:
-        result = subprocess.run(
-            ["which", "bwfmetaedit"],
-            check=True,
-            capture_output=True,
-            text=True
-        )
-        print(f"✓ bwfmetaedit already installed at: {result.stdout.strip()}")
-        return True
-    except subprocess.CalledProcessError:
-        pass  # Not installed, proceed with installation
-    
-    # Check if brew is available
-    try:
-        subprocess.run(
-            ["which", "brew"],
-            check=True,
-            capture_output=True,
-            text=True
-        )
-    except subprocess.CalledProcessError:
-        print("\n✗ Error: Homebrew not found!")
-        print("  Install Homebrew from: https://brew.sh")
-        print("  Or manually install bwfmetaedit from: https://mediaarea.net/BWFMetaEdit")
-        return False
-    
-    # Install bwfmetaedit
-    print("Installing bwfmetaedit via Homebrew...")
-    try:
-        result = subprocess.run(
-            ["brew", "install", "bwfmetaedit"],
-            check=True,
-            capture_output=True,
-            text=True
-        )
-        print(result.stdout)
-        print("✓ bwfmetaedit installed successfully!")
-        return True
-    except subprocess.CalledProcessError as e:
-        print(f"\n✗ Installation failed with error code {e.returncode}")
-        print(f"stdout: {e.stdout}")
-        print(f"stderr: {e.stderr}")
-        print("\nTry installing manually:")
-        print("  brew install bwfmetaedit")
-        print("  or download from: https://mediaarea.net/BWFMetaEdit")
-        return False
-    except Exception as e:
-        print(f"\n✗ Unexpected error during installation: {e}")
-        return False
 
 
 def initializeSubmodules(project_root=None):
@@ -362,9 +297,8 @@ def buildAdmExtractor(
 ):
     """
     Build the embedded ADM extractor tool (sonopleth_adm_extract) using CMake.
-    This tool replaces the bwfmetaedit dependency for extracting the axml chunk
-    from BW64/RF64/WAV files.  Only builds if the executable is not already present
-    (idempotent).
+    Extracts the axml chunk from BW64/RF64/WAV files using the EBU libbw64 library.
+    Only builds if the executable is not already present (idempotent).
 
     The resulting binary is placed at:
         tools/adm_extract/build/sonopleth_adm_extract
