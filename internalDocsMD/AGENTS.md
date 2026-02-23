@@ -129,32 +129,35 @@ Rules:
 
 #### Headers directly `#include`d by sonoPleth
 
-| Header | Module |
-|--------|--------|
-| `al/math/al_Vec.hpp` | math |
-| `al/sound/al_Vbap.hpp` · `al_Dbap.hpp` · `al_Lbap.hpp` · `al_Spatializer.hpp` · `al_Speaker.hpp` | sound |
-| `al/io/al_AudioIOData.hpp` | io |
+| Header                                                                                           | Module |
+| ------------------------------------------------------------------------------------------------ | ------ |
+| `al/math/al_Vec.hpp`                                                                             | math   |
+| `al/sound/al_Vbap.hpp` · `al_Dbap.hpp` · `al_Lbap.hpp` · `al_Spatializer.hpp` · `al_Speaker.hpp` | sound  |
+| `al/io/al_AudioIOData.hpp`                                                                       | io     |
 
 CMake link targets: `al` + `Gamma`.
 
 #### Keep list (required today)
+
 `sound/` · `math/` · `spatial/` · `io/al_AudioIOData` · `system/` · `external/Gamma/` · `external/json/`
 
 #### Likely-future list (real-time audio engine)
+
 `io/al_AudioIO` · `app/` (App, AudioDomain, SimulationDomain) · `system/al_PeriodicThread` · `protocol/` (OSC) · `scene/` (PolySynth, DynamicScene) · `external/rtaudio/` · `external/rtmidi/` · `external/oscpack/`
 
 #### Safe to trim (graphics/UI — unused, no near-term path)
+
 `graphics/` · `ui/` · `sphere/` · `external/glfw/` (4.5 MB) · `external/imgui/` (5.1 MB) · `external/stb/` (2.0 MB) · `external/glad/` · `external/serial/` · `external/dr_libs/`
 
 #### Changes applied
 
-| File | Change |
-|------|--------|
-| `.gitmodules` | Added `shallow = true` to `thirdparty/allolib` — fresh clones are depth=1 automatically |
-| `src/configCPP.py` `initializeSubmodules()` | Uses `--depth 1` — `init.sh` now initializes allolib shallow (~510 MB saved) |
-| `src/configCPP.py` `initializeEbuSubmodules()` | Uses `--depth 1` — libbw64/libadm also shallow |
-| `scripts/shallow-submodules.sh` | **New.** One-time idempotent script to re-shallow an existing deep clone |
-| `scripts/sparse-allolib.sh` | **New, opt-in only.** Sparse working-tree checkout (~14 MB saved); ⚠️ fragile with AlloLib's unconditional CMakeLists — not run by default or CI |
+| File                                           | Change                                                                                                                                           |
+| ---------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `.gitmodules`                                  | Added `shallow = true` to `thirdparty/allolib` — fresh clones are depth=1 automatically                                                          |
+| `src/configCPP.py` `initializeSubmodules()`    | Uses `--depth 1` — `init.sh` now initializes allolib shallow (~510 MB saved)                                                                     |
+| `src/configCPP.py` `initializeEbuSubmodules()` | Uses `--depth 1` — libbw64/libadm also shallow                                                                                                   |
+| `scripts/shallow-submodules.sh`                | **New.** One-time idempotent script to re-shallow an existing deep clone                                                                         |
+| `scripts/sparse-allolib.sh`                    | **New, opt-in only.** Sparse working-tree checkout (~14 MB saved); ⚠️ fragile with AlloLib's unconditional CMakeLists — not run by default or CI |
 
 **Default path (`init.sh` / CI):** full working tree, shallow history. Builds correctly with no CMake changes.
 **To apply to an existing deep clone:** `./scripts/shallow-submodules.sh`
