@@ -12,11 +12,18 @@ with mapping to speaker arrays using multiple spatializers (DBAP, VBAP, LBAP).
 ### First Time Setup
 
 Run this **once** to set up everything:
+MAC:
 
 ```bash
 git clone https://github.com/lucianpar/sonoPleth.git
 cd sonoPleth
 source init.sh
+```
+
+WINDOWS:
+
+```
+
 ```
 
 **Important:** Use `source init.sh` (not `./init.sh`) to ensure the virtual environment activates in your current shell.
