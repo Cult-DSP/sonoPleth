@@ -25,8 +25,8 @@ The `init.sh` script will:
 
 - Create a Python virtual environment (`sonoPleth/`)
 - Install all Python dependencies
-- Install `bwfmetaedit` (via Homebrew)
-- Initialize git submodules (AlloLib)
+- Initialize git submodules (AlloLib, libbw64, libadm)
+- Build the embedded ADM extractor (`sonopleth_adm_extract`)
 - Build the Spatial renderer (supports DBAP, VBAP, LBAP)
 - Activate the virtual environment automatically
 
@@ -181,11 +181,8 @@ python3 -m venv sonoPleth
 # 2. Install Python dependencies
 sonoPleth/bin/pip install -r requirements.txt
 
-# 3. Install bwfmetaedit
-brew install bwfmetaedit
-
-# 4. Initialize submodules and build renderer
-sonoPleth/bin/python -c "from utils.configCPP import setupCppTools; setupCppTools()"
+# 3. Initialize submodules and build all C++ tools (ADM extractor + renderer)
+sonoPleth/bin/python -c "from src.configCPP import setupCppTools; setupCppTools()"
 ```
 
 ## Utilities
@@ -199,8 +196,8 @@ sonoPleth/bin/python -c "from utils.configCPP import setupCppTools; setupCppTool
 ## Pipeline Overview
 
 1. **Check Initialization** - Verify all dependencies are installed
-2. **Setup C++ Tools** - Install bwfmetaedit, initialize AlloLib submodule, build spatial renderer
-3. **Extract Metadata** - Use bwfmetaedit to extract ADM XML from WAV
+2. **Setup C++ Tools** - Initialize AlloLib, libbw64, libadm submodules; build embedded ADM extractor and spatial renderer
+3. **Extract Metadata** - Use embedded `sonopleth_adm_extract` to extract ADM XML from WAV (falls back to `bwfmetaedit` if not built)
 4. **Parse ADM** - Convert ADM XML to internal data structure
 5. **Analyze Audio** - Detect which channels contain audio content
 6. **Package for Render** - Split audio stems (X.1.wav naming) and build LUSID scene (scene.lusid.json)
@@ -255,16 +252,17 @@ Example ADM files: https://zenodo.org/records/15268471
 ### Essential
 
 - **Python 3.8+** - Core runtime for the Python components
-- **CMake 3.12+** - Required to build the VBAP spatial audio renderer (with C++17 support)
+- **CMake 3.12+** - Required to build the spatial audio renderer and embedded ADM extractor (C++17)
 - **Build tools** - make, clang/gcc compiler toolchain
 
-### Platform-specific installation methods
+### Platform-specific notes
 
-- **macOS**: Homebrew for easy `bwfmetaedit` installation (`brew install bwfmetaedit`)
-- **Windows/Linux**: Manual installation of `bwfmetaedit` from [MediaArea website](https://mediaarea.net/BWFMetaEdit)
+- **macOS**: Fully supported via `./init.sh`. `bwfmetaedit` is no longer required but can still be installed as a fallback: `brew install bwfmetaedit`
+- **Windows/Linux**: CMake + make/ninja required to build `sonopleth_adm_extract`. `bwfmetaedit` fallback available from [MediaArea website](https://mediaarea.net/BWFMetaEdit)
 
-### Required external tool
+### ADM extraction
 
-- **bwfmetaedit** - Extracts ADM metadata from WAV files. Install via:
+- **Primary**: `sonopleth_adm_extract` (embedded, built by `init.sh`) — no external install needed
+- **Fallback**: `bwfmetaedit` — used automatically if embedded tool is not built
   - macOS: `brew install bwfmetaedit`
   - Other platforms: Download from https://mediaarea.net/BWFMetaEdit

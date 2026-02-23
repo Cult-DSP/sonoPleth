@@ -14,8 +14,8 @@ import os
 
 # Current pipeline:
 # 0. Check initialization - if not initialized, prompt to run ./init.sh
-# 1. Setup C++ tools - install bwfmetaedit, initialize git submodules (allolib), build spatial renderer (only if needed)
-# 2. Extract ADM metadata from source WAV using bwfmetaedit
+# 1. Setup C++ tools - initialize git submodules (allolib, libbw64, libadm), build spatial renderer and ADM extractor (only if needed)
+# 2. Extract ADM metadata from source WAV using sonopleth_adm_extract (embedded; falls back to bwfmetaedit if not built)
 # 3. Parse ADM metadata into internal data structure (optionally export JSON for analysis)
 # 4. Analyze audio channels for content (generate containsAudio.json)
 # 5. Run packageForRender - split stems (X.1.wav naming) and build LUSID scene (scene.lusid.json)
@@ -46,7 +46,7 @@ def check_initialization():
     print("\nThis will:")
     print("  1. Create Python virtual environment")
     print("  2. Install Python dependencies")
-    print("  3. Setup C++ tools (bwfmetaedit, allolib, VBAP renderer)")
+    print("  3. Setup C++ tools (allolib, ADM extractor, spatial renderer)")
     print("\nAfter initialization, run the pipeline again.")
     print("="*80 + "\n")
     return False

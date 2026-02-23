@@ -5,3 +5,17 @@
 [submodule "LUSID"]
 	path = LUSID
 	url = https://github.com/Cult-DSP/LUSID
+
+[submodule "thirdparty/libbw64"]
+	path = thirdparty/libbw64
+	url = https://github.com/ebu/libbw64
+
+
+[submodule "thirdparty/libadm"]
+	path = thirdparty/libadm
+	url = https://github.com/ebu/libadm
+
+
+# [submodule "thirdparty/ebu-adm-toolbox"]
+# 	path = thirdparty/ebu-adm-toolbox
+# 	url = https://github.com/ebu/ebu-adm-toolbox

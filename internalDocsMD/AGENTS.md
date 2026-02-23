@@ -28,18 +28,122 @@
 > Comprehensive catalog of all issues discovered while tracing the truncated-render bug.
 > Items marked ✅ are fixed. Items marked ⚠️ need code changes. Items marked ℹ️ are observations.
 
-| #   | Status     | Severity     | Issue                                                                                            | Location                                            |
-| --- | ---------- | ------------ | ------------------------------------------------------------------------------------------------ | --------------------------------------------------- |
-| 1   | ✅ FIXED   | **Critical** | WAV 4 GB header overflow — `SF_FORMAT_WAV` wraps 32-bit size field                               | `WavUtils.cpp`                                      |
-| 2   | ✅ FIXED   | **High**     | `analyzeRender.py` trusted corrupted WAV header without cross-check                              | `src/analyzeRender.py`                              |
-| 3   | ✅ FIXED   | **Low**      | Stale `DEBUG` print statements left in renderer                                                  | `SpatialRenderer.cpp`                               |
-| 4   | ✅ FIXED   | **Medium**   | `masterGain` default mismatch resolved — now consistently `0.5` across code and docs             | `SpatialRenderer.hpp` · `main.cpp` · `RENDERING.md` |
-| 5   | ✅ FIXED   | **Medium**   | `dbap_focus` now forwarded for all DBAP-based modes, including plain `"dbap"`                    | `runPipeline.py`                                    |
-| 6   | ✅ FIXED   | **Medium**   | `master_gain` exposed in Python pipeline — passed to C++ renderer as `--master_gain`             | `src/createRender.py`                               |
-| 7   | ⚠️ UNFIXED | **Low**      | Double audio-channel scan — `exportAudioActivity()` then `channelHasAudio()` ~28 s wasted        | `runPipeline.py` lines 86–88                        |
-| 8   | ⚠️ UNFIXED | **Low**      | `sys.argv[1]` accessed before bounds check → potential `IndexError`                              | `runPipeline.py` line 158                           |
-| 9   | ℹ️ NOTE    | **Info**     | Large interleaved buffer (~11.3 GB peak for 56ch × 566s) allocated in one shot                   | `WavUtils.cpp` `writeMultichannelWav()`             |
-| 10  | ℹ️ NOTE    | **Info**     | Test file exercises only `audio_object` + `LFE` paths; `direct_speaker` untested at render level | Pipeline integration tests                          |
+| #   | Status   | Severity     | Issue                                                                                | Location                                            |
+| --- | -------- | ------------ | ------------------------------------------------------------------------------------ | --------------------------------------------------- |
+| 1   | ✅ FIXED | **Critical** | WAV 4 GB header overflow — `SF_FORMAT_WAV` wraps 32-bit size field                   | `WavUtils.cpp`                                      |
+| 2   | ✅ FIXED | **High**     | `analyzeRender.py` trusted corrupted WAV header without cross-check                  | `src/analyzeRender.py`                              |
+| 3   | ✅ FIXED | **Low**      | Stale `DEBUG` print statements left in renderer                                      | `SpatialRenderer.cpp`                               |
+| 4   | ✅ FIXED | **Medium**   | `masterGain` default mismatch resolved — now consistently `0.5` across code and docs | `SpatialRenderer.hpp` · `main.cpp` · `RENDERING.md` |
+| 5   | ✅ FIXED | **Medium**   | `dbap_focus` now forwarded for all DBAP-based modes, including plain `"dbap"`        | `runPipeline.py`                                    |
+| 6   | ✅ FIXED | **Medium**   | `master_gain` exposed in Python pipeline — passed to C++ renderer as `--master_gain` | `src/createRender.py`                               |
+
+CURRENT PROJECT:
+Switching from BWF MetaEdit to embedded EBU parsing submodules (TRACK A ONLY — incremental plumbing swap)
+
+### Goal
+
+Replace the external `bwfmetaedit` dependency with **embedded EBU libraries** while keeping the existing ADM parsing + LUSID conversion behavior unchanged.
+
+- Output must remain: `processedData/currentMetaData.xml` (ADM XML string extracted from WAV)
+- Downstream modules remain unchanged for now: `src/analyzeADM/parser.py` (lxml) and `LUSID/src/xmlParser.py` continue to operate on the extracted XML file
+- This is a **plumbing swap only**. Do NOT broaden ADM support in this task (Track B is documented below as future work).
+
+### Documentation update obligations (MANDATORY)
+
+Whenever a change impacts the toolchain dataflow, CLI flags, on-disk artifacts, or any cross-module contract, the agent **must update documentation in the same PR**.
+
+For Track A (embedded ADM extractor) the following docs MUST be kept consistent:
+
+- `AGENTS.md` (this file): Track A plan + non-goals + build wiring
+- `LUSID/LUSID_AGENTS.md`: update the pipeline diagram to reflect `sonopleth_adm_extract` (embedded) with fallback to `bwfmetaedit`, and add a short note that Track A does **not** change LUSID parsing semantics
+- `toolchain_AGENTS.md`: if any contract-level path/filename/artifact changes (should not happen in Track A), update it
+- `CHANGELOG_TOOLCHAIN.md`: add an entry if the contract changes (new required/optional dependency, new artifact, changed path, new validation step). If Track A only changes the preferred extractor implementation but preserves outputs, record it as an **implementation** note only if your changelog policy allows; otherwise omit.
+
+Rules:
+
+- Do not leave docs in a contradictory state (e.g., diagram still shows `bwfmetaedit` after embedding extractor).
+- If docs disagree, `toolchain_AGENTS.md` is the contract authority; resolve conflicts by updating the other docs accordingly.
+- Keep changes minimal: Track A should only require a small pipeline-diagram + note update in `LUSID_AGENTS.md`.
+
+### Repository constraints
+
+- **Submodules must live in `thirdparty/`**
+  - `thirdparty/libbw64` (EBU BW64/RF64 container I/O)
+  - `thirdparty/libadm` (EBU ADM XML model + parser)
+- Keep changes minimal and compatible with the current pipeline and GUI, especially:
+  - `runPipeline.py` and `gui/pipeline_runner.py`
+  - file outputs under `processedData/`
+
+### Deliverable (Track A)
+
+1. Add EBU submodules
+   - Add git submodules in `thirdparty/`:
+     - `thirdparty/libbw64`
+     - `thirdparty/libadm`
+   - Document how to initialize them: `git submodule update --init --recursive`
+
+2. Build an **embedded ADM XML extractor tool**
+   - Create a small C++ CLI tool in the sonoPleth repo that:
+     - opens a WAV/RF64/BW64 file,
+     - extracts the `axml` chunk (ADM XML),
+     - writes it to a file path supplied by the user (or prints to stdout).
+   - Recommended placement:
+     - `tools/adm_extract/` (new)
+     - CMake target name: `sonopleth_adm_extract`
+   - The tool should not interpret ADM semantics; it is only a chunk extractor.
+   - Keep the output stable: `processedData/currentMetaData.xml` remains the same format (raw ADM XML string).
+
+3. Wire the pipeline to use the new tool (no semantic changes)
+   - Update `src/analyzeADM/extractMetadata.py` to prefer the embedded tool:
+     - If `sonopleth_adm_extract` exists (built artifact), run it to generate `processedData/currentMetaData.xml`.
+     - If not present, fall back to `bwfmetaedit` (for now), with a clear warning.
+   - Preserve current filenames and directories so everything downstream stays compatible.
+
+4. Update `init.sh` to build the tool
+   - `init.sh` should:
+     - initialize submodules,
+     - build the new extractor tool (via CMake),
+     - continue building the spatial renderer as before.
+   - Keep build artifacts in an existing or clearly documented build folder (e.g., `tools/adm_extract/build/`).
+
+5. Testing (must pass)
+   - End-to-end pipeline with a known-good Atmos ADM test file:
+     - produces `processedData/currentMetaData.xml`
+     - produces `processedData/stageForRender/scene.lusid.json`
+     - renderer runs and outputs a WAV
+   - LUSID unit tests still pass:
+     - `cd LUSID && python -m unittest discover -s tests -v`
+
+### Explicit non-goals (Track A)
+
+- Do NOT change `LUSID/src/xml_etree_parser.py` / `LUSID/src/xmlParser.py` semantics in this task.
+- Do NOT attempt to add Sony 360RA parsing support here.
+- Do NOT restructure the ADM→LUSID conversion.
+- Do NOT require EBU ADM Toolbox (EAT) in the main build.
+
+### Track B (FUTURE — DO NOT IMPLEMENT YET)
+
+**Objective:** Add a profile adaptation layer inside LUSID to accept a wider range of ADM variants (Sony 360RA, edge-case Atmos exports, etc.).
+Planned work:
+
+- Add folder: `LUSID/src/adm_profiles/`
+  - `detect_profile.py`
+  - `atmos_adapter.py`
+  - `sony360_adapter.py`
+  - `common.py` (ID handling, time parsing incl. `S48000`, polar→cart, block compaction, mute gating)
+- Sony 360RA needs:
+  - Opaque string IDs (hex-like suffixes such as `...0a`)
+  - `rtime/duration` parsing with `S####` suffix
+  - mute-block handling (gain=0 segments)
+  - block compaction to avoid massive frame counts
+
+**Status:** Document only. Await further instructions before implementing Track B.
+
+FUTURE ISSUES
+| 7 | ⚠️ UNFIXED | **Low** | Double audio-channel scan — `exportAudioActivity()` then `channelHasAudio()` ~28 s wasted | `runPipeline.py` lines 86–88 |
+| 8 | ⚠️ UNFIXED | **Low** | `sys.argv[1]` accessed before bounds check → potential `IndexError` | `runPipeline.py` line 158 |
+| 9 | ℹ️ NOTE | **Info** | Large interleaved buffer (~11.3 GB peak for 56ch × 566s) allocated in one shot | `WavUtils.cpp` `writeMultichannelWav()` |
+| 10 | ℹ️ NOTE | **Info** | Test file exercises only `audio_object` + `LFE` paths; `direct_speaker` untested at render level | Pipeline integration tests |
 
 additional:
 |
@@ -106,7 +210,7 @@ sonoPleth is a Python+C++ prototype for decoding and rendering Audio Definition 
 - **Python 3.8+**: Pipeline orchestration, ADM parsing, data processing
 - **C++17**: High-performance spatial audio renderer (AlloLib-based)
 - **AlloLib**: Audio spatialization framework (DBAP, VBAP, LBAP)
-- **bwfmetaedit**: External tool for extracting ADM XML from WAV files
+- **sonopleth_adm_extract**: Embedded EBU/libbw64-based tool for extracting ADM XML from WAV files (built by `init.sh`; falls back to `bwfmetaedit` if not present)
 - **CMake 3.12+**: Build system for C++ components
 
 ---
@@ -118,7 +222,8 @@ sonoPleth is a Python+C++ prototype for decoding and rendering Audio Definition 
 ```
 ADM BWF WAV File
     │
-    ├─► bwfmetaedit → currentMetaData.xml (ADM XML)
+    ├─► sonopleth_adm_extract (embedded) → currentMetaData.xml (ADM XML)
+    │   └─ fallback: bwfmetaedit (system-installed, if embedded tool not built)
     │
     ├─► checkAudioChannels.py → containsAudio.json
     │
@@ -178,12 +283,13 @@ The C++ renderer reads LUSID directly — no intermediate format conversion.
 
 ### 1. ADM Metadata Extraction & Parsing
 
-#### `bwfmetaedit`
+#### `sonopleth_adm_extract` (embedded)
 
-- **Purpose**: Extract ADM XML from BWF WAV file
-- **Type**: External command-line tool
-- **Installation**: `brew install bwfmetaedit` (macOS) or MediaArea website
+- **Purpose**: Extract ADM XML from BWF WAV file using the EBU libbw64 library
+- **Type**: Embedded C++ CLI tool, built by `init.sh` / `src/configCPP.py`
+- **Source**: `src/adm_extract/` — compiled to `src/adm_extract/build/sonopleth_adm_extract`
 - **Output**: `processedData/currentMetaData.xml`
+- **Fallback**: If the binary is not present, `extractMetadata.py` falls back to `bwfmetaedit` with a warning
 
 #### `src/analyzeADM/parser.py`
 
@@ -753,7 +859,7 @@ sonoPleth/
 │   ├── analyzeADM/
 │   │   ├── parser.py                # lxml ADM XML parser
 │   │   ├── checkAudioChannels.py   # Detect silent channels
-│   │   └── extractMetadata.py      # bwfmetaedit wrapper
+│   │   └── extractMetadata.py      # ADM extractor wrapper (embedded tool + bwfmetaedit fallback)
 │   ├── packageADM/
 │   │   ├── packageForRender.py     # Orchestrator
 │   │   ├── splitStems.py           # Multichannel → mono
@@ -860,7 +966,8 @@ python LUSID/tests/benchmark*.py    # venv has lxml
 
 **External Tools:**
 
-- `bwfmetaedit` — ADM metadata extraction
+- `sonopleth_adm_extract` — embedded ADM metadata extractor (built by `init.sh`; see `src/adm_extract/`)
+- `bwfmetaedit` — fallback ADM extractor if embedded tool is not built (`brew install bwfmetaedit`)
 - `cmake`, `make`, C++ compiler — C++ renderer build
 
 ---
@@ -873,7 +980,7 @@ python LUSID/tests/benchmark*.py    # venv has lxml
 **Solution:** Activate venv: `source activate.sh`
 
 **Issue:** `bwfmetaedit command not found`  
-**Solution:** Install: `brew install bwfmetaedit` (macOS)
+**Solution:** The embedded `sonopleth_adm_extract` tool should be used instead — run `./init.sh` to build it. If you still need `bwfmetaedit` as a fallback: `brew install bwfmetaedit` (macOS)
 
 **Issue:** Empty `objectData.json` after parsing  
 **Solution:** Check ADM XML format. Some ADM files have non-standard structure.
