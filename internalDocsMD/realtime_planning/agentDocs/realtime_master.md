@@ -83,7 +83,7 @@ Based on the architecture's data-flow dependencies, the planned order is:
 
 | Phase | Agent(s)                  | Why this order                                      | Status      |
 | ----- | ------------------------- | --------------------------------------------------- | ----------- |
-| 1     | **Backend Adapter**       | Need audio output before anything else is audible   | Not started |
+| 1     | **Backend Adapter**       | Need audio output before anything else is audible   | ✅ Complete |
 | 2     | **Streaming**             | Need audio data to feed the mixer                   | Not started |
 | 3     | **Pose and Control**      | Need positions before spatialization                | Not started |
 | 4     | **Spatializer (DBAP)**    | Core mixing — depends on 1-3                        | Not started |
@@ -96,6 +96,34 @@ Based on the architecture's data-flow dependencies, the planned order is:
 > **Note:** Phases 1-4 together form the minimum audible prototype (sound
 > comes out of speakers). Phases 5-7 add correctness. Phase 8 hardens
 > reliability. Phase 9 adds the user interface.
+
+### Phase 1 Completion Log (Backend Adapter)
+
+**Files created:**
+
+| File | Purpose |
+| ---- | ------- |
+| `spatial_engine/realtimeEngine/CMakeLists.txt` | Build system — links AlloLib + Gamma, shares `JSONLoader`/`LayoutLoader`/`WavUtils` from `../src/` |
+| `spatial_engine/realtimeEngine/src/RealtimeTypes.hpp` | Shared data types: `RealtimeConfig` (device settings, paths, atomic gain/playback flags) and `EngineState` (frame counter, playback time, CPU load, xrun count) |
+| `spatial_engine/realtimeEngine/src/RealtimeBackend.hpp` | Agent 8 implementation — wraps AlloLib `AudioIO` with `init()`/`start()`/`stop()`/`shutdown()` lifecycle, static C-style callback dispatches to `processBlock()`, CPU load clamping |
+| `spatial_engine/realtimeEngine/src/main.cpp` | CLI entry point — parses `--layout`/`--scene`/`--sources` + optional args, runs monitoring loop with status display, handles SIGINT for clean shutdown |
+| `runRealtime.py` | Python launcher — mirrors `src/createRender.py` pattern, validates paths, launches C++ executable via `subprocess.Popen`, handles Ctrl+C forwarding |
+
+**Build & test results:**
+
+- CMake configures successfully (AlloLib + Gamma link)
+- `make -j4` compiles with zero errors
+- Binary runs, opens audio device (2-channel test), streams silence for 3 seconds
+- SIGINT handler triggers clean shutdown (stop → close → exit 0)
+- Frame counter advances correctly (~144k frames in 3s at 48kHz)
+- CPU load reports 0.0% (silence — trivial callback)
+
+**What the next phase gets:**
+
+- A working audio callback that currently outputs silence
+- `processBlock(AudioIOData&)` is the insertion point for all future agents
+- `RealtimeConfig` and `EngineState` are the shared state structs
+- `runRealtime.py` is ready to call from the GUI
 
 ---
 

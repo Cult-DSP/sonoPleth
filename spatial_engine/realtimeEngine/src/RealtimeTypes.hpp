@@ -1,0 +1,90 @@
+// RealtimeTypes.hpp — Shared data types for the real-time spatial audio engine
+//
+// These structs are used across multiple agents (Backend, Streaming, Pose,
+// Spatializer, etc.) to pass data through the processing pipeline.
+//
+// DESIGN NOTES:
+// - Structs here must be POD-friendly or at least trivially copyable where
+//   they are shared between threads (audio callback vs control thread).
+// - The audio callback thread must NEVER allocate, lock, or do I/O.
+//   Any struct read by the audio thread should be accessed via atomic pointers,
+//   double-buffering, or lock-free queues — that coordination is handled by
+//   the agents themselves, not by these types.
+// - Types are intentionally kept simple for Phase 1. Future phases will add
+//   fields (e.g., per-source gain, mute flags, velocity for Doppler, etc.).
+//
+// PROVENANCE:
+// - SpeakerLayoutData, SpeakerData, subwooferData → reused directly from
+//   spatial_engine/src/LayoutLoader.hpp (shared via include path)
+// - SpatialData, Keyframe, TimeUnit → reused directly from
+//   spatial_engine/src/JSONLoader.hpp (shared via include path)
+// - MonoWavData, MultiWavData → reused directly from
+//   spatial_engine/src/WavUtils.hpp (shared via include path)
+//
+// This file defines ONLY the additional types needed for real-time operation
+// that don't exist in the offline renderer's headers.
+
+#pragma once
+
+#include <atomic>
+#include <cstdint>
+#include <string>
+#include <vector>
+
+// ─────────────────────────────────────────────────────────────────────────────
+// RealtimeConfig — Global configuration for the real-time engine
+// ─────────────────────────────────────────────────────────────────────────────
+// Set once at startup, read-only during playback.
+// The audio thread may read any field without synchronization because these
+// don't change after init (except masterGain which is std::atomic).
+
+struct RealtimeConfig {
+    // ── Audio device settings ────────────────────────────────────────────
+    int    sampleRate       = 48000;   // Audio sample rate in Hz
+    int    bufferSize       = 512;     // Frames per audio callback buffer
+    int    outputChannels   = 60;      // Total output channels (speakers + subs)
+    int    inputChannels    = 0;       // Input channels (0 = output only)
+
+    // ── Spatializer settings (mirrors offline RenderConfig) ──────────────
+    float  dbapFocus        = 1.0f;    // DBAP focus/rolloff exponent (0.2–5.0)
+
+    // ── Gain settings ────────────────────────────────────────────────────
+    // masterGain is atomic because the GUI/control thread may adjust it
+    // while the audio thread is reading it. Other gains will follow the
+    // same pattern in Phase 6 (Compensation and Gain Agent).
+    std::atomic<float> masterGain{0.5f};  // Global output gain (0.0–1.0)
+
+    // ── File paths (set at startup, read-only after) ─────────────────────
+    std::string layoutPath;       // Speaker layout JSON
+    std::string scenePath;        // LUSID scene JSON (positions/trajectories)
+    std::string sourcesFolder;    // Folder containing mono source WAV files
+
+    // ── Playback control ─────────────────────────────────────────────────
+    std::atomic<bool> playing{false};   // True when audio should be output
+    std::atomic<bool> shouldExit{false}; // True when engine should shut down
+};
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// EngineState — Runtime state visible to all agents (read-mostly)
+// ─────────────────────────────────────────────────────────────────────────────
+// This struct is updated by the audio thread and read by the GUI/control
+// thread for monitoring. All fields are atomic for safe cross-thread reads.
+// This is intentionally minimal for Phase 1 — future phases add per-source
+// and per-channel metrics.
+
+struct EngineState {
+    // ── Playback position ────────────────────────────────────────────────
+    std::atomic<uint64_t> frameCounter{0};  // Current playback position in samples
+    std::atomic<double>   playbackTimeSec{0.0}; // Current playback time in seconds
+
+    // ── Performance monitoring ───────────────────────────────────────────
+    std::atomic<float>    cpuLoad{0.0f};    // Audio thread CPU usage (0.0–1.0)
+    std::atomic<uint64_t> xrunCount{0};     // Buffer underrun count
+
+    // ── Scene info (set once at load time) ───────────────────────────────
+    std::atomic<int>      numSources{0};    // Number of active audio sources
+    std::atomic<int>      numSpeakers{0};   // Number of speakers in layout
+    std::atomic<double>   sceneDuration{0.0}; // Total scene duration in seconds
+};
+
