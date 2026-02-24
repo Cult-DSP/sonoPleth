@@ -165,8 +165,9 @@ This audit identified files and directories that can be safely removed to clean 
 
 **Completed:** February 23, 2026
 **Files Removed:**
+
 1. ✅ `LUSID/src/old_XML_parse/` (archived XML parser)
-2. ✅ `LUSID/tests/old_XML_parse/` (archived XML parser tests)  
+2. ✅ `LUSID/tests/old_XML_parse/` (archived XML parser tests)
 3. ✅ `src/analyzeADM/old_XML_parse/` (archived XML parser)
 4. ✅ `src/packageADM/old_schema/` (old schema files)
 5. ✅ `src/packageADM/createRenderInfo.py` (deprecated wrapper)
@@ -174,6 +175,7 @@ This audit identified files and directories that can be safely removed to clean 
 7. ✅ `src/adm_extract/build/` (build artifacts)
 
 **Verification Results:**
+
 - ✅ All 79 LUSID tests pass
 - ✅ Core imports work: `xml_etree_parser`, `packageForRender`
 - ✅ Pipeline script runs without errors
