@@ -1,0 +1,69 @@
+# Real-Time Spatial Audio Engine – Agent Overview
+
+## Architecture Overview
+
+This real-time spatial audio engine is designed as a collection of specialized **agents**, each handling a distinct aspect of audio processing. Splitting functionality into separate agents enables parallel development and ensures that hard real-time constraints are respected. The engine’s goal is to render spatial audio with minimal latency and no glitches, even under heavy load, by carefully coordinating these components.
+
+Key design goals include:
+
+- **Hard Real-Time Performance:** The audio processing must complete within each audio callback frame (e.g. on a 512-sample buffer at 48 kHz, ~10.7ms per callback) to avoid underruns or glitches. Each agent is designed to do its work within strict time budgets:contentReference[oaicite:0]{index=0}.
+- **Modularity:** Each agent has a clear responsibility and interface, making the system easier to maintain and allowing multiple team members to work in parallel.
+- **Thread Safety:** Agents communicate via thread-safe or lock-free structures to avoid blocking the high-priority audio thread. No dynamic memory allocation or unbounded waits occur in the audio callback.
+- **Scalability:** The architecture should handle multiple audio sources and outputs, scaling with available CPU cores by distributing work across threads where possible.
+
+## Agents and Responsibilities
+
+Below is a summary of each agent in the system and its primary responsibilities:
+
+- **Streaming Agent:** Handles input audio streams (file, network, or live sources). It reads, decodes, and buffers audio data for each source, providing timely audio buffers to the engine.
+- **Pose and Control Agent:** Manages dynamic source and listener states (positions, orientations, and control commands). It processes external controls (e.g., from GUI or network) and updates the shared scene data (source positions, activation, etc.).
+- **Spatializer (DBAP) Agent:** Core audio processing module that spatializes audio using Distance-Based Amplitude Panning (DBAP). It computes gain coefficients for each source-to-speaker path and mixes source audio into the appropriate output channels based on spatial positions.
+- **LFE Router Agent:** Extracts and routes low-frequency content to the Low-Frequency Effects (LFE) channel. It ensures subwoofer output is properly generated (e.g., by low-pass filtering content or routing dedicated LFE sources) without affecting main channel clarity.
+- **Output Remap Agent:** Maps and adapts the engine’s output channel layout to the actual audio output hardware or desired format. This includes reordering or downmixing channels to match the device configuration (e.g., mapping internal channels to sound card output channels).
+- **Compensation and Gain Agent:** Manages gain staging and loudness compensation. It applies distance attenuation curves for sources, overall volume control, and any calibration needed to ensure consistent playback levels (including compensating for multiple speaker contributions or environment tuning).
+- **Threading and Safety Agent:** Oversees the multi-threading model and ensures real-time safety. It defines how threads (audio callback thread, streaming thread, control thread, GUI thread, etc.) interact and shares data, using lock-free queues or double-buffering to maintain synchronization without blocking.
+- **Backend Adapter Agent:** Abstracts the audio hardware or API (e.g., CoreAudio, ASIO, ALSA, PortAudio). It provides a unified interface for the engine to output audio, handling device initialization, buffer callbacks or threads, and bridging between the engine’s audio buffers and the OS/hardware.
+- **GUI Agent:** Handles the graphical user interface and user interaction. It displays system state (levels, positions, statuses) and allows the user to adjust parameters (e.g., moving sound sources, changing volumes, selecting output device) in a way that’s safe for the real-time engine.
+
+Each agent has its own detailed document (located in `internalDocsMD/realtime_planning/agentDocs/`) describing its role, constraints, and interfaces in depth. Developers responsible for each component should refer to those documents for implementation guidance.
+
+## Data Flow and Interactions
+
+The spatial audio engine’s processing pipeline flows through these agents as follows:
+
+1. **Input Stage (Streaming):** Audio sources are ingested by the **Streaming Agent** (from files or streams). Decoded audio frames for each source are buffered in memory.
+2. **Control Updates:** Concurrently, the **Pose and Control Agent** receives updates (e.g., new source positions, user commands) and updates a shared scene state. This state includes each source’s position and orientation, as well as global controls like mute or gain changes.
+3. **Audio Callback Processing:** On each audio callback (or frame tick):
+   - The **Spatializer (DBAP) Agent** reads the latest audio frame from each source (provided by the Streaming agent via a lock-free buffer) and the latest positional data (from Pose and Control agent’s shared state). It calculates the gain for each source on each speaker using the DBAP algorithm and mixes the sources into the spatial audio output buffer (one channel per speaker output).
+   - The **Compensation and Gain Agent** applies any additional per-source gain adjustments (e.g., distance attenuation beyond the geometric panning of DBAP, or user-defined gain trims) either just before mixing or during the spatialization step. It ensures the combined output stays within desired levels and prevents clipping.
+   - As part of the mixing process, the **LFE Router Agent** extracts low-frequency content. For example, it might low-pass filter the summed signal or individual source channels and send those frequencies to a dedicated LFE output channel. If a source is flagged as LFE-only, this agent routes that source’s content directly to the subwoofer channel.
+   - After sources are mixed into a set of output channels (including the LFE channel if present), the **Output Remap Agent** takes this intermediate multichannel output and reorders or downmixes it according to the actual output configuration. For instance, if the engine’s internal spatial layout is different from the sound card’s channel order, it swaps channels as needed. If the output device has fewer channels than produced (e.g., rendering a multichannel scene on stereo output), it downmixes appropriately (with pre-defined gains to preserve balance).
+4. **Output Stage:** The **Backend Adapter Agent** interfaces with the audio hardware or API. It either provides the engine’s output buffer directly to the hardware driver or calls the system’s audio callback with the mixed/remapped audio. This agent handles specifics like buffer format (interleaved vs planar audio), sample rate conversion (if needed), and ensuring the audio thread meets the API’s timing requirements.
+5. **User Interface Loop:** In parallel with the audio processing, the **GUI Agent** runs on the main/UI thread. It fetches state (e.g., current source positions, levels, streaming status) in a thread-safe manner (often via copies or atomics provided by other agents) and presents it to the user. When the user interacts (for example, moving a sound source in the UI or changing master volume), the GUI Agent passes those commands to the relevant agents (Pose and Control for position changes, or Compensation and Gain for volume adjustments, etc.) without directly interfering with the audio thread.
+
+This data flow ensures that heavy I/O (disk or network reads, GUI operations) and control logic are offloaded to separate threads, while the time-critical audio mixing runs on the dedicated real-time thread. Communication between threads is handled by shared data structures that are updated in a controlled way.
+
+## Real-Time Considerations
+
+Real-time audio processing imposes strict constraints that all agents must respect for the system to function without audio dropouts:
+
+- **No Blocking Calls in Audio Thread:** The audio callback (Spatializer and subsequent processing) must never wait on locks, file I/O, network, or any operation that could block. Agents like Streaming or GUI must use double-buffering or lock-free queues to deliver data to the audio thread, so the audio processing can run without pausing:contentReference[oaicite:1]{index=1}.
+- **No Dynamic Memory Allocation in Callback:** All memory required for audio processing should be pre-allocated. For example, audio buffers for mixing and any filter coefficients should be initialized ahead of time. This avoids unpredictable delays from memory allocation or garbage collection during the audio loop.
+- **Time-Bound Processing:** Each audio callback must complete within the allotted frame time (e.g., a few milliseconds). Algorithms used (such as the DBAP calculations, filtering for LFE, etc.) should be optimized (using efficient math and avoiding overly complex operations per sample). Worst-case execution time must be considered, especially when the number of sources or speakers scales up.
+- **Thread Priorities:** The audio processing thread (or callback) should run at a high priority or real-time scheduling class as allowed by the OS. Background threads (streaming, control, GUI) run at lower priorities to ensure the audio thread isn’t starved of CPU time. The Threading and Safety agent will outline how to set this up and avoid priority inversions.
+- **Synchronization Strategy:** Shared data (like source positions, audio buffers) is synchronized in a lock-free manner. For example, the Pose and Control agent might maintain two copies of the positions and atomically swap pointers to publish new data to the audio thread, or use atomics for small updates. The goal is to eliminate heavy locks in the audio path while still keeping data consistent.
+- **Buffering and Latency:** The Streaming agent should keep a small buffer of audio data ready in advance (e.g., a few blocks) so that momentary disk or network delays don’t cause underruns. However, excessive buffering adds latency, so a balance is required. Similarly, any control or GUI commands that need to take effect (e.g., mute or move source) should be applied at frame boundaries to maintain sync.
+
+All agents must cooperate under these constraints. If any agent fails to meet real-time requirements (for instance, if decoding audio takes too long, or a lock is held too long), the whole system can suffer an audible glitch. During development, agents should test under stress conditions to ensure timing stays within limits. Logging in the audio thread should be minimal or absent (since I/O can block); use lightweight telemetry (e.g., atomic counters or ring buffers for logs) if needed to diagnose issues without hurting performance.
+
+## Development and Documentation Notes
+
+This master document and the individual agent documents are living plans for the implementation. As development progresses:
+
+- **Maintain Consistency:** Developers should keep the design aligned across documents. If an interface between agents changes, update both this overview and the respective agent docs to reflect it.
+- **Progress Updates:** Each agent lead should update `internalDocsMD/agents.md` (the central index of agents) with status and any noteworthy changes. For example, mark when an agent is implemented or note decisions that affect other agents.
+- **Cross-Referencing:** Ensure that references to code (e.g., `SpatialRenderer.cpp`, `mainplayer.cpp`) remain accurate. If code structure changes (like files are renamed or new helper classes are created), update the documentation accordingly.
+- **Rendering Pipeline Documentation:** If the processing pipeline is modified (for instance, adding a new processing stage or altering the order of operations), update the global `RENDERING.md` document. This ensures our real-time audio rendering approach is clearly recorded for future maintainers.
+- **Parallel Development Coordination:** Given that agents are being implemented in parallel, schedule regular sync-ups to discuss integration points. Use this document as a guide to verify that all assumptions (data formats, call sequences, thread responsibilities) match across agents.
+
+By following this plan and keeping documentation up-to-date, the team can build a robust real-time spatial audio engine. This overview will serve as a roadmap, and each agent’s detailed document will provide the specific guidance needed for individual implementation and eventual integration into a cohesive system.
