@@ -1,8 +1,107 @@
 # Real-Time Spatial Audio Engine – Agent Overview
 
+## Implementation Decisions (Updated 2026-02-24)
+
+> These decisions were made during initial planning and override any conflicting
+> assumptions in the agent sub-documents. Sub-documents remain useful for
+> detailed design guidance but should be read in light of the notes below.
+
+### Development Model – Sequential, Not Concurrent
+
+The agent architecture segments responsibilities but **agents are implemented
+one at a time, sequentially**, not in parallel. Each agent is:
+
+1. Implemented based on the logical architecture order.
+2. Tested in isolation and in integration with previously completed agents.
+3. Documented (this file and the agent's own `.md` are updated).
+4. The updated docs are handed to a **new context window** for the next agent task.
+
+This ensures each step is stable before the next begins.
+
+### Audio Backend – AlloLib
+
+Continue using **AlloLib's AudioIO** (already a dependency via
+`thirdparty/allolib`). No PortAudio or JACK for v1.
+
+### Build System & File Location
+
+- The real-time engine lives in **`spatial_engine/realtimeEngine/`**.
+- It gets its own `CMakeLists.txt` (mirroring `spatialRender/CMakeLists.txt`).
+- Links against the same AlloLib in `thirdparty/allolib`.
+
+### Code Reuse Strategy – Header-Based Core, Reference Old CPP
+
+- The real-time engine's core logic goes into **header files** (`.hpp`) inside
+  `spatial_engine/realtimeEngine/`.
+- Code may be **copied and adapted** from the offline `SpatialRenderer.cpp`
+  (DBAP coordinate transforms, elevation sanitization, direction interpolation,
+  LFE routing, gain logic, etc.).
+- The old offline `.cpp` file stays untouched — the headers reference it in
+  comments for provenance but do not `#include` it.
+- Goal: the offline renderer continues to compile and work exactly as before.
+
+### GUI – Integrate into Existing Qt GUI
+
+- The real-time engine will be exposed as a **new mode / app** inside the
+  existing PySide6 Qt GUI (`gui/`).
+- This means adding a new panel or tab (alongside the current offline render
+  panel) that launches and controls the real-time engine process.
+- **Not** using ImGui. The AlloLib prototype's ImGui code
+  (`mainplayer.hpp`) is reference only.
+
+### Python Entry Point – `runRealtime.py`
+
+- A new file **`runRealtime.py`** at the project root mimics the offline
+  `runPipeline.py` but calls the real-time engine executable instead of the
+  offline renderer.
+- Keeps everything **segmented** — the offline pipeline is never touched, and
+  `runRealtime.py` can be debugged independently.
+- The Qt GUI will call `runRealtime.py` via `QProcess` (same pattern as
+  `pipeline_runner.py` calls `runPipeline.py`).
+
+### Target Milestone – Replicate Pipeline in Real-Time
+
+The first working version must:
+
+1. Accept the same inputs as the offline pipeline (LUSID scene JSON + mono
+   stems + speaker layout JSON).
+2. Parse the LUSID scene (reuse existing `LUSID/` Python package — this part
+   is straightforward and safe).
+3. Stream the mono stems from disk (double-buffered, real-time safe).
+4. Spatialize with DBAP in the AlloLib audio callback (reusing proven gain
+   math from `SpatialRenderer.cpp`).
+5. Route LFE to subwoofer channels (same logic as offline).
+6. Output to hardware speakers via AlloLib AudioIO.
+7. Be launchable from `runRealtime.py` and from the Qt GUI.
+
+This effectively **replicates the offline pipeline but plays back in
+real-time** instead of writing a WAV file.
+
+### Agent Implementation Order
+
+Based on the architecture's data-flow dependencies, the planned order is:
+
+| Phase | Agent(s)                  | Why this order                                      | Status      |
+| ----- | ------------------------- | --------------------------------------------------- | ----------- |
+| 1     | **Backend Adapter**       | Need audio output before anything else is audible   | Not started |
+| 2     | **Streaming**             | Need audio data to feed the mixer                   | Not started |
+| 3     | **Pose and Control**      | Need positions before spatialization                | Not started |
+| 4     | **Spatializer (DBAP)**    | Core mixing — depends on 1-3                        | Not started |
+| 5     | **LFE Router**            | Runs in audio callback after spatializer            | Not started |
+| 6     | **Compensation and Gain** | Post-mix gain staging                               | Not started |
+| 7     | **Output Remap**          | Final channel shuffle before hardware               | Not started |
+| 8     | **Threading and Safety**  | Harden all inter-thread communication               | Not started |
+| 9     | **GUI Agent**             | Qt integration, last because engine must work first | Not started |
+
+> **Note:** Phases 1-4 together form the minimum audible prototype (sound
+> comes out of speakers). Phases 5-7 add correctness. Phase 8 hardens
+> reliability. Phase 9 adds the user interface.
+
+---
+
 ## Architecture Overview
 
-This real-time spatial audio engine is designed as a collection of specialized **agents**, each handling a distinct aspect of audio processing. Splitting functionality into separate agents enables parallel development and ensures that hard real-time constraints are respected. The engine’s goal is to render spatial audio with minimal latency and no glitches, even under heavy load, by carefully coordinating these components.
+This real-time spatial audio engine is designed as a collection of specialized **agents**, each handling a distinct aspect of audio processing. Splitting functionality into separate agents enables **sequential, testable development** where each piece is verified before the next begins. The engine's goal is to render spatial audio with minimal latency and no glitches, even under heavy load, by carefully coordinating these components.
 
 Key design goals include:
 
