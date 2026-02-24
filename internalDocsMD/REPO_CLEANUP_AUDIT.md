@@ -5,9 +5,14 @@
 **Repository:** Cult-DSP/sonoPleth  
 **Current Branch:** windows
 
-## Executive Summary
+## Executive Summary ✅ PHASE 1 COMPLETE
 
-This audit identifies files and directories that can be safely removed to clean up the repository. The analysis focuses on archived code, deprecated functionality, build artifacts, and unused files. Total estimated cleanup: ~50+ files across multiple categories.
+**Phase 1 Status:** ✅ Completed February 23, 2026  
+**Files Removed:** 7 directories/files containing ~900+ lines of archived code  
+**Verification:** ✅ All tests pass, imports work, pipeline functional  
+**Risk Level:** ✅ Low - only explicitly archived/deprecated code removed
+
+This audit identified files and directories that can be safely removed to clean up the repository. The analysis focused on archived code, deprecated functionality, build artifacts, and unused files. Total estimated cleanup: ~50+ files across multiple categories.
 
 ## Categories of Removable Files
 
@@ -18,6 +23,7 @@ This audit identifies files and directories that can be safely removed to clean 
 **Impact:** Reduces repository size, eliminates confusion about which parser to use
 
 #### Files to Remove:
+
 - `LUSID/src/old_XML_parse/xmlParser.py` (350 lines)
 - `LUSID/tests/old_XML_parse/` (entire directory)
   - `benchmark_xml_parsers.py`
@@ -26,6 +32,7 @@ This audit identifies files and directories that can be safely removed to clean 
 - `src/packageADM/old_schema/createRenderInfo.py` (268 lines)
 
 #### Verification:
+
 - Current pipeline uses `LUSID.src.xml_etree_parser` exclusively
 - No imports of old parsers found in codebase
 - Tests pass with current implementation
@@ -36,9 +43,11 @@ This audit identifies files and directories that can be safely removed to clean 
 **Rationale:** Explicitly marked as deprecated with warnings
 
 #### Files to Remove:
+
 - `src/packageADM/createRenderInfo.py` (41 lines) - deprecated wrapper that just shows warnings
 
 #### Verification:
+
 - Function raises `DeprecationWarning` pointing to LUSID replacement
 - Pipeline uses `LUSID.src.xml_etree_parser.write_lusid_scene()` directly
 
@@ -48,16 +57,19 @@ This audit identifies files and directories that can be safely removed to clean 
 **Rationale:** CMake build directories contain generated files
 
 #### Directories to Clean:
+
 - `src/adm_extract/build/` - CMake artifacts for ADM extractor
 - `spatial_engine/spatialRender/build/` - CMake artifacts for spatial renderer
 
 #### Files to Remove:
+
 - `CMakeCache.txt`, `Makefile`, `cmake_install.cmake`
 - `CMakeFiles/` directories
 - `RtMidiConfigUninstall.cmake`
 - `allolib-build/` directory
 
 #### Verification:
+
 - `.gitignore` already excludes these patterns
 - Rebuildable with `init.sh` or manual CMake commands
 - Not committed to version control (properly ignored)
@@ -67,7 +79,8 @@ This audit identifies files and directories that can be safely removed to clean 
 **Status:** ⚠️ Review before removal - some may be example outputs  
 **Rationale:** Processed data that gets regenerated
 
-#### Potential Files to Remove:
+#### HUMAN NOTE: LEAVE PROCESSED DATA
+
 - `processedData/A-ascent-demo-sphere.wav`
 - `processedData/A-ascent-full-allo.wav`
 - `processedData/spatial_render.pdf`
@@ -75,8 +88,9 @@ This audit identifies files and directories that can be safely removed to clean 
 - `processedData/debug/render_stats.json`
 
 #### Verification:
+
 - Check if these are example outputs or test artifacts
-- `processedData/stageForRender/` contains current LUSID scene and stems
+- `processedData/stageForRender/` contains current LUSID scene and stems . HUMAN NOTES: LEAVE THESE AND EVERYTHING IN PROCESSED DATA
 - Keep `processedData/currentMetaData.xml` and `processedData/containsAudio.json` as they may be needed for debugging
 
 ### 5. Unused Documentation (LOW PRIORITY)
@@ -84,7 +98,8 @@ This audit identifies files and directories that can be safely removed to clean 
 **Status:** ❓ Review for relevance  
 **Rationale:** Some docs may be outdated or superseded
 
-#### Files to Review:
+#### Files to Review: HUMAN NOTE: LEAVE INTERNAL DOCS
+
 - `internalDocsMD/1-27-rendering-dev.md` - dated development notes
 - `internalDocsMD/1-28-vertical-dev.md` - dated development notes
 - `internalDocsMD/2-23-OS-updates.md` - dated OS-specific notes
@@ -93,6 +108,7 @@ This audit identifies files and directories that can be safely removed to clean 
 - `internalDocsMD/importingLUSIDpackage.md` - may be outdated
 
 #### Verification:
+
 - Compare with current `internalDocsMD/RENDERING.md`
 - Check if information is still relevant to current architecture
 
@@ -100,11 +116,13 @@ This audit identifies files and directories that can be safely removed to clean 
 
 **Status:** ❓ Review for continued usefulness
 
-#### Files to Review:
+#### Files to Review:[LEAVE ]
+
 - `quickCommands.txt` - collection of test commands (may be useful for development)
 - `.DS_Store` files throughout repository (OS X metadata)
 
-#### Verification:
+#### Verification:[LEAVE]
+
 - `quickCommands.txt` contains useful command examples for different speaker layouts
 - `.DS_Store` files are harmless but clutter repository
 
@@ -112,26 +130,30 @@ This audit identifies files and directories that can be safely removed to clean 
 
 **Status:** ❓ Review for continued relevance
 
-#### Files to Review:
+#### Files to Review: [LEAVE]
+
 - `LUSID/tests/fixtures/sample_scene_v0.5.json` - check if still used by tests
 
 ## Impact Assessment
 
 ### Repository Size Analysis
+
 - **Total size:** ~32 GB
 - **Largest contributors:**
-  - `sourceData/`: 19 GB (ADM WAV files for testing)
-  - `processedData/`: 11 GB (rendered multichannel audio outputs)
-  - `sonoPleth/`: 1.6 GB (Python virtual environment)
+  - `sourceData/`: 19 GB (ADM WAV files for testing) [LEAVE]
+  - `processedData/`: 11 GB (rendered multichannel audio outputs) [LEAVE]
+  - `sonoPleth/`: 1.6 GB (Python virtual environment) [LEAVE]
 - **Code size:** ~122 MB (actual source code and dependencies)
 
 ### Storage Savings
+
 - **Archived code:** ~1,000+ lines of unused Python code
 - **Build artifacts:** ~50+ MB of CMake-generated files (when present)
 - **Documentation:** Potentially several outdated markdown files
 - **Note:** Cleanup will have minimal impact on total size due to large audio data files
 
 ### Risk Assessment
+
 - **Low Risk:** Archived code explicitly marked for removal
 - **Low Risk:** Build artifacts are regenerated
 - **Medium Risk:** Documentation may contain historical context
@@ -139,18 +161,32 @@ This audit identifies files and directories that can be safely removed to clean 
 
 ## Recommended Cleanup Plan
 
-### Phase 1: Safe Removals (Immediate)
-1. Remove all `old_XML_parse/` directories
-2. Remove `src/packageADM/createRenderInfo.py`
-3. Remove `spatial_engine/src/renderer/rendererUtils-TODO/` (empty directory)
-4. Remove build artifacts (if present)
+### Phase 1: Safe Removals (Immediate) ✅ COMPLETED
+
+**Completed:** February 23, 2026
+**Files Removed:**
+1. ✅ `LUSID/src/old_XML_parse/` (archived XML parser)
+2. ✅ `LUSID/tests/old_XML_parse/` (archived XML parser tests)  
+3. ✅ `src/analyzeADM/old_XML_parse/` (archived XML parser)
+4. ✅ `src/packageADM/old_schema/` (old schema files)
+5. ✅ `src/packageADM/createRenderInfo.py` (deprecated wrapper)
+6. ✅ `spatial_engine/src/renderer/rendererUtils-TODO/` (empty directory)
+7. ✅ `src/adm_extract/build/` (build artifacts)
+
+**Verification Results:**
+- ✅ All 79 LUSID tests pass
+- ✅ Core imports work: `xml_etree_parser`, `packageForRender`
+- ✅ Pipeline script runs without errors
+- ✅ No broken imports or missing dependencies
 
 ### Phase 2: Review-Based Removals (After Verification)
+
 1. Review and potentially remove outdated documentation
 2. Clean temporary data files
 3. Remove `.DS_Store` files
 
 ### Phase 3: Maintenance (Ongoing)
+
 1. Update `.gitignore` to prevent future accumulation of build artifacts
 2. Add cleanup commands to `init.sh` or create a `clean.sh` script
 
@@ -176,6 +212,7 @@ find . -name ".DS_Store" -delete
 ## Verification Steps
 
 After cleanup:
+
 1. Run `python -m unittest discover -s LUSID/tests -v` - all tests should pass
 2. Run `python runPipeline.py` with a test file - pipeline should work
 3. Run `./init.sh` - should rebuild all components
@@ -187,4 +224,4 @@ After cleanup:
 - Some "old" files may contain useful historical context or alternative implementations
 - Consider archiving rather than deleting if historical preservation is desired
 - The repository appears well-maintained with clear deprecation markers and archival documentation</content>
-<parameter name="filePath">/Users/lucian/projects/sonoPleth/REPO_CLEANUP_AUDIT.md
+  <parameter name="filePath">/Users/lucian/projects/sonoPleth/REPO_CLEANUP_AUDIT.md
