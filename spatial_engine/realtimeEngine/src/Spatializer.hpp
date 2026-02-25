@@ -47,6 +47,7 @@
 
 #pragma once
 
+#include <algorithm>
 #include <cmath>
 #include <cstring>
 #include <iostream>
@@ -113,6 +114,18 @@ public:
 
         std::cout << "[Spatializer] Built " << mNumSpeakers
                   << " al::Speaker objects (0-based consecutive channels)." << std::endl;
+
+        // ── Store layout radius for focus compensation reference ──────────
+        // Use the median speaker radius — same calculation as Pose.hpp.
+        if (!layout.speakers.empty()) {
+            std::vector<float> radii;
+            radii.reserve(layout.speakers.size());
+            for (const auto& spk : layout.speakers) {
+                radii.push_back(spk.radius > 0.0f ? spk.radius : 1.0f);
+            }
+            std::sort(radii.begin(), radii.end());
+            mLayoutRadius = radii[radii.size() / 2];
+        }
 
         // ── Collect subwoofer hardware channels ──────────────────────────
         // LFE sources are routed directly to these channels (no DBAP).
@@ -267,6 +280,37 @@ public:
                                 mSourceBuffer.data(), numFrames);
         }
 
+        // ── Phase 6: Apply mix trims to mRenderIO ────────────────────────
+        // Applied AFTER all DBAP + LFE rendering, BEFORE the copy to real
+        // AudioIO output. This matches the design doc specification:
+        //   - loudspeakerMix → all non-subwoofer channels (main speakers)
+        //   - subMix         → subwoofer channels only
+        // Both are atomic relaxed loads (one per block — negligible cost).
+        // Unity-guard (== 1.0f) makes the no-op case zero cost.
+        const float spkMix = mConfig.loudspeakerMix.load(std::memory_order_relaxed);
+        const float lfeMix = mConfig.subMix.load(std::memory_order_relaxed);
+
+        if (spkMix != 1.0f) {
+            for (unsigned int ch = 0; ch < renderChannels; ++ch) {
+                if (!isSubwooferChannel(static_cast<int>(ch))) {
+                    float* buf = mRenderIO.outBuffer(ch);
+                    for (unsigned int f = 0; f < numFrames; ++f) {
+                        buf[f] *= spkMix;
+                    }
+                }
+            }
+        }
+        if (lfeMix != 1.0f) {
+            for (int subCh : mSubwooferChannels) {
+                if (static_cast<unsigned int>(subCh) < renderChannels) {
+                    float* buf = mRenderIO.outBuffer(subCh);
+                    for (unsigned int f = 0; f < numFrames; ++f) {
+                        buf[f] *= lfeMix;
+                    }
+                }
+            }
+        }
+
         // ── Copy render buffer to real output (Channel Remap point) ──────
         // Currently identity mapping: render channel N → device channel N.
         // Only copy channels that exist in both the render buffer and the
@@ -292,7 +336,116 @@ public:
     int numSpeakers() const { return mNumSpeakers; }
     bool isInitialized() const { return mInitialized; }
 
+    // ── Phase 6: Focus auto-compensation ─────────────────────────────────
+    // Called on the control/main thread (NOT audio thread) whenever the
+    // DBAP focus setting changes and focusAutoCompensation is enabled.
+    //
+    // Strategy: render a unit impulse at a canonical front reference position
+    // (0, radius, 0) with the current focus, sum the power across all main
+    // speaker channels, then compute the scalar that would normalize that
+    // power to the reference power at focus=0 (flat uniform weights).
+    //
+    // Reference power at focus=0: each of N speakers gets weight 1/sqrt(N),
+    // so total power = N * (1/N) = 1.0 (DBAP keeps constant power at focus=0).
+    //
+    // At focus > 0, fewer speakers carry the energy, so total power across
+    // mains stays at ~1.0 by DBAP's design, but the perceived loudness can
+    // shift because some speakers are closer / dominant. We use the measured
+    // amplitude sum rather than assuming power-constant behavior to be safe.
+    //
+    // The computed compensation is written into mConfig.loudspeakerMix
+    // (clamped to the ±10 dB range). The sub slider is NOT touched.
+    //
+    // REAL-TIME SAFE: this method runs on the main/control thread only.
+    // It temporarily borrows mRenderIO and mSourceBuffer for the impulse
+    // test; it must NOT be called while the audio callback is active.
+    float computeFocusCompensation() {
+        if (!mInitialized) return 1.0f;
+
+        // Build a reference position: front center at layout radius
+        // In DBAP-ready coordinates: (x=0, y=radius, z=0)
+        al::Vec3d refPos(0.0, static_cast<double>(mLayoutRadius), 0.0);
+
+        // Use a 1-frame buffer for the impulse test
+        const int testFrames = 64;
+        std::vector<float> impulse(testFrames, 1.0f);
+        const int outCh = static_cast<int>(mRenderIO.channelsOut());
+
+        // Allocate a small temporary AudioIOData for the test
+        al::AudioIOData testIO;
+        testIO.framesPerBuffer(testFrames);
+        testIO.framesPerSecond(mConfig.sampleRate);
+        testIO.channelsIn(0);
+        testIO.channelsOut(outCh);
+        testIO.zeroOut();
+
+        // Render the unit impulse at the reference position
+        mDBap->renderBuffer(testIO, refPos, impulse.data(), testFrames);
+
+        // Measure RMS power on main (non-sub) channels
+        float power = 0.0f;
+        int mainCount = 0;
+        for (int ch = 0; ch < outCh; ++ch) {
+            if (isSubwooferChannel(ch)) continue;
+            const float* buf = testIO.outBuffer(ch);
+            for (int f = 0; f < testFrames; ++f) {
+                power += buf[f] * buf[f];
+            }
+            ++mainCount;
+        }
+        if (mainCount > 0) power /= static_cast<float>(mainCount * testFrames);
+
+        // Reference power: DBAP at focus=0 distributes to all speakers equally.
+        // We compute the reference by re-running at focus=0.
+        al::Dbap refPanner(mSpeakers, 0.0f);
+        al::AudioIOData refIO;
+        refIO.framesPerBuffer(testFrames);
+        refIO.framesPerSecond(mConfig.sampleRate);
+        refIO.channelsIn(0);
+        refIO.channelsOut(outCh);
+        refIO.zeroOut();
+        refPanner.renderBuffer(refIO, refPos, impulse.data(), testFrames);
+
+        float refPower = 0.0f;
+        for (int ch = 0; ch < outCh; ++ch) {
+            if (isSubwooferChannel(ch)) continue;
+            const float* buf = refIO.outBuffer(ch);
+            for (int f = 0; f < testFrames; ++f) {
+                refPower += buf[f] * buf[f];
+            }
+        }
+        if (mainCount > 0) refPower /= static_cast<float>(mainCount * testFrames);
+
+        // Compensation = sqrt(refPower / power) — amplitude scalar to
+        // normalize current loudness back to the focus=0 reference.
+        float compensation = 1.0f;
+        if (power > 1e-10f && refPower > 1e-10f) {
+            compensation = std::sqrt(refPower / power);
+        }
+
+        // Clamp to ±10 dB range (linear: ~0.316 to ~3.162)
+        compensation = std::max(0.316f, std::min(3.162f, compensation));
+
+        std::cout << "[Spatializer] Focus auto-compensation: focus="
+                  << mConfig.dbapFocus
+                  << " → loudspeakerMix=" << compensation
+                  << " (" << (20.0f * std::log10(compensation)) << " dB)" << std::endl;
+
+        mConfig.loudspeakerMix.store(compensation, std::memory_order_relaxed);
+        return compensation;
+    }
+
 private:
+
+    // ── Small helpers ─────────────────────────────────────────────────────
+    // Returns true if ch is a subwoofer channel index.
+    // Used by the Phase 6 mix-trim passes to distinguish mains from sub.
+    bool isSubwooferChannel(int ch) const {
+        for (int subCh : mSubwooferChannels) {
+            if (subCh == ch) return true;
+        }
+        return false;
+    }
 
     // ── Constants ────────────────────────────────────────────────────────
     // LFE/subwoofer compensation factor (same as offline renderer).
@@ -308,6 +461,7 @@ private:
     std::unique_ptr<al::Dbap>   mDBap;              // DBAP panner instance
     int                         mNumSpeakers = 0;   // Number of main speakers
     std::vector<int>            mSubwooferChannels; // Subwoofer channel indices (from layout)
+    float                       mLayoutRadius = 1.0f; // Median speaker radius (for focus compensation ref position)
     bool                        mInitialized = false;
 
     // ── Internal render buffer (sized for layout-derived outputChannels) ──

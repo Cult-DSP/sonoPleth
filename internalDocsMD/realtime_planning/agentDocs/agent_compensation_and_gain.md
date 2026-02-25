@@ -1,7 +1,5 @@
 # Compensation and Gain Agent — Phase 6# Compensation and Gain Agent
 
-
-
 > **Status: Not started**## Overview
 
 > **Last updated:** February 25, 2026
@@ -31,8 +29,6 @@ More generally, different speaker layouts, source counts, and focus settings- **
 produce different loudness balances between mains and sub that the user needs
 
 to be able to trim independently.## Relevant Internal Files
-
-
 
 ## Solution: Two Mix Sliders + Auto-Compensation Toggle- **`GainCompensation.cpp` / `.h`:** This module would hold the logic for computing and applying these gain factors. Likely functions to update source gains (when positions change or user adjustment) and to apply those gains to audio buffers in real-time.
 
@@ -70,18 +66,17 @@ to be able to trim independently.## Relevant Internal Files
 
 - **Default:** 0 dB (1.0× — unity, no change)- **Spatializer (DBAP) Agent:** There is a close interaction here. Some of the responsibilities can be shared or moved between Spatializer and Compensation:
 
-- **Application point:** Applied to **subwoofer channels** in `mRenderIO`  - If distance attenuation is done in Compensation, the Spatializer will output a mix assuming all sources are at nominal level, then the Compensation agent would scale each source’s contribution or final output accordingly.
+- **Application point:** Applied to **subwoofer channels** in `mRenderIO` - If distance attenuation is done in Compensation, the Spatializer will output a mix assuming all sources are at nominal level, then the Compensation agent would scale each source’s contribution or final output accordingly.
 
-  **after** LFE routing, **before** the copy to real AudioIO output.  - Alternatively, Spatializer could incorporate the distance attenuation in its gain calcs (multiplying distance factor into the gains it uses for panning). This is efficient and straightforward. In that case, the Compensation agent might just provide the distance factor to Spatializer. For clarity, let’s say the Compensation agent computes per-source distanceGain and the Spatializer multiplies by that each frame. This hybrid approach avoids an extra loop.
+  **after** LFE routing, **before** the copy to real AudioIO output. - Alternatively, Spatializer could incorporate the distance attenuation in its gain calcs (multiplying distance factor into the gains it uses for panning). This is efficient and straightforward. In that case, the Compensation agent might just provide the distance factor to Spatializer. For clarity, let’s say the Compensation agent computes per-source distanceGain and the Spatializer multiplies by that each frame. This hybrid approach avoids an extra loop.
 
-  Main speaker channels are **not** affected.  - For user gain, similarly, Spatializer could directly incorporate it. Or if Spatializer is unaware, Compensation could adjust the mixed output after the fact, but per source after mixing is tricky (once sources are summed, you can’t separate them to apply individual gains). So it’s better to integrate per-source gain in the mixing step.
+  Main speaker channels are **not** affected. - For user gain, similarly, Spatializer could directly incorporate it. Or if Spatializer is unaware, Compensation could adjust the mixed output after the fact, but per source after mixing is tricky (once sources are summed, you can’t separate them to apply individual gains). So it’s better to integrate per-source gain in the mixing step.
 
-- **Interaction with master gain:** LFE routing already applies  - Therefore, expect that this agent works closely with Spatializer code: either by pre-adjusting source audio buffers or by adjusting the gain coefficients used in Spatializer.
+- **Interaction with master gain:** LFE routing already applies - Therefore, expect that this agent works closely with Spatializer code: either by pre-adjusting source audio buffers or by adjusting the gain coefficients used in Spatializer.
 
   `masterGain * 0.95 / numSubs`. `subMix` is an independent trim on top:- **Pose and Control Agent:** Provides the raw data for distance (positions) and any user-driven gain changes. Pose updates positions; based on those, either Pose agent itself could compute new distance attenuation and store it (if formula is simple) or leave to this agent. Possibly, Compensation agent might register as an observer of position changes. Regardless, when a source moves, this agent needs to know the new distance. If using double-buffered scene state with distances, it can compute gain quickly.
 
-  `LFE_routed_output × subMix`  - Also, if the user via GUI changes a source’s volume or mutes it, Pose/Control will update a field. The Compensation agent will then apply that (maybe by updating the internal gain factor for that source).
-
+  `LFE_routed_output × subMix` - Also, if the user via GUI changes a source’s volume or mutes it, Pose/Control will update a field. The Compensation agent will then apply that (maybe by updating the internal gain factor for that source).
   - There might also be global toggles like “turn off distance attenuation” for artistic reasons. That would likely be a flag that Pose/Control can set (through GUI), which Compensation agent will respect (e.g., if off, always use 1.0 for distance factor).
 
 ### Focus Auto-Compensation Toggle- **Streaming Agent:** Not directly related, but if a source has metadata about loudness (like LUFS value or such), Streaming could pass that info and Compensation could auto-adjust gain to normalize loudness between sources. This is a possible extension: auto-leveling different streams. If implemented, Streaming agent might set an initial gain for a source when loading it (to match a reference loudness), and Compensation agent would apply that as a base gain.
@@ -102,29 +97,28 @@ to be able to trim independently.## Relevant Internal Files
 
   when `focus` changes again.- **Gain Values Storage:** An array or vector `sourceGains[numSources]` that stores the current gain multiplier for each source. This might be broken down into components:
 
-- **Sub slider:** Auto-compensation does **not** touch `subMix`.  - `userGain` (from UI settings),
+- **Sub slider:** Auto-compensation does **not** touch `subMix`. - `userGain` (from UI settings),
 
-- **Formula:** Compute DBAP's total gain sum for a reference source position  - `distanceGain` (from attenuation calc),
+- **Formula:** Compute DBAP's total gain sum for a reference source position - `distanceGain` (from attenuation calc),
 
-  (front: `0, layoutRadius, 0`) at the current `focus` → `gainSum`. Repeat  - and maybe other factors (like `loudnessGain` if normalizing).
+  (front: `0, layoutRadius, 0`) at the current `focus` → `gainSum`. Repeat - and maybe other factors (like `loudnessGain` if normalizing).
 
-  at `focus = 0` (uniform distribution) → `refGainSum`. Set:    We could combine these into one final multiplier per source for efficiency, but conceptually keep track separately for clarity.
+  at `focus = 0` (uniform distribution) → `refGainSum`. Set: We could combine these into one final multiplier per source for efficiency, but conceptually keep track separately for clarity.
 
   `loudspeakerMix = refGainSum / gainSum`- **Master Gain:** A single float value for global volume. Possibly also a boolean for mute. This would be applied to all audio before output (e.g., multiply all channels by master gain in the final stage).
 
   This is computed once on the control/main thread when `focus` changes —- **Distance Attenuation Model:** A function or table for converting distance to gain. Could be a simple function: `gain = 1 / (1 + rolloff * (d - dRef))` or a classic inverse-square: `min(1, (dRef / max(d, dRef))^2)` for example. Possibly parameters like a minimum distance (inside which no further gain increase) and a maximum distance (beyond which it's very low or silent). The agent might store such parameters (from config: e.g., rolloff factor, min distance).
 
   not per audio block.- **Interfaces:**
-
   - `updateSourceDistance(id, distance)`: Called (perhaps by Pose/Control) when a source’s distance changes, to recalc that source’s distanceGain. Or the agent might itself compute the distance if given positions.
 
-## Signal Chain  - `setSourceUserGain(id, gain)`: Adjusts the user-controlled gain for a source.
+## Signal Chain - `setSourceUserGain(id, gain)`: Adjusts the user-controlled gain for a source.
 
-  - `setMasterGain(value)`, `setMute(on/off)`.
+- `setMasterGain(value)`, `setMute(on/off)`.
 
-```  - Internally, a method like `applyGainsToBuffer(sourceId, buffer)` might be used if this agent directly modifies source audio before mixing. But since mixing is happening in Spatializer, likely Spatializer will fetch the source’s gain from this agent’s data. Could be done by giving Spatializer a pointer or reference to the gains array (read-only in audio thread).
+``` - Internally, a method like`applyGainsToBuffer(sourceId, buffer)` might be used if this agent directly modifies source audio before mixing. But since mixing is happening in Spatializer, likely Spatializer will fetch the source’s gain from this agent’s data. Could be done by giving Spatializer a pointer or reference to the gains array (read-only in audio thread).
 
-Source audio  - Alternatively, `Compensation::applyMasterGainToOutput(float* interleavedBuffer, int numSamples, int numChannels)` could be used at final stage to scale everything by master volume (and maybe per-channel trims).
+Source audio - Alternatively, `Compensation::applyMasterGainToOutput(float* interleavedBuffer, int numSamples, int numChannels)` could be used at final stage to scale everything by master volume (and maybe per-channel trims).
 
     │- **Ramping Mechanism:** A small struct or variable per source for ramping, e.g., `float currentGain`, `float targetGain`, and some counter or increment per sample. The agent could compute an increment when a change is requested (like targetGain = new combined gain, then increment = (targetGain - currentGain) / rampSamples, and each audio sample or frame applies that). Another simpler approach is ramp per frame for minor changes (if frame size is small, stepping each frame is fine). But if large changes, better to ramp within frame to avoid a sudden jump at frame boundary.
 
@@ -158,7 +152,7 @@ Source audio  - Alternatively, `Compensation::applyMasterGainToOutput(float* int
 
                                                [copy to real AudioIO output]- **Performance Considerations:** Even though gain is cheap, keep an eye out if doing per-sample ramps or lots of per-source operations. It’s likely fine, but note the complexity: e.g., “We multiply each sample by up to two factors (distance and user gain combined), which is negligible overhead.” If implementing a limiter, note its cost if known.
 
-```- **Update RENDERING.md:** That doc should reflect how loudness is handled. Possibly add a section “Distance attenuation: yes/no, formula; Master volume: yes; etc.” Make sure it’s consistent with what we do.
+````- **Update RENDERING.md:** That doc should reflect how loudness is handled. Possibly add a section “Distance attenuation: yes/no, formula; Master volume: yes; etc.” Make sure it’s consistent with what we do.
 
 - **Future Enhancements:** If not implementing things like loudness EQ or advanced calibration now, note them as future work. E.g., “System could incorporate Fletcher-Munson loudness compensation at low volumes – not implemented in v1.” Or “No dynamic compression is currently used; careful content mixing is assumed to avoid clipping.” This sets expectations for anyone evaluating the engine’s capabilities later.
 
@@ -175,7 +169,7 @@ std::atomic<float> loudspeakerMix{1.0f};     // Main speaker trim (default 0 dB)
 std::atomic<float> subMix{1.0f};             // Subwoofer trim   (default 0 dB)
 // Focus auto-compensation: when true, dbapFocus changes auto-update loudspeakerMix.
 std::atomic<bool>  focusAutoCompensation{false};
-```
+````
 
 ### Changes to `Spatializer.hpp`
 
@@ -229,11 +223,11 @@ dB → linear at parse time: `linear = powf(10.0f, dB / 20.0f)`
 
 ### GUI controls (Phase 9)
 
-| Control | Type | Range | Default |
-|---|---|---|---|
-| Loudspeaker Mix | Horizontal slider + dB readout | −10 to +10 dB | 0 dB |
-| Sub Mix | Horizontal slider + dB readout | −10 to +10 dB | 0 dB |
-| Focus Auto-Compensation | Toggle switch | on / off | off |
+| Control                 | Type                           | Range         | Default |
+| ----------------------- | ------------------------------ | ------------- | ------- |
+| Loudspeaker Mix         | Horizontal slider + dB readout | −10 to +10 dB | 0 dB    |
+| Sub Mix                 | Horizontal slider + dB readout | −10 to +10 dB | 0 dB    |
+| Focus Auto-Compensation | Toggle switch                  | on / off      | off     |
 
 All controls write to `RealtimeConfig` atomics — same thread-safety pattern
 as `masterGain`. When auto-compensation is ON and focus changes, the
@@ -242,13 +236,13 @@ setting, but remains interactive.
 
 ## Real-Time Safety
 
-| Concern | Resolution |
-|---|---|
-| Atomic reads in callback | One `relaxed` load per block per slider — negligible |
-| Per-channel multiply | O(numChannels × bufferSize) — trivially cheap |
-| Unity guard | `!= 1.0f` check skips loop entirely at defaults |
+| Concern                      | Resolution                                                |
+| ---------------------------- | --------------------------------------------------------- |
+| Atomic reads in callback     | One `relaxed` load per block per slider — negligible      |
+| Per-channel multiply         | O(numChannels × bufferSize) — trivially cheap             |
+| Unity guard                  | `!= 1.0f` check skips loop entirely at defaults           |
 | `computeFocusCompensation()` | Runs on control/main thread only, writes one atomic float |
-| No locks, no allocation | All buffers pre-allocated; sliders are atomics |
+| No locks, no allocation      | All buffers pre-allocated; sliders are atomics            |
 
 ## Testing Plan
 
@@ -263,10 +257,10 @@ setting, but remains interactive.
 
 ## Explicit Non-Goals for v1
 
-| Feature | Reason deferred |
-|---|---|
-| Distance attenuation | Not in offline renderer; not needed for parity |
-| Per-source gain trims | Not in offline renderer |
-| Dynamic compression / limiting | Future work |
-| Per-channel speaker calibration | Future work; layout-dependent |
+| Feature                                 | Reason deferred                                   |
+| --------------------------------------- | ------------------------------------------------- |
+| Distance attenuation                    | Not in offline renderer; not needed for parity    |
+| Per-source gain trims                   | Not in offline renderer                           |
+| Dynamic compression / limiting          | Future work                                       |
+| Per-channel speaker calibration         | Future work; layout-dependent                     |
 | Gain ramping / zipper-noise suppression | Sliders change infrequently; add later if audible |

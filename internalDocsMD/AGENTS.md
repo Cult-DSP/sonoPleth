@@ -851,18 +851,18 @@ The real-time engine (`spatial_engine/realtimeEngine/`) performs live spatial au
 
 The engine follows a sequential agent architecture where each agent handles one stage of the audio processing chain. All agents share `RealtimeConfig` and `EngineState` structs defined in `RealtimeTypes.hpp`.
 
-| Phase | Agent                         | Status      | File                     |
-| ----- | ----------------------------- | ----------- | ------------------------ |
-| 1     | **Backend Adapter** (Agent 8) | ✅ Complete | `RealtimeBackend.hpp`    |
-| 2     | **Streaming** (Agent 1)       | ✅ Complete | `Streaming.hpp`          |
-| 3     | **Pose** (Agent 2)            | ✅ Complete | `Pose.hpp`               |
-| 4     | **Spatializer** (Agent 3)     | ✅ Complete | `Spatializer.hpp`        |
-| —     | **ADM Direct Streaming**      | ✅ Complete | `MultichannelReader.hpp` |
+| Phase | Agent                         | Status      | File                       |
+| ----- | ----------------------------- | ----------- | -------------------------- |
+| 1     | **Backend Adapter** (Agent 8) | ✅ Complete | `RealtimeBackend.hpp`      |
+| 2     | **Streaming** (Agent 1)       | ✅ Complete | `Streaming.hpp`            |
+| 3     | **Pose** (Agent 2)            | ✅ Complete | `Pose.hpp`                 |
+| 4     | **Spatializer** (Agent 3)     | ✅ Complete | `Spatializer.hpp`          |
+| —     | **ADM Direct Streaming**      | ✅ Complete | `MultichannelReader.hpp`   |
 | 5     | LFE Router (Agent 4)          | ⏭️ Skipped  | — (handled in Spatializer) |
-| 6     | Compensation Agent (Agent 5)  | Not started | —                        |
-| 7     | Output Remap (Agent 6)        | Not started | —                        |
-| 8     | Transport Agent (Agent 7)     | Not started | —                        |
-| 9     | Control Surface (Agent 9)     | Not started | —                        |
+| 6     | Compensation Agent (Agent 5)  | Not started | —                          |
+| 7     | Output Remap (Agent 6)        | Not started | —                          |
+| 8     | Transport Agent (Agent 7)     | Not started | —                          |
+| 9     | Control Surface (Agent 9)     | Not started | —                          |
 
 ### Key Files
 

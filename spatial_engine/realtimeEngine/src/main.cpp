@@ -12,10 +12,12 @@
 //   9. Runs a monitoring loop until interrupted (Ctrl+C or scene end)
 //  10. Shuts down cleanly (streaming agent → backend)
 //
-// PHASE 3: Streams all sources and computes per-source positions at each
-//   audio block. Positions are computed via SLERP interpolation and
-//   layout-aware transforms but are not yet used for spatialization.
-//   Audio output is still the flat mono mix from Phase 2.
+// PHASE 6: Compensation and Gain Agent — adds loudspeaker and sub mix trims
+//   (--speaker_mix, --sub_mix in dB), plus focus auto-compensation
+//   (--auto_compensation flag). Mix trims are applied in Spatializer::renderBlock()
+//   to mRenderIO after DBAP rendering and before the copy-to-output step.
+//   Focus auto-compensation is computed on the main thread and stored in
+//   mConfig.loudspeakerMix (atomic) for the audio thread to read.
 //
 // Usage:
 //   ./sonoPleth_realtime_engine \
@@ -103,8 +105,8 @@ static bool hasArg(int argc, char* argv[], const std::string& flag) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 static void printUsage(const char* progName) {
-    std::cout << "\nsonoPleth Real-Time Spatial Audio Engine (Phase 4 — DBAP spatialization)\n"
-              << "─────────────────────────────────────────────────────────────────────\n"
+    std::cout << "\nsonoPleth Real-Time Spatial Audio Engine (Phase 6 — Compensation and Gain)\n"
+              << "─────────────────────────────────────────────────────────────────────────\n"
               << "Usage: " << progName << " [options]\n\n"
               << "Required:\n"
               << "  --layout <path>     Speaker layout JSON file\n"
@@ -117,6 +119,9 @@ static void printUsage(const char* progName) {
               << "  --samplerate <int>  Audio sample rate in Hz (default: 48000)\n"
               << "  --buffersize <int>  Frames per audio callback (default: 512)\n"
               << "  --gain <float>      Master gain 0.0–1.0 (default: 0.5)\n"
+              << "  --speaker_mix <dB>  Loudspeaker mix trim in dB (±10, default: 0)\n"
+              << "  --sub_mix <dB>      Subwoofer mix trim in dB (±10, default: 0)\n"
+              << "  --auto_compensation Enable focus auto-compensation (default: off)\n"
               << "  --help              Show this message\n"
               << "\nNote: Output channel count is derived automatically from the speaker\n"
               << "layout (speakers + subwoofers). No manual channel count needed.\n"
@@ -136,7 +141,7 @@ int main(int argc, char* argv[]) {
     }
 
     std::cout << "\n╔══════════════════════════════════════════════════════════╗" << std::endl;
-    std::cout << "║   sonoPleth Real-Time Spatial Audio Engine  (Phase 4)   ║" << std::endl;
+    std::cout << "║  sonoPleth Real-Time Spatial Audio Engine  (Phase 6)    ║" << std::endl;
     std::cout << "╚══════════════════════════════════════════════════════════╝\n" << std::endl;
 
     // ── Parse arguments ──────────────────────────────────────────────────
@@ -151,6 +156,12 @@ int main(int argc, char* argv[]) {
     config.sampleRate    = getArgInt(argc, argv, "--samplerate", 48000);
     config.bufferSize    = getArgInt(argc, argv, "--buffersize", 512);
     config.masterGain.store(getArgFloat(argc, argv, "--gain", 0.5f));
+    // Phase 6: Compensation and Gain Agent
+    float speakerMixDb = getArgFloat(argc, argv, "--speaker_mix", 0.0f);
+    config.loudspeakerMix.store(powf(10.0f, speakerMixDb / 20.0f));
+    float subMixDb = getArgFloat(argc, argv, "--sub_mix", 0.0f);
+    config.subMix.store(powf(10.0f, subMixDb / 20.0f));
+    config.focusAutoCompensation.store(hasArg(argc, argv, "--auto_compensation"));
     // NOTE: outputChannels is computed from the speaker layout (see Spatializer::init).
     //       No --channels flag needed.
 
@@ -192,6 +203,9 @@ int main(int argc, char* argv[]) {
     std::cout << "  Sample rate:  " << config.sampleRate << " Hz" << std::endl;
     std::cout << "  Buffer size:  " << config.bufferSize << " frames" << std::endl;
     std::cout << "  Master gain:  " << config.masterGain.load() << std::endl;
+    std::cout << "  Speaker mix:  " << config.loudspeakerMix.load() << " (" << speakerMixDb << " dB)" << std::endl;
+    std::cout << "  Sub mix:      " << config.subMix.load() << " (" << subMixDb << " dB)" << std::endl;
+    std::cout << "  Auto-comp:    " << (config.focusAutoCompensation.load() ? "enabled" : "disabled") << std::endl;
     std::cout << "  (Output channels will be derived from speaker layout)" << std::endl;
     std::cout << std::endl;
 
@@ -271,6 +285,20 @@ int main(int argc, char* argv[]) {
     std::cout << "[Main] Spatializer ready: DBAP with " << spatializer.numSpeakers()
               << " speakers, focus=" << config.dbapFocus << "." << std::endl;
     std::cout << "[Main] Output channels (from layout): " << config.outputChannels << std::endl;
+
+    // ── Phase 6: Compensation and Gain ───────────────────────────────────
+    // If focus auto-compensation is enabled, compute the initial loudspeaker
+    // mix trim for the current focus value now (on the main thread, before
+    // audio starts). This sets mConfig.loudspeakerMix to the right value
+    // so the very first audio block already has the compensation applied.
+    if (config.focusAutoCompensation.load()) {
+        std::cout << "[Main] Focus auto-compensation ON — computing initial loudspeakerMix..." << std::endl;
+        spatializer.computeFocusCompensation();
+    }
+    std::cout << "[Main] Phase 6 gains: loudspeakerMix=" << config.loudspeakerMix.load()
+              << " (" << (20.0f * std::log10(config.loudspeakerMix.load())) << " dB)"
+              << "  subMix=" << config.subMix.load()
+              << " (" << (20.0f * std::log10(config.subMix.load())) << " dB)" << std::endl;
 
     // ── Initialize the Backend Adapter ───────────────────────────────────
 

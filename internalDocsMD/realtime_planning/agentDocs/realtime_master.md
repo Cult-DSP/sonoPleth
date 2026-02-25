@@ -95,18 +95,20 @@ real-time** instead of writing a WAV file.
 
 Based on the architecture's data-flow dependencies, the planned order is:
 
-| Phase | Agent(s)                  | Why this order                                      | Status      |
-| ----- | ------------------------- | --------------------------------------------------- | ----------- |
-| 1     | **Backend Adapter**       | Need audio output before anything else is audible   | ✅ Complete |
-| 2     | **Streaming**             | Need audio data to feed the mixer                   | ✅ Complete |
-| 3     | **Pose and Control**      | Need positions before spatialization                | ✅ Complete |
-| 4     | **Spatializer (DBAP)**    | Core mixing — depends on 1-3                        | ✅ Complete |
-| —     | **ADM Direct Streaming**  | Optimization: skip stem splitting for ADM sources   | ✅ Complete |
-| 5     | **LFE Router**            | ~~Runs in audio callback after spatializer~~        | ⏭️ Skipped  |
-| 6     | **Compensation and Gain** | Loudspeaker/sub mix sliders + focus auto-compensation | Not started |
-| 7     | **Output Remap**          | Final channel shuffle before hardware               | Not started |
-| 8     | **Threading and Safety**  | Harden all inter-thread communication               | Not started |
-| 9     | **GUI Agent**             | Qt integration, last because engine must work first | Not started |
+| Phase | Agent(s)                  | Why this order                                        | Status      |
+| ----- | ------------------------- | ----------------------------------------------------- | ----------- |
+| 1     | **Backend Adapter**       | Need audio output before anything else is audible     | ✅ Complete |
+| 2     | **Streaming**             | Need audio data to feed the mixer                     | ✅ Complete |
+| 3     | **Pose and Control**      | Need positions before spatialization                  | ✅ Complete |
+| 4     | **Spatializer (DBAP)**    | Core mixing — depends on 1-3                          | ✅ Complete |
+| —     | **ADM Direct Streaming**  | Optimization: skip stem splitting for ADM sources     | ✅ Complete |
+| 5     | **LFE Router**            | ~~Runs in audio callback after spatializer~~          | ⏭️ Skipped  |
+| 6     | **Compensation and Gain** | Loudspeaker/sub mix sliders + focus auto-compensation | ✅ Complete |
+| 7     | **Output Remap**          | Final channel shuffle before hardware                 | Not started |
+| 8     | **Threading and Safety**  | Harden all inter-thread communication                 | Not started |
+
+INSERT - potential remove scan audio from pipeline and just read in empty files to save up front compute time. perhaps add a toggle for this?
+| 9 | **GUI Agent** | Qt integration, last because engine must work first | Not started |
 
 > **Note:** Phases 1-4 together form the minimum audible prototype (sound
 > comes out of speakers). Phases 5-7 add correctness. Phase 8 hardens
@@ -316,6 +318,41 @@ priority / experimental.
 - LFE sources routed to subwoofer channels (already implemented in Spatializer)
 - No new files created or modified
 - No behavioral changes
+
+---
+
+### Phase 6 Completion Log (Compensation and Gain)
+
+**Files modified:**
+
+| File                                                | Action       | Purpose                                                                                                                                                                                                                                                                                                                                                                                                     |
+| --------------------------------------------------- | ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `spatial_engine/realtimeEngine/src/Spatializer.hpp` | **Modified** | Added `isSubwooferChannel()` private helper. Added Phase 6 mix-trim pass in `renderBlock()` — applies `loudspeakerMix` to all non-sub channels and `subMix` to sub channels in `mRenderIO` after DBAP+LFE, before copy-to-output. Added `computeFocusCompensation()` public method. Added `mLayoutRadius` member, populated at `init()` time using the median speaker radius. Added `#include <algorithm>`. |
+| `spatial_engine/realtimeEngine/src/main.cpp`        | **Modified** | Updated banner to Phase 6. After Spatializer init, calls `computeFocusCompensation()` if `--auto_compensation` is active. Prints Phase 6 gain summary (loudspeakerMix, subMix in dB). Updated help text and comment block.                                                                                                                                                                                  |
+
+**Design decisions:**
+
+- **Mix trims applied to `mRenderIO`** — after all DBAP and LFE rendering, before the copy-to-output step. This is the precise location specified in the design doc and means `masterGain` (already baked into DBAP gains per source) and the post-DBAP trims are independent, non-interfering scalars.
+- **Unity guard (`!= 1.0f`)** — the trim loops are entirely skipped at the default 0 dB setting. Zero additional cost for the common case.
+- **`isSubwooferChannel()` helper** — a linear scan over `mSubwooferChannels` (typically 1-2 entries). Called O(renderChannels) times per block only when `spkMix != 1.0f`, which is negligible.
+- **`computeFocusCompensation()` runs on the main/control thread only** — it allocates temporary `al::AudioIOData` and `al::Dbap` objects for an offline impulse test, computes the RMS power ratio between focus=current and focus=0, then writes the square-root amplitude scalar to `mConfig.loudspeakerMix`. It must not be called from the audio callback.
+- **Reference position = (0, mLayoutRadius, 0)** — front-center at the layout radius, in DBAP-ready coordinates. Consistent with how Pose transforms directions before handing to DBAP.
+- **Compensation clamped to ±10 dB** (0.316–3.162 linear) — matches the design doc range and guards against division-by-near-zero at extreme focus values.
+- **`RealtimeConfig` already had the three atomics** (`loudspeakerMix`, `subMix`, `focusAutoCompensation`) and `main.cpp` already parsed the CLI flags from a previous forward-looking commit. Phase 6 completes the implementation by wiring them into the audio path.
+
+**Build & test results:**
+
+- `cmake --build . -j4` compiles with zero errors
+- `--speaker_mix 6` → `loudspeakerMix=1.995` (≈+6 dB), sub unchanged
+- `--sub_mix -6` → `subMix=0.501` (≈-6 dB), mains unchanged
+- Both sliders at 0 dB → unity guard fires, no extra computation
+- `--auto_compensation` → `computeFocusCompensation()` called at startup, logs loudspeakerMix in dB
+
+**What the next phase gets:**
+
+- `mConfig.loudspeakerMix` and `mConfig.subMix` are live atomics — any agent (GUI, control thread) can update them at runtime and the audio callback picks them up within one block
+- `spatializer.computeFocusCompensation()` is callable from any non-audio-thread context when focus changes
+- The copy-from-render-to-output section in `renderBlock()` is now cleanly separated from the gain application section, making it the clear insertion point for the Channel Remap agent (Phase 7)
 
 ---
 
