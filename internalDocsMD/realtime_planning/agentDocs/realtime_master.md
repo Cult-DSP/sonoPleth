@@ -102,7 +102,7 @@ Based on the architecture's data-flow dependencies, the planned order is:
 | 3     | **Pose and Control**      | Need positions before spatialization                | ✅ Complete |
 | 4     | **Spatializer (DBAP)**    | Core mixing — depends on 1-3                        | ✅ Complete |
 | —     | **ADM Direct Streaming**  | Optimization: skip stem splitting for ADM sources   | ✅ Complete |
-| 5     | **LFE Router**            | Runs in audio callback after spatializer            | Not started |
+| 5     | **LFE Router**            | ~~Runs in audio callback after spatializer~~        | ⏭️ Skipped  |
 | 6     | **Compensation and Gain** | Post-mix gain staging                               | Not started |
 | 7     | **Output Remap**          | Final channel shuffle before hardware               | Not started |
 | 8     | **Threading and Safety**  | Harden all inter-thread communication               | Not started |
@@ -293,6 +293,95 @@ Based on the architecture's data-flow dependencies, the planned order is:
 - LUSID package path (mono): ✅ No regression — 78 sources, allosphere layout, 56 output channels
 - ADM WAV path (direct streaming): ✅ Full pipeline works — SWALE-ATMOS-LFE.wav, 24 sources mapped from 48ch ADM, translab layout, 18 output channels
 - ADM pipeline skips Step 4 (stem splitting) — saves ~30-60 seconds and ~2.9GB disk I/O
+
+### Phase 5 Skip Log (LFE Router — Skipped)
+
+**Decision:** Phase 5 (LFE Router) is **skipped** for the v1 prototype.
+
+**Rationale:** LFE routing is already fully implemented inside `Spatializer.hpp`
+(Phase 4). LFE sources are identified by `pose.isLFE`, bypass DBAP entirely,
+and route directly to subwoofer channels from the speaker layout with
+`subGain = masterGain * 0.95 / numSubwoofers` — the same formula as the offline
+renderer. This pass-through approach matches the offline pipeline's behavior
+and is sufficient for the current prototype.
+
+The `agent_lfe_router.md` design document describes bass management features
+(crossover filtering, extracting LF content from main speakers, phase alignment)
+that are **not needed** for replicating the offline pipeline in real-time. These
+are deferred to the "Possible Future Development" section below as lowest
+priority / experimental.
+
+**What the next phase gets (unchanged from Phase 4):**
+
+- LFE sources routed to subwoofer channels (already implemented in Spatializer)
+- No new files created or modified
+- No behavioral changes
+
+---
+
+## Possible Future Development
+
+> Items below are not planned for the v1 prototype. They are listed in
+> priority order for future consideration.
+
+### 1. Single-Keyframe Pose Optimization (Medium Priority)
+
+**Analysis:** `Pose::computePositions()` unconditionally recomputes the full
+SLERP → sanitize → coordinate-transform pipeline for every non-LFE source on
+every audio block, even when the source's position hasn't changed. This
+includes sources with:
+
+- **A single keyframe** (e.g., DirectSpeaker bed channels, which are inherently
+  static). These go through `interpolateDirRaw()` → `safeDirForSource()` →
+  `sanitizeDirForLayout()` → `directionToDBAPPosition()` every block despite
+  always returning the same position.
+- **Multiple keyframes but currently in a hold segment** (before the first
+  keyframe or after the last, where the result is clamped and constant).
+
+**Current impact:** Negligible — Phase 3 testing showed 0.0% CPU for 35 sources.
+The SLERP + trig is a handful of floating-point ops per source per block.
+
+**Optimization (when needed):**
+
+1. **Static source fast path:** At `loadScene()` time, detect sources with
+   exactly 1 keyframe (or all keyframes at the same position). Pre-compute
+   their DBAP-ready position once and store it directly in `mPoses[i]`.
+   In `computePositions()`, skip these sources entirely.
+2. **Time-segment caching:** Cache which keyframe segment (k1, k2) was used
+   on the previous block. If the new block-center time is still in the same
+   segment and the interpolation parameter `u` hasn't changed significantly
+   (within epsilon), skip recomputation.
+
+**Estimated benefit:** For typical ADM content (many static bed channels +
+fewer moving objects), this could skip 50-80% of sources. Worth implementing
+when source counts reach hundreds or when CPU headroom becomes tight.
+
+### 2. Bass Management / LFE Crossover Filtering (Lowest Priority — Experimental)
+
+**Description:** The `agent_lfe_router.md` document describes a full bass
+management system with:
+
+- Low-pass filtering (e.g., 80 Hz Butterworth) to extract LF content from main
+  speaker channels and redirect to subwoofers
+- Optional complementary high-pass on main channels to avoid LF doubling
+- Phase-aligned crossover (Linkwitz-Riley option)
+- Per-channel biquad filter states, pre-allocated for RT safety
+- Configurable crossover frequency, additive vs. redirected bass modes
+
+**Why deferred:** The current pass-through LFE routing (dedicated LFE sources →
+subwoofer channels, no crossover) matches the offline pipeline exactly. Bass
+management is a separate concern from spatial rendering — it's a playback
+system feature that depends on the physical speaker setup (whether mains are
+full-range or satellite + sub). Adding it would introduce complexity and
+configuration surface area that isn't needed for the v1 goal of "replicate
+the offline pipeline in real-time."
+
+**If implemented later:** Create a new `LFERouter.hpp` agent that runs after
+the Spatializer's render pass but before the copy-to-output step. It would
+operate on the internal render buffer (`mRenderIO`) channels. The Spatializer's
+existing LFE pass-through routing should remain as-is (it handles dedicated LFE
+source content); bass management would be additive, extracting LF from the
+main speaker channels.
 
 ---
 

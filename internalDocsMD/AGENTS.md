@@ -845,7 +845,7 @@ Core dataclasses for LUSID Scene v0.5.2:
 
 The real-time engine (`spatial_engine/realtimeEngine/`) performs live spatial audio rendering. It reads the same LUSID scene files and source WAVs as the offline renderer but streams them through an audio device in real-time instead of rendering to a WAV file.
 
-**Status:** Phase 4 complete (DBAP spatialization with layout-derived channels). Phases 5–9 pending.
+**Status:** Phase 4 complete (DBAP spatialization with layout-derived channels). Phase 5 (LFE Router) skipped — LFE pass-through already implemented in Spatializer. Phases 6–9 pending.
 
 ### Architecture — Agent Model
 
@@ -858,7 +858,7 @@ The engine follows a sequential agent architecture where each agent handles one 
 | 3     | **Pose** (Agent 2)            | ✅ Complete | `Pose.hpp`               |
 | 4     | **Spatializer** (Agent 3)     | ✅ Complete | `Spatializer.hpp`        |
 | —     | **ADM Direct Streaming**      | ✅ Complete | `MultichannelReader.hpp` |
-| 5     | LFE Router (Agent 4)          | Not started | —                        |
+| 5     | LFE Router (Agent 4)          | ⏭️ Skipped  | — (handled in Spatializer) |
 | 6     | Compensation Agent (Agent 5)  | Not started | —                        |
 | 7     | Output Remap (Agent 6)        | Not started | —                        |
 | 8     | Transport Agent (Agent 7)     | Not started | —                        |
@@ -1452,7 +1452,7 @@ python LUSID/tests/benchmark_xml_parsers.py
 
 - [ ] **Real-time rendering engine — remaining phases**
   - Phases 1-4 complete (Backend, Streaming, Pose, Spatializer) + ADM Direct Streaming optimization
-  - Phase 5: LFE Router — dedicated agent for crossover filtering + subwoofer routing (currently inline in Spatializer)
+  - Phase 5: LFE Router — ⏭️ Skipped (LFE pass-through already implemented in Spatializer.hpp)
   - Phase 6: Compensation Agent — per-channel gain/delay trim
   - Phase 7: Output Remap — logical-to-physical channel mapping (using layout `deviceChannel` fields)
   - Phase 8: Transport Agent — seek, loop, scene reload

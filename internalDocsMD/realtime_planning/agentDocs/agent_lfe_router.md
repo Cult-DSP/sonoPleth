@@ -1,5 +1,18 @@
 # LFE Router Agent
 
+> **Status: ⏭️ SKIPPED (Feb 25, 2026)**
+>
+> Phase 5 was skipped for the v1 prototype. LFE pass-through routing is already
+> fully implemented in `Spatializer.hpp` (Phase 4): LFE sources are identified
+> by `pose.isLFE`, bypass DBAP, and route directly to subwoofer channels with
+> `subGain = masterGain * 0.95 / numSubwoofers`. This matches the offline
+> renderer's behavior exactly.
+>
+> The bass management features described below (crossover filtering, LF
+> extraction from main channels, phase alignment) are deferred as **lowest
+> priority / experimental** future work. See `realtime_master.md` §"Possible
+> Future Development" for the full rationale.
+
 ## Overview
 
 The **LFE Router Agent** is responsible for managing low-frequency effects (LFE) channel content within the spatial audio engine. The LFE channel (often referred to as the “.1” in a 5.1 or 7.1 system) is a dedicated channel for bass frequencies, typically played through a subwoofer. This agent ensures that deep bass content is properly directed to the subwoofer channel without overwhelming or distorting the main speakers, and that any content meant exclusively for the LFE is handled appropriately.
