@@ -851,33 +851,36 @@ The real-time engine (`spatial_engine/realtimeEngine/`) performs live spatial au
 
 The engine follows a sequential agent architecture where each agent handles one stage of the audio processing chain. All agents share `RealtimeConfig` and `EngineState` structs defined in `RealtimeTypes.hpp`.
 
-| Phase | Agent                         | Status      | File                  |
-| ----- | ----------------------------- | ----------- | --------------------- |
-| 1     | **Backend Adapter** (Agent 8) | ✅ Complete | `RealtimeBackend.hpp` |
-| 2     | **Streaming** (Agent 1)       | ✅ Complete | `Streaming.hpp`       |
-| 3     | **Pose** (Agent 2)            | ✅ Complete | `Pose.hpp`            |
-| 4     | **Spatializer** (Agent 3)     | ✅ Complete | `Spatializer.hpp`     |
-| 5     | LFE Router (Agent 4)          | Not started | —                     |
-| 6     | Compensation Agent (Agent 5)  | Not started | —                     |
-| 7     | Output Remap (Agent 6)        | Not started | —                     |
-| 8     | Transport Agent (Agent 7)     | Not started | —                     |
-| 9     | Control Surface (Agent 9)     | Not started | —                     |
+| Phase | Agent                         | Status      | File                     |
+| ----- | ----------------------------- | ----------- | ------------------------ |
+| 1     | **Backend Adapter** (Agent 8) | ✅ Complete | `RealtimeBackend.hpp`    |
+| 2     | **Streaming** (Agent 1)       | ✅ Complete | `Streaming.hpp`          |
+| 3     | **Pose** (Agent 2)            | ✅ Complete | `Pose.hpp`               |
+| 4     | **Spatializer** (Agent 3)     | ✅ Complete | `Spatializer.hpp`        |
+| —     | **ADM Direct Streaming**      | ✅ Complete | `MultichannelReader.hpp` |
+| 5     | LFE Router (Agent 4)          | Not started | —                        |
+| 6     | Compensation Agent (Agent 5)  | Not started | —                        |
+| 7     | Output Remap (Agent 6)        | Not started | —                        |
+| 8     | Transport Agent (Agent 7)     | Not started | —                        |
+| 9     | Control Surface (Agent 9)     | Not started | —                        |
 
 ### Key Files
 
-- **`RealtimeTypes.hpp`** — Shared data types: `RealtimeConfig` (sample rate, buffer size, layout-derived output channels, paths, atomic gain/playing/shouldExit), `EngineState` (atomic frame counter, playback time, CPU load, source/speaker counts). Output channel count is computed from the speaker layout by `Spatializer::init()` — not user-specified.
+- **`RealtimeTypes.hpp`** — Shared data types: `RealtimeConfig` (sample rate, buffer size, layout-derived output channels, paths including `admFile` for ADM direct streaming, atomic gain/playing/shouldExit), `EngineState` (atomic frame counter, playback time, CPU load, source/speaker counts). Output channel count is computed from the speaker layout by `Spatializer::init()` — not user-specified.
 
 - **`RealtimeBackend.hpp`** — Agent 8. Wraps AlloLib's `AudioIO` for audio I/O. Registers a static callback that dispatches to `processBlock()`. Phase 4: zeroes all output channels, calls Pose to compute positions, calls Spatializer to render DBAP-panned audio into all speaker channels including LFE routing to subwoofers.
 
-- **`Streaming.hpp`** — Agent 1. Double-buffered disk streaming for mono WAV sources. Each source gets two pre-allocated 5-second buffers (240k frames at 48kHz). A background loader thread monitors consumption and preloads the next chunk into the inactive buffer when the active buffer is 50% consumed. The audio callback reads from buffers using atomic state flags — no locks on the audio thread.
+- **`Streaming.hpp`** — Agent 1. Double-buffered disk streaming for audio sources. Supports two input modes: (1) **mono file mode** — each source opens its own mono WAV file (for LUSID packages via `--sources`), and (2) **ADM direct streaming mode** — a shared `MultichannelReader` opens one multichannel ADM WAV file, reads interleaved chunks, and de-interleaves individual channels into per-source buffers (for ADM sources via `--adm`, skipping stem splitting). In both modes, each source gets two pre-allocated 5-second buffers (240k frames at 48kHz). A background loader thread monitors consumption and preloads the next chunk into the inactive buffer when the active buffer is 50% consumed. The audio callback reads from buffers using atomic state flags — no locks on the audio thread. Key methods: `loadScene()` (mono mode), `loadSceneFromADM()` (multichannel mode), `loaderWorkerMono()`, `loaderWorkerMultichannel()`.
+
+- **`MultichannelReader.hpp`** — Shared multichannel WAV reader for ADM direct streaming. Opens one `SNDFILE*` for the entire multichannel ADM WAV, pre-allocates a single interleaved read buffer (`chunkFrames × numChannels` floats, ~44MB for 48ch), and maintains a channel→SourceStream mapping. Called by the Streaming loader thread to read one interleaved chunk and distribute de-interleaved mono data to each mapped source's double buffer. Method implementations (`deinterleaveInto()`, `zeroFillBuffer()`) are at the bottom of `Streaming.hpp` (after `SourceStream` is fully defined) following standard C++ circular-header patterns.
 
 - **`Pose.hpp`** — Agent 2. Source position interpolation and layout-aware transforms. At each audio block, SLERP-interpolates between LUSID keyframes to compute each source's direction, sanitizes elevation for the speaker layout (clamp, rescale-atmos-up, or rescale-full-sphere modes), and applies the DBAP coordinate transform (direction × layout radius → position). Outputs a flat `SourcePose` vector consumed by the spatializer. All math is adapted from `SpatialRenderer.cpp` with provenance comments.
 
 - **`Spatializer.hpp`** — Agent 3. DBAP spatial audio panning. Builds `al::Speakers` from the speaker layout (radians → degrees, consecutive 0-based channels), computes `outputChannels` from the layout (`max(numSpeakers-1, max(subDeviceChannels)) + 1` — same formula as offline renderer), creates `al::Dbap` with configurable focus. At each audio block: spatializes non-LFE sources via `renderBuffer()` into an internal render buffer, routes LFE sources directly to subwoofer channels with `masterGain * 0.95 / numSubwoofers` compensation, then copies the render buffer to the real AudioIO output. The copy step is the future insertion point for Channel Remap (mapping logical render channels to physical device outputs). Nothing is hardcoded to any specific speaker layout. All math adapted from `SpatialRenderer.cpp` with provenance comments.
 
-- **`main.cpp`** — CLI entry point. Parses arguments (`--layout`, `--scene`, `--sources`, `--samplerate`, `--buffersize`, `--gain`), loads LUSID scene via `JSONLoader`, loads speaker layout via `LayoutLoader`, creates Streaming (opens all source WAVs), creates Pose (analyzes layout, stores keyframes), creates Spatializer (builds speakers, computes output channels from layout, creates DBAP), creates RealtimeBackend (opens AudioIO with layout-derived channel count), wires all agents together, starts audio, runs monitoring loop, handles SIGINT for clean shutdown. No `--channels` flag — channel count is always derived from the layout.
+- **`main.cpp`** — CLI entry point. Parses arguments (`--layout`, `--scene`, `--sources` or `--adm`, `--samplerate`, `--buffersize`, `--gain`), loads LUSID scene via `JSONLoader`, loads speaker layout via `LayoutLoader`, creates Streaming (opens source WAVs — either individual mono files via `--sources` or one multichannel ADM via `--adm`), creates Pose (analyzes layout, stores keyframes), creates Spatializer (builds speakers, computes output channels from layout, creates DBAP), creates RealtimeBackend (opens AudioIO with layout-derived channel count), wires all agents together, starts audio, runs monitoring loop, handles SIGINT for clean shutdown. `--sources` and `--adm` are mutually exclusive; no `--channels` flag — channel count is always derived from the layout.
 
-- **`runRealtime.py`** — Python launcher that mirrors `runPipeline.py`. Accepts the same inputs: ADM WAV file or LUSID package directory + speaker layout. For ADM sources, runs the full preprocessing pipeline (extract ADM metadata → parse to LUSID scene → split stems → write scene.lusid.json) then launches the C++ real-time engine. For LUSID packages, validates the package and launches directly. Provides `run_realtime_from_ADM()` and `run_realtime_from_LUSID()` entry points. Uses `checkSourceType()` to detect input type from CLI. No `--channels` parameter — channel count derived from speaker layout by the C++ engine.
+- **`runRealtime.py`** — Python launcher that mirrors `runPipeline.py`. Accepts the same inputs: ADM WAV file or LUSID package directory + speaker layout. For ADM sources, runs preprocessing (extract ADM metadata → parse to LUSID scene → write scene.lusid.json only — **no stem splitting**) then launches the C++ engine with `--adm` pointing to the original multichannel WAV. For LUSID packages, validates the package and launches with `--sources` pointing to the mono files folder. Provides `run_realtime_from_ADM()` and `run_realtime_from_LUSID()` entry points. Uses `checkSourceType()` to detect input type from CLI. No `--channels` parameter — channel count derived from speaker layout by the C++ engine.
 
 ### Build System
 
@@ -891,25 +894,38 @@ The CMake config (`CMakeLists.txt`) compiles `src/main.cpp` plus shared loaders 
 
 **Dependencies:** No new dependencies beyond what AlloLib/Gamma already provide. libsndfile comes through Gamma's CMake (`find_package(LibSndFile)` → exports via PUBLIC link).
 
-### Run Example
+### Run Examples
 
 ```bash
+# Mono file mode (from LUSID package with pre-split stems):
 ./build/sonoPleth_realtime \
     --layout ../speaker_layouts/allosphere_layout.json \
     --scene ../../processedData/stageForRender/scene.lusid.json \
     --sources ../../sourceData/lusid_package \
     --gain 0.1 --buffersize 512
+
+# ADM direct streaming mode (reads from original multichannel WAV):
+./build/sonoPleth_realtime \
+    --layout ../speaker_layouts/translab-sono-layout.json \
+    --scene ../../processedData/stageForRender/scene.lusid.json \
+    --adm ../../sourceData/SWALE-ATMOS-LFE.wav \
+    --gain 0.5 --buffersize 512
 ```
 
 Output channels are derived from the speaker layout automatically (e.g., 56 for the AlloSphere layout: 54 speakers at channels 0-53 + subwoofer at device channel 55).
 
 ### Streaming Agent Design
 
+**Two input modes:**
+
+1. **Mono file mode** (`--sources`): Each source opens its own mono WAV file. The loader thread iterates sources independently, loading the next chunk for each.
+2. **ADM direct streaming mode** (`--adm`): A shared `MultichannelReader` opens one multichannel WAV. The loader thread reads one interleaved chunk (all channels) and de-interleaves into per-source buffers in a single pass. Eliminates the ~30-60 second stem splitting step entirely.
+
 **Double-buffer pattern:** Each source has two float buffers (A and B). Buffer states cycle through `EMPTY → LOADING → READY → PLAYING`. The audio thread reads from the `PLAYING` buffer. When playback crosses 50% of the active buffer, the loader thread fills the inactive buffer with the next chunk from disk.
 
 **Buffer swap is lock-free:** The audio thread atomically switches `activeBuffer` when it detects the other buffer is `READY` and contains the needed data. The mutex in `SourceStream` only protects `sf_seek()`/`sf_read_float()` calls and is only ever held by the loader thread.
 
-**Source naming convention:** Source key (e.g., `"11.1"`) maps to WAV filename `"11.1.wav"`. LFE source key `"LFE"` → `"LFE.wav"`. Same convention as `WavUtils::loadSources()`.
+**Source naming convention:** Source key (e.g., `"11.1"`) maps to WAV filename `"11.1.wav"` in mono mode. In ADM mode, source key `"11.1"` → ADM channel 11 → 0-based index 10. LFE source key `"LFE"` → channel index 3 (hardcoded standard ADM LFE position).
 
 ---
 
@@ -1007,12 +1023,13 @@ sonoPleth/
 │       ├── CMakeLists.txt           # Build config (links AlloLib + Gamma)
 │       ├── build/                   # Build output dir
 │       └── src/
-│           ├── main.cpp             # CLI entry point
-│           ├── RealtimeTypes.hpp    # Shared data types (config, state)
-│           ├── RealtimeBackend.hpp  # Agent 8: AlloLib AudioIO wrapper
-│           ├── Streaming.hpp        # Agent 1: double-buffered WAV streaming
-│           ├── Pose.hpp             # Agent 2: source position interpolation
-│           └── Spatializer.hpp      # Agent 3: DBAP spatial panning
+│           ├── main.cpp                # CLI entry point (--sources or --adm)
+│           ├── RealtimeTypes.hpp       # Shared data types (config, state)
+│           ├── RealtimeBackend.hpp     # Agent 8: AlloLib AudioIO wrapper
+│           ├── Streaming.hpp           # Agent 1: double-buffered WAV streaming
+│           ├── MultichannelReader.hpp  # ADM direct streaming (de-interleave)
+│           ├── Pose.hpp                # Agent 2: source position interpolation
+│           └── Spatializer.hpp         # Agent 3: DBAP spatial panning
 ├── thirdparty/
 │   └── allolib/                     # Git submodule (audio lib)
 ├── processedData/                   # Pipeline outputs

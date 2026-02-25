@@ -35,7 +35,7 @@ from pathlib import Path
 from src.config.configCPP import setupCppTools
 from src.analyzeADM.extractMetadata import extractMetaData
 from src.analyzeADM.checkAudioChannels import channelHasAudio, exportAudioActivity
-from src.packageADM.packageForRender import packageForRender
+from src.packageADM.packageForRender import packageForRender, writeSceneOnly
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -44,8 +44,9 @@ from src.packageADM.packageForRender import packageForRender
 
 def _launch_realtime_engine(
     scene_json,
-    sources_folder,
     speaker_layout,
+    sources_folder=None,
+    adm_file=None,
     samplerate=48000,
     buffersize=512,
     gain=0.5,
@@ -55,17 +56,23 @@ def _launch_realtime_engine(
     Launch the C++ real-time engine as a subprocess.
 
     This is the final step of both the ADM and LUSID pipelines. It takes
-    already-prepared paths (scene JSON, mono sources folder, speaker layout)
+    already-prepared paths (scene JSON, source input, speaker layout)
     and launches the C++ executable.
+
+    Two input modes (mutually exclusive):
+    - sources_folder: Path to folder containing mono source WAV files (LUSID mode)
+    - adm_file: Path to multichannel ADM WAV file (ADM direct streaming mode)
 
     Parameters
     ----------
     scene_json : str or Path
         Path to scene.lusid.json (positions/trajectories).
-    sources_folder : str or Path
-        Path to folder containing mono source WAV files (X.1.wav, LFE.wav).
     speaker_layout : str or Path
         Path to speaker layout JSON.
+    sources_folder : str or Path, optional
+        Path to folder containing mono source WAV files (X.1.wav, LFE.wav).
+    adm_file : str or Path, optional
+        Path to multichannel ADM WAV file for direct streaming (skips stem splitting).
     samplerate : int
         Audio sample rate in Hz (default: 48000).
     buffersize : int
@@ -86,6 +93,16 @@ def _launch_realtime_engine(
     by the C++ engine (Spatializer::init). No channel count parameter needed.
     """
 
+    # Validate mutually exclusive inputs
+    if not sources_folder and not adm_file:
+        print("✗ Error: Either sources_folder or adm_file must be provided.")
+        return False
+    if sources_folder and adm_file:
+        print("✗ Error: sources_folder and adm_file are mutually exclusive.")
+        return False
+
+    use_adm = adm_file is not None
+
     project_root = Path(__file__).parent.resolve()
 
     executable = (
@@ -104,15 +121,11 @@ def _launch_realtime_engine(
 
     # Resolve paths
     scene_path = Path(scene_json).resolve()
-    sources_path = Path(sources_folder).resolve()
     layout_path = Path(speaker_layout).resolve()
 
-    # Validate
+    # Validate common paths
     if not scene_path.exists():
         print(f"✗ Error: Scene file not found: {scene_path}")
-        return False
-    if not sources_path.exists():
-        print(f"✗ Error: Sources folder not found: {sources_path}")
         return False
     if not layout_path.exists():
         print(f"✗ Error: Speaker layout not found: {layout_path}")
@@ -124,23 +137,37 @@ def _launch_realtime_engine(
         print(f"✗ Error: Invalid dbap_focus '{dbap_focus}'. Must be in range [0.2, 5.0].")
         return False
 
-    # Build command (no --channels flag — derived from layout by C++ engine)
+    # Build command based on input mode
     cmd = [
         str(executable),
         "--layout", str(layout_path),
         "--scene", str(scene_path),
-        "--sources", str(sources_path),
         "--samplerate", str(samplerate),
         "--buffersize", str(buffersize),
         "--gain", str(gain),
     ]
+
+    if use_adm:
+        adm_path = Path(adm_file).resolve()
+        if not adm_path.exists():
+            print(f"✗ Error: ADM file not found: {adm_path}")
+            return False
+        cmd.extend(["--adm", str(adm_path)])
+        source_label = f"ADM:  {adm_path} (direct streaming)"
+    else:
+        sources_path = Path(sources_folder).resolve()
+        if not sources_path.exists():
+            print(f"✗ Error: Sources folder not found: {sources_path}")
+            return False
+        cmd.extend(["--sources", str(sources_path)])
+        source_label = f"Sources: {sources_path} (mono files)"
 
     # Print launch info
     print("\n╔══════════════════════════════════════════════════════════╗")
     print("║     sonoPleth Real-Time Engine — Launching               ║")
     print("╚══════════════════════════════════════════════════════════╝\n")
     print(f"  Scene:          {scene_path}")
-    print(f"  Sources:        {sources_path}")
+    print(f"  {source_label}")
     print(f"  Speaker layout: {layout_path}")
     print(f"  Sample rate:    {samplerate} Hz")
     print(f"  Buffer size:    {buffersize} frames")
@@ -283,20 +310,22 @@ def run_realtime_from_ADM(
     lusid_scene = parse_adm_xml_to_lusid_scene(xml_path, contains_audio=contains_audio_data)
     lusid_scene.summary()
 
-    # Step 4: Package for render (split stems + write scene.lusid.json)
+    # Step 4: Write scene.lusid.json ONLY (no stem splitting — ADM direct streaming)
     print("\n" + "=" * 80)
-    print("STEP 4: Packaging audio for render (splitting stems)")
+    print("STEP 4: Writing scene.lusid.json (ADM direct streaming — no stem splitting)")
     print("=" * 80)
-    packageForRender(source_adm_file, lusid_scene, contains_audio_data, processed_data_dir)
+    scene_json_path = writeSceneOnly(lusid_scene, processed_data_dir)
+    print(f"✓ Scene written to: {scene_json_path}")
+    print("  (Skipping stem splitting — engine reads directly from ADM WAV)")
 
-    # Step 5: Launch real-time engine
+    # Step 5: Launch real-time engine in ADM direct streaming mode
     print("\n" + "=" * 80)
-    print("STEP 5: Launching real-time engine")
+    print("STEP 5: Launching real-time engine (ADM direct streaming)")
     print("=" * 80)
     return _launch_realtime_engine(
-        scene_json="processedData/stageForRender/scene.lusid.json",
-        sources_folder="processedData/stageForRender",
+        scene_json=scene_json_path,
         speaker_layout=source_speaker_layout,
+        adm_file=source_adm_file,
         samplerate=samplerate,
         buffersize=buffersize,
         gain=master_gain,
@@ -363,8 +392,8 @@ def run_realtime_from_LUSID(
     # Launch real-time engine directly (no preprocessing needed)
     return _launch_realtime_engine(
         scene_json=str(scene_file),
-        sources_folder=str(package_path),
         speaker_layout=str(layout_path),
+        sources_folder=str(package_path),
         samplerate=samplerate,
         buffersize=buffersize,
         gain=master_gain,

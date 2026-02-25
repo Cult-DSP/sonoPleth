@@ -45,6 +45,7 @@
 
 #include "RealtimeTypes.hpp"
 #include "JSONLoader.hpp"  // SpatialData, Keyframe — shared from spatial_engine/src/
+#include "MultichannelReader.hpp"  // ADM direct streaming — multichannel reader
 
 namespace fs = std::filesystem;
 
@@ -171,6 +172,28 @@ struct SourceStream {
         sampleRate = sfInfo.samplerate;
 
         // Pre-allocate double buffers (no allocation during playback!)
+        bufferA.resize(chunkFrames, 0.0f);
+        bufferB.resize(chunkFrames, 0.0f);
+
+        return true;
+    }
+
+    /// Initialize buffers WITHOUT opening a file handle. Used in multichannel
+    /// (ADM direct) mode where MultichannelReader owns the file and fills
+    /// these buffers via de-interleaving. The SourceStream still provides
+    /// double-buffered playback to the audio thread exactly as in mono mode.
+    bool initBuffersOnly(const std::string& sourceName, uint64_t chunkSize,
+                         int sr, uint64_t frames) {
+        name = sourceName;
+        chunkFrames = chunkSize;
+        isLFE = (sourceName == "LFE");
+        totalFrames = frames;
+        sampleRate = sr;
+
+        // No file handle — MultichannelReader owns the SNDFILE*
+        sndFile = nullptr;
+
+        // Pre-allocate double buffers
         bufferA.resize(chunkFrames, 0.0f);
         bufferB.resize(chunkFrames, 0.0f);
 
@@ -439,6 +462,88 @@ public:
         return !mStreams.empty();
     }
 
+    // ── Load all sources from a multichannel ADM WAV (direct streaming) ──
+    // Instead of individual mono files, reads from one multichannel file
+    // and de-interleaves channels into per-source buffers.
+    //
+    // Channel mapping convention (matches LUSID source key naming):
+    //   "N.1" → ADM channel N → 0-based index (N-1)
+    //   "LFE" → ADM channel 4 → 0-based index 3
+    //
+    // Only maps channels that appear in the scene's source list.
+
+    bool loadSceneFromADM(const SpatialData& scene, const std::string& admFilePath) {
+        std::cout << "[Streaming] Loading " << scene.sources.size()
+                  << " sources from multichannel ADM: " << admFilePath << std::endl;
+
+        mMultichannelMode = true;
+
+        // Create the multichannel reader and open the ADM file
+        mMultichannelReader = std::make_unique<MultichannelReader>();
+        if (!mMultichannelReader->open(admFilePath, mConfig.sampleRate,
+                                        kDefaultChunkFrames)) {
+            std::cerr << "[Streaming] FATAL: Failed to open ADM file." << std::endl;
+            return false;
+        }
+
+        uint64_t admTotalFrames = mMultichannelReader->totalFrames();
+        int      admNumChannels = mMultichannelReader->numChannels();
+
+        // Create buffer-only SourceStreams and map channels
+        for (const auto& [sourceName, keyframes] : scene.sources) {
+            // Parse source name to get 0-based channel index
+            int channelIndex = parseChannelIndex(sourceName, admNumChannels);
+            if (channelIndex < 0) {
+                std::cerr << "[Streaming] WARNING: Cannot map source \""
+                          << sourceName << "\" to ADM channel — skipping."
+                          << std::endl;
+                continue;
+            }
+
+            // Create a buffer-only stream (no individual file handle)
+            auto stream = std::make_unique<SourceStream>();
+            stream->initBuffersOnly(sourceName, kDefaultChunkFrames,
+                                    mConfig.sampleRate, admTotalFrames);
+
+            // Register with the multichannel reader
+            mMultichannelReader->mapChannel(channelIndex, stream.get());
+
+            std::cout << "  ✓ " << sourceName << " → ADM ch " << (channelIndex + 1)
+                      << " (0-based: " << channelIndex << ")"
+                      << (stream->isLFE ? " [LFE]" : "") << std::endl;
+
+            mStreams[sourceName] = std::move(stream);
+        }
+
+        if (mStreams.empty()) {
+            std::cerr << "[Streaming] FATAL: No sources could be mapped." << std::endl;
+            return false;
+        }
+
+        // Read the first chunk from the multichannel file into buffer A
+        // of all mapped streams (synchronous, before playback starts).
+        if (!mMultichannelReader->readFirstChunk()) {
+            std::cerr << "[Streaming] FATAL: Failed to read first chunk from ADM."
+                      << std::endl;
+            return false;
+        }
+
+        // Activate buffer A for playback on all streams
+        for (auto& [name, stream] : mStreams) {
+            stream->activeBuffer.store(0, std::memory_order_release);
+            stream->stateA.store(StreamBufferState::PLAYING, std::memory_order_release);
+        }
+
+        mState.numSources.store(static_cast<int>(mStreams.size()),
+                                std::memory_order_relaxed);
+
+        std::cout << "[Streaming] Loaded " << mStreams.size() << " sources from ADM ("
+                  << mMultichannelReader->numMappedChannels() << " of "
+                  << admNumChannels << " channels mapped)." << std::endl;
+
+        return true;
+    }
+
     // ── Start the background loader thread ───────────────────────────────
     // Must be called AFTER loadScene() and BEFORE starting audio.
 
@@ -538,6 +643,12 @@ public:
         if (mLoaderThread.joinable()) {
             mLoaderThread.join();
         }
+        // Close multichannel reader if active
+        if (mMultichannelReader) {
+            mMultichannelReader->close();
+            mMultichannelReader.reset();
+        }
+        mMultichannelMode = false;
         // Close all file handles
         for (auto& [name, stream] : mStreams) {
             stream->close();
@@ -560,42 +671,15 @@ private:
             // Get current playback position from engine state
             uint64_t currentFrame = mState.frameCounter.load(std::memory_order_relaxed);
 
-            for (auto& [name, stream] : mStreams) {
-                if (!stream->sndFile) continue;
-
-                int active = stream->activeBuffer.load(std::memory_order_acquire);
-                if (active < 0) continue;
-
-                // Determine which buffer is active and which is inactive
-                uint64_t activeStart = (active == 0)
-                    ? stream->chunkStartA.load(std::memory_order_acquire)
-                    : stream->chunkStartB.load(std::memory_order_acquire);
-                uint64_t activeValid = (active == 0)
-                    ? stream->validFramesA.load(std::memory_order_acquire)
-                    : stream->validFramesB.load(std::memory_order_acquire);
-
-                int inactive = 1 - active;
-                auto inactiveState = (inactive == 0)
-                    ? stream->stateA.load(std::memory_order_acquire)
-                    : stream->stateB.load(std::memory_order_acquire);
-
-                // Check if we've consumed enough of the active buffer to
-                // warrant preloading the next chunk into the inactive buffer.
-                // Trigger at kPreloadThreshold (50%) of the active chunk.
-                if (activeValid > 0 && inactiveState == StreamBufferState::EMPTY) {
-                    uint64_t threshold = activeStart +
-                        static_cast<uint64_t>(activeValid * kPreloadThreshold);
-
-                    if (currentFrame >= threshold) {
-                        // Calculate the start of the next chunk
-                        uint64_t nextChunkStart = activeStart + stream->chunkFrames;
-
-                        // Don't load past the end of the file
-                        if (nextChunkStart < stream->totalFrames) {
-                            stream->loadChunkInto(inactive, nextChunkStart);
-                        }
-                    }
-                }
+            if (mMultichannelMode && mMultichannelReader) {
+                // ── Multichannel (ADM direct) mode ───────────────────────
+                // All streams share the same file and chunk boundaries.
+                // We check ANY stream's active buffer to decide when to
+                // trigger a bulk read + distribute for all channels at once.
+                loaderWorkerMultichannel(currentFrame);
+            } else {
+                // ── Mono file mode (original behavior) ───────────────────
+                loaderWorkerMono(currentFrame);
             }
 
             // Sleep to avoid busy-waiting. 2ms is well under the audio buffer
@@ -603,6 +687,120 @@ private:
             // preload triggers in time.
             std::this_thread::sleep_for(std::chrono::milliseconds(2));
         }
+    }
+
+    /// Mono mode loader: each source has its own file, load independently.
+    void loaderWorkerMono(uint64_t currentFrame) {
+        for (auto& [name, stream] : mStreams) {
+            if (!stream->sndFile) continue;
+
+            int active = stream->activeBuffer.load(std::memory_order_acquire);
+            if (active < 0) continue;
+
+            // Determine which buffer is active and which is inactive
+            uint64_t activeStart = (active == 0)
+                ? stream->chunkStartA.load(std::memory_order_acquire)
+                : stream->chunkStartB.load(std::memory_order_acquire);
+            uint64_t activeValid = (active == 0)
+                ? stream->validFramesA.load(std::memory_order_acquire)
+                : stream->validFramesB.load(std::memory_order_acquire);
+
+            int inactive = 1 - active;
+            auto inactiveState = (inactive == 0)
+                ? stream->stateA.load(std::memory_order_acquire)
+                : stream->stateB.load(std::memory_order_acquire);
+
+            // Check if we've consumed enough of the active buffer to
+            // warrant preloading the next chunk into the inactive buffer.
+            // Trigger at kPreloadThreshold (50%) of the active chunk.
+            if (activeValid > 0 && inactiveState == StreamBufferState::EMPTY) {
+                uint64_t threshold = activeStart +
+                    static_cast<uint64_t>(activeValid * kPreloadThreshold);
+
+                if (currentFrame >= threshold) {
+                    // Calculate the start of the next chunk
+                    uint64_t nextChunkStart = activeStart + stream->chunkFrames;
+
+                    // Don't load past the end of the file
+                    if (nextChunkStart < stream->totalFrames) {
+                        stream->loadChunkInto(inactive, nextChunkStart);
+                    }
+                }
+            }
+        }
+    }
+
+    /// Multichannel mode loader: one shared file, bulk read + de-interleave.
+    /// All streams share chunk boundaries — check one representative stream
+    /// to decide when to trigger the next bulk read.
+    void loaderWorkerMultichannel(uint64_t currentFrame) {
+        // Find a representative stream (first one) to check timing
+        if (mStreams.empty()) return;
+        auto& representative = mStreams.begin()->second;
+
+        int active = representative->activeBuffer.load(std::memory_order_acquire);
+        if (active < 0) return;
+
+        uint64_t activeStart = (active == 0)
+            ? representative->chunkStartA.load(std::memory_order_acquire)
+            : representative->chunkStartB.load(std::memory_order_acquire);
+        uint64_t activeValid = (active == 0)
+            ? representative->validFramesA.load(std::memory_order_acquire)
+            : representative->validFramesB.load(std::memory_order_acquire);
+
+        int inactive = 1 - active;
+        auto inactiveState = (inactive == 0)
+            ? representative->stateA.load(std::memory_order_acquire)
+            : representative->stateB.load(std::memory_order_acquire);
+
+        // Same preload logic as mono mode, but applied to all channels at once
+        if (activeValid > 0 && inactiveState == StreamBufferState::EMPTY) {
+            uint64_t threshold = activeStart +
+                static_cast<uint64_t>(activeValid * kPreloadThreshold);
+
+            if (currentFrame >= threshold) {
+                uint64_t nextChunkStart = activeStart + representative->chunkFrames;
+
+                if (nextChunkStart < mMultichannelReader->totalFrames()) {
+                    // One bulk read + de-interleave fills ALL mapped streams
+                    mMultichannelReader->readAndDistribute(nextChunkStart, inactive);
+                }
+            }
+        }
+    }
+
+    // ── Channel index parsing ────────────────────────────────────────────
+    // Maps LUSID source key names to 0-based ADM channel indices.
+    //
+    // Convention:
+    //   "N.1"  → ADM track N → 0-based index (N - 1)
+    //     e.g., "1.1" → 0, "11.1" → 10, "24.1" → 23
+    //   "LFE"  → ADM channel 4 → 0-based index 3
+    //     (standard ADM bed layout: L=1, R=2, C=3, LFE=4, ...)
+
+    static int parseChannelIndex(const std::string& sourceName, int numChannels) {
+        // Handle LFE special case
+        if (sourceName == "LFE") {
+            return (numChannels >= 4) ? 3 : -1;
+        }
+
+        // Parse "N.1" pattern: extract the integer N before the dot
+        size_t dotPos = sourceName.find('.');
+        if (dotPos == std::string::npos || dotPos == 0) {
+            return -1;  // No dot found or starts with dot
+        }
+
+        try {
+            int trackNum = std::stoi(sourceName.substr(0, dotPos));
+            int index = trackNum - 1;  // 1-based → 0-based
+            if (index >= 0 && index < numChannels) {
+                return index;
+            }
+        } catch (...) {
+            // Not a valid integer prefix
+        }
+
+        return -1;
     }
 
     // ── Member data ──────────────────────────────────────────────────────
@@ -613,7 +811,68 @@ private:
     // All active source streams, keyed by source name (e.g., "1.1", "LFE")
     std::map<std::string, std::unique_ptr<SourceStream>> mStreams;
 
+    // ── Multichannel (ADM direct) mode ───────────────────────────────────
+    // When true, sources are read from one multichannel file via the reader,
+    // not from individual mono files.
+    bool mMultichannelMode = false;
+    std::unique_ptr<MultichannelReader> mMultichannelReader;
+
     // Background loader thread
     std::thread          mLoaderThread;
     std::atomic<bool>    mLoaderRunning{false};
 };
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// MultichannelReader method implementations
+// ─────────────────────────────────────────────────────────────────────────────
+// These are defined here (after SourceStream is fully defined) rather than in
+// MultichannelReader.hpp, because they need access to SourceStream's members.
+// This is standard C++ practice for breaking circular header dependencies.
+
+inline void MultichannelReader::deinterleaveInto(
+    SourceStream* stream, int bufIdx, int channelIndex,
+    uint64_t framesRead, uint64_t fileFrame)
+{
+    auto& buffer = (bufIdx == 0) ? stream->bufferA : stream->bufferB;
+    auto& state  = (bufIdx == 0) ? stream->stateA  : stream->stateB;
+    auto& start  = (bufIdx == 0) ? stream->chunkStartA : stream->chunkStartB;
+    auto& valid  = (bufIdx == 0) ? stream->validFramesA : stream->validFramesB;
+
+    state.store(StreamBufferState::LOADING, std::memory_order_release);
+
+    // De-interleave: extract this channel from the interleaved buffer.
+    // Interleaved layout: [ch0_f0, ch1_f0, ..., chN_f0, ch0_f1, ch1_f1, ...]
+    // For frame i, channel c: interleavedBuffer[i * numChannels + c]
+    const float* src = mInterleavedBuffer.data();
+    float* dst = buffer.data();
+
+    for (uint64_t i = 0; i < framesRead; ++i) {
+        dst[i] = src[i * mNumChannels + channelIndex];
+    }
+
+    // Zero-fill remainder if we read less than the chunk size
+    if (framesRead < stream->chunkFrames) {
+        std::memset(dst + framesRead, 0,
+                    (stream->chunkFrames - framesRead) * sizeof(float));
+    }
+
+    start.store(fileFrame, std::memory_order_release);
+    valid.store(framesRead, std::memory_order_release);
+    state.store(StreamBufferState::READY, std::memory_order_release);
+}
+
+inline void MultichannelReader::zeroFillBuffer(
+    SourceStream* stream, int bufIdx, uint64_t fileFrame)
+{
+    auto& buffer = (bufIdx == 0) ? stream->bufferA : stream->bufferB;
+    auto& state  = (bufIdx == 0) ? stream->stateA  : stream->stateB;
+    auto& start  = (bufIdx == 0) ? stream->chunkStartA : stream->chunkStartB;
+    auto& valid  = (bufIdx == 0) ? stream->validFramesA : stream->validFramesB;
+
+    state.store(StreamBufferState::LOADING, std::memory_order_release);
+    std::memset(buffer.data(), 0, stream->chunkFrames * sizeof(float));
+    start.store(fileFrame, std::memory_order_release);
+    valid.store(0, std::memory_order_release);
+    state.store(StreamBufferState::READY, std::memory_order_release);
+}

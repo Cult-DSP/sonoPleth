@@ -1,5 +1,18 @@
 # Streaming Agent
 
+> **Implementation Status (2026-02-24):** The Streaming Agent is fully implemented in
+> `spatial_engine/realtimeEngine/src/Streaming.hpp` with two input modes:
+>
+> 1. **Mono file mode** (`--sources`): Per-source `SourceStream` opens individual mono WAV
+>    files. Background loader thread iterates sources independently.
+> 2. **ADM direct streaming mode** (`--adm`): A shared `MultichannelReader` (in
+>    `MultichannelReader.hpp`) opens one multichannel ADM WAV file, reads interleaved chunks,
+>    and de-interleaves into per-source buffers. Eliminates stem splitting entirely.
+>
+> The design document below was written pre-implementation and is more generic/aspirational.
+> See `Streaming.hpp`, `MultichannelReader.hpp`, and the Phase 2 + ADM Direct Streaming
+> completion logs in `realtime_master.md` for the actual implementation details.
+
 ## Overview
 
 The **Streaming Agent** is responsible for all audio input streaming and decoding in the real-time spatial audio engine. It handles the ingestion of audio data from various sources (such as audio files on disk, live streams, or network feeds) and prepares it for spatial rendering. This agent ensures that decoded audio frames are available to the audio processing pipeline **on time**, so that the Spatializer never runs out of data to render.

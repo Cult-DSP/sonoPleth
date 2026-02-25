@@ -108,8 +108,11 @@ static void printUsage(const char* progName) {
               << "Usage: " << progName << " [options]\n\n"
               << "Required:\n"
               << "  --layout <path>     Speaker layout JSON file\n"
-              << "  --scene <path>      LUSID scene JSON file (positions/trajectories)\n"
-              << "  --sources <path>    Folder containing mono source WAV files\n\n"
+              << "  --scene <path>      LUSID scene JSON file (positions/trajectories)\n\n"
+              << "Source input (one of the following is required):\n"
+              << "  --sources <path>    Folder containing mono source WAV files\n"
+              << "  --adm <path>        Multichannel ADM WAV file (direct streaming,\n"
+              << "                      skips stem splitting)\n\n"
               << "Optional:\n"
               << "  --samplerate <int>  Audio sample rate in Hz (default: 48000)\n"
               << "  --buffersize <int>  Frames per audio callback (default: 512)\n"
@@ -144,11 +147,16 @@ int main(int argc, char* argv[]) {
     config.layoutPath    = getArgString(argc, argv, "--layout");
     config.scenePath     = getArgString(argc, argv, "--scene");
     config.sourcesFolder = getArgString(argc, argv, "--sources");
+    config.admFile       = getArgString(argc, argv, "--adm");
     config.sampleRate    = getArgInt(argc, argv, "--samplerate", 48000);
     config.bufferSize    = getArgInt(argc, argv, "--buffersize", 512);
     config.masterGain.store(getArgFloat(argc, argv, "--gain", 0.5f));
     // NOTE: outputChannels is computed from the speaker layout (see Spatializer::init).
     //       No --channels flag needed.
+
+    // Determine input mode
+    bool useADM = !config.admFile.empty();
+    bool useMono = !config.sourcesFolder.empty();
 
     // ── Validate required arguments ──────────────────────────────────────
 
@@ -162,8 +170,13 @@ int main(int argc, char* argv[]) {
         printUsage(argv[0]);
         return 1;
     }
-    if (config.sourcesFolder.empty()) {
-        std::cerr << "[Main] ERROR: --sources is required." << std::endl;
+    if (!useADM && !useMono) {
+        std::cerr << "[Main] ERROR: Either --sources or --adm is required." << std::endl;
+        printUsage(argv[0]);
+        return 1;
+    }
+    if (useADM && useMono) {
+        std::cerr << "[Main] ERROR: --sources and --adm are mutually exclusive." << std::endl;
         printUsage(argv[0]);
         return 1;
     }
@@ -171,7 +184,11 @@ int main(int argc, char* argv[]) {
     std::cout << "[Main] Configuration:" << std::endl;
     std::cout << "  Layout:       " << config.layoutPath << std::endl;
     std::cout << "  Scene:        " << config.scenePath << std::endl;
-    std::cout << "  Sources:      " << config.sourcesFolder << std::endl;
+    if (useADM) {
+        std::cout << "  ADM file:     " << config.admFile << " (direct streaming)" << std::endl;
+    } else {
+        std::cout << "  Sources:      " << config.sourcesFolder << " (mono files)" << std::endl;
+    }
     std::cout << "  Sample rate:  " << config.sampleRate << " Hz" << std::endl;
     std::cout << "  Buffer size:  " << config.bufferSize << " frames" << std::endl;
     std::cout << "  Master gain:  " << config.masterGain.load() << std::endl;
@@ -200,11 +217,20 @@ int main(int argc, char* argv[]) {
     }
     std::cout << "." << std::endl;
 
-    // Create the streaming agent and load all source WAVs
+    // Create the streaming agent and load source WAVs
     Streaming streaming(config, state);
-    if (!streaming.loadScene(scene)) {
-        std::cerr << "[Main] FATAL: No source files could be loaded." << std::endl;
-        return 1;
+    if (useADM) {
+        // ADM direct streaming mode — read from multichannel file
+        if (!streaming.loadSceneFromADM(scene, config.admFile)) {
+            std::cerr << "[Main] FATAL: No source channels could be loaded from ADM." << std::endl;
+            return 1;
+        }
+    } else {
+        // Mono file mode — read from individual WAV files
+        if (!streaming.loadScene(scene)) {
+            std::cerr << "[Main] FATAL: No source files could be loaded." << std::endl;
+            return 1;
+        }
     }
 
     // Store scene duration (longest source determines total length)

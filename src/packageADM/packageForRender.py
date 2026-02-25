@@ -36,5 +36,27 @@ def packageForRender(sourceADM, lusid_scene, contains_audio_data,
     print(f"Packaged data for render in {output_dir}")
 
 
+def writeSceneOnly(lusid_scene, output_dir="processedData/stageForRender"):
+    """Write the LUSID scene JSON without splitting stems.
+
+    Used by the real-time pipeline to skip the stem-splitting step.
+    The real-time C++ engine reads directly from the multichannel ADM WAV
+    file, so only the scene.lusid.json (positions/trajectories) is needed.
+
+    Args:
+        lusid_scene (LusidScene): Pre-built LUSID scene object.
+        output_dir (str): Directory to save scene.lusid.json.
+
+    Returns:
+        str: Path to the written scene.lusid.json file.
+    """
+    import os
+    os.makedirs(output_dir, exist_ok=True)
+    lusid_output = f"{output_dir}/scene.lusid.json"
+    write_lusid_scene(lusid_scene, lusid_output)
+    print(f"✓ Wrote scene.lusid.json (no stem splitting) to {lusid_output}")
+    return lusid_output
+
+
 # if __name__ == "__main__":
 #     packageForRender('sourceData/POE-ATMOS-FINAL.wav', processed_dir="processedData", output_dir="processedData/stageForRender")

@@ -11,7 +11,7 @@
 
 - fix commenting prints at the end of pipeline
 
-- transition to render without stem splitting, shouldnt be necessary
+- ~~transition to render without stem splitting, shouldnt be necessary~~ ✅ Done (ADM direct streaming in real-time engine — `MultichannelReader.hpp`, `--adm` flag, 2026-02-24)
 
 - switch to internal datastructures instead of many json's, but keep a single debugging json with info
 

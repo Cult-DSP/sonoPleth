@@ -54,12 +54,15 @@ Continue using **AlloLib's AudioIO** (already a dependency via
 - **`runRealtime.py`** at the project root mirrors `runPipeline.py` — it
   accepts the **same inputs** (ADM WAV file or LUSID package directory +
   speaker layout) and runs the **same preprocessing pipeline** (ADM extract
-  → parse to LUSID → package/split stems → write scene.lusid.json).
-- The only divergence point: at the final step it launches the **real-time
-  C++ engine** instead of the offline renderer.
+  → parse to LUSID → write scene.lusid.json).
+- For **ADM sources**: preprocessing writes scene.lusid.json only (no stem
+  splitting), then launches the C++ engine with `--adm` pointing to the
+  original multichannel WAV for direct streaming.
+- For **LUSID packages**: validates and launches with `--sources` pointing
+  to the mono files folder.
 - Two pipeline entry points:
-  - `run_realtime_from_ADM(source_adm, layout)` — full ADM preprocessing
-  - `run_realtime_from_LUSID(package_dir, layout)` — direct launch
+  - `run_realtime_from_ADM(source_adm, layout)` — ADM preprocessing + direct streaming
+  - `run_realtime_from_LUSID(package_dir, layout)` — direct launch from mono files
 - CLI uses `checkSourceType()` to auto-detect ADM vs LUSID input, same
   pattern as `runPipeline.py`.
 - No `--channels` parameter — channel count is derived from the speaker
@@ -98,6 +101,7 @@ Based on the architecture's data-flow dependencies, the planned order is:
 | 2     | **Streaming**             | Need audio data to feed the mixer                   | ✅ Complete |
 | 3     | **Pose and Control**      | Need positions before spatialization                | ✅ Complete |
 | 4     | **Spatializer (DBAP)**    | Core mixing — depends on 1-3                        | ✅ Complete |
+| —     | **ADM Direct Streaming**  | Optimization: skip stem splitting for ADM sources   | ✅ Complete |
 | 5     | **LFE Router**            | Runs in audio callback after spatializer            | Not started |
 | 6     | **Compensation and Gain** | Post-mix gain staging                               | Not started |
 | 7     | **Output Remap**          | Final channel shuffle before hardware               | Not started |
@@ -257,6 +261,38 @@ Based on the architecture's data-flow dependencies, the planned order is:
 - Internal render buffer (`mRenderIO`) — future Channel Remap agent replaces the identity copy loop with a mapping table
 - LFE routing already handled (subwoofer channels from layout, no DBAP on LFE sources)
 - Phases 1-4 together form the **minimum audible spatial prototype** — sound comes out of the correct speakers based on LUSID scene positions
+
+### ADM Direct Streaming Completion Log (Optimization — Skip Stem Splitting)
+
+**Files created/modified:**
+
+| File                                                       | Action       | Purpose                                                                                                                                                                                                                                                                                                   |
+| ---------------------------------------------------------- | ------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `spatial_engine/realtimeEngine/src/MultichannelReader.hpp` | **Created**  | Shared multichannel WAV reader. Opens one SNDFILE\*, pre-allocates interleaved buffer (chunkFrames × numChannels), de-interleaves channels into per-source SourceStream double buffers. Method implementations in Streaming.hpp (after SourceStream definition).                                          |
+| `spatial_engine/realtimeEngine/src/Streaming.hpp`          | **Modified** | Added `loadSceneFromADM()` (creates buffer-only SourceStreams, maps to MultichannelReader), `loaderWorkerMultichannel()` (one bulk read fills all mapped streams), `SourceStream::initBuffersOnly()` (allocates buffers without file handle), `parseChannelIndex()` (source key → 0-based channel index). |
+| `spatial_engine/realtimeEngine/src/RealtimeTypes.hpp`      | **Modified** | Added `std::string admFile` to `RealtimeConfig` for ADM direct streaming path.                                                                                                                                                                                                                            |
+| `spatial_engine/realtimeEngine/src/main.cpp`               | **Modified** | Added `--adm <path>` CLI flag (mutually exclusive with `--sources`). Dispatches to `loadSceneFromADM()` or `loadScene()`. Updated help text.                                                                                                                                                              |
+| `src/packageADM/packageForRender.py`                       | **Modified** | Added `writeSceneOnly()` function — writes scene.lusid.json without splitting stems.                                                                                                                                                                                                                      |
+| `runRealtime.py`                                           | **Modified** | `_launch_realtime_engine()` now accepts `adm_file` parameter (uses `--adm` flag). `run_realtime_from_ADM()` calls `writeSceneOnly()` instead of `packageForRender()`, skipping stem splitting entirely.                                                                                                   |
+| `internalDocsMD/AGENTS.md`                                 | **Modified** | Updated all realtime engine descriptions for dual-mode streaming, added MultichannelReader.hpp docs, updated run examples.                                                                                                                                                                                |
+
+**Design decisions:**
+
+- **Shared MultichannelReader (Option A)**: One SNDFILE\*, one interleaved buffer (~44MB for 48ch), shared across all sources. Much more memory-efficient than per-source multichannel handles (Option B, rejected).
+- **Channel mapping derived in C++**: Source key `"11.1"` → extract number before dot → subtract 1 → channel index 10. `"LFE"` → hardcoded index 3 (standard ADM LFE position). No LUSID schema changes needed.
+- **Audio thread completely untouched**: SourceStream's double-buffer + getSample/getBlock are identical in both modes. The audio callback doesn't know or care whether data came from mono files or de-interleaved multichannel.
+- **Mono path preserved**: `--sources` still works exactly as before (zero regression risk).
+- **Separate loader workers**: `loaderWorkerMono()` (original per-source iteration) and `loaderWorkerMultichannel()` (one bulk read per cycle) avoid any conditional branching in the hot loop.
+- **`writeSceneOnly()`**: Factored out of `packageForRender()` to write just the scene.lusid.json without stem splitting. Used by the real-time ADM path; offline pipeline still uses full `packageForRender()`.
+
+**Build & test results:**
+
+- `cmake .. && make -j4` compiles with zero errors
+- `--help` shows new `--adm` flag and updated usage
+- Error handling: `--adm` + `--sources` together rejected; neither provided rejected
+- LUSID package path (mono): ✅ No regression — 78 sources, allosphere layout, 56 output channels
+- ADM WAV path (direct streaming): ✅ Full pipeline works — SWALE-ATMOS-LFE.wav, 24 sources mapped from 48ch ADM, translab layout, 18 output channels
+- ADM pipeline skips Step 4 (stem splitting) — saves ~30-60 seconds and ~2.9GB disk I/O
 
 ---
 

@@ -80,6 +80,10 @@ struct RealtimeConfig {
     std::string layoutPath;       // Speaker layout JSON
     std::string scenePath;        // LUSID scene JSON (positions/trajectories)
     std::string sourcesFolder;    // Folder containing mono source WAV files
+    std::string admFile;          // Multichannel ADM WAV file (direct streaming)
+                                  // If non-empty, use ADM direct mode instead of
+                                  // mono sources folder. Mutually exclusive with
+                                  // sourcesFolder.
 
     // ── Playback control ─────────────────────────────────────────────────
     std::atomic<bool> playing{false};   // True when audio should be output
