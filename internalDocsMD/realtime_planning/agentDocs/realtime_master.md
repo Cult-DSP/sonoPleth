@@ -360,9 +360,11 @@ resolving circular dependencies between header-only types. If you move
 ### Known Bug — `runPipeline.py` Line 177
 
 In the `if __name__ == "__main__"` CLI block, the LUSID branch calls:
+
 ```python
 run_pipeline_from_LUSID(sourceADMFile, sourceSpeakerLayout, renderMode, createRenderAnalysis, outputRenderPath)
 ```
+
 But `outputRenderPath` is **never defined** in this code path (it's only a
 default parameter in `run_pipeline_from_ADM()`). This will crash with
 `NameError` if someone runs the offline pipeline CLI with a LUSID package input.
@@ -373,13 +375,13 @@ default parameter in `run_pipeline_from_ADM()`). This will crash with
 The current `run_realtime_from_ADM()` still runs Steps 1-3 of the offline
 pipeline before launching the C++ engine:
 
-| Step | What it does                         | Time   |
-| ---- | ------------------------------------ | ------ |
-| 1    | `extractMetaData()` — bwfmetaedit    | ~14s   |
-| 2    | `channelHasAudio()` — scan full WAV  | ~14s   |
-| 3    | `parse_adm_xml_to_lusid_scene()`     | ~1s    |
+| Step | What it does                           | Time       |
+| ---- | -------------------------------------- | ---------- |
+| 1    | `extractMetaData()` — bwfmetaedit      | ~14s       |
+| 2    | `channelHasAudio()` — scan full WAV    | ~14s       |
+| 3    | `parse_adm_xml_to_lusid_scene()`       | ~1s        |
 | 4    | ~~`packageForRender()` — split stems~~ | ~~30-60s~~ |
-| —    | `writeSceneOnly()` — JSON only       | <1s    |
+| —    | `writeSceneOnly()` — JSON only         | <1s        |
 
 Steps 1-2 take ~28s. A future optimization could **skip step 2** (audio
 channel analysis) entirely for the real-time path, since the C++ engine can
@@ -388,24 +390,24 @@ still required because the LUSID parser reads the extracted XML.
 
 ### Exact File Paths for Key Artifacts
 
-| Artifact                          | Path                                                                                  |
-| --------------------------------- | ------------------------------------------------------------------------------------- |
-| Real-time C++ executable          | `spatial_engine/realtimeEngine/build/sonoPleth_realtime`                              |
-| Offline C++ executable            | `spatial_engine/spatialRender/build/sonoPleth_spatial_render`                          |
-| CMakeLists (real-time)            | `spatial_engine/realtimeEngine/CMakeLists.txt`                                        |
-| Shared JSONLoader                 | `spatial_engine/src/JSONLoader.cpp` / `.hpp`                                          |
-| Shared LayoutLoader               | `spatial_engine/src/LayoutLoader.cpp` / `.hpp`                                        |
-| Shared WavUtils                   | `spatial_engine/src/WavUtils.cpp` / `.hpp`                                            |
-| LUSID XML parser                  | `LUSID/src/xml_etree_parser.py`                                                      |
-| LUSID scene model                 | `LUSID/src/scene.py`                                                                  |
+| Artifact                          | Path                                                                                        |
+| --------------------------------- | ------------------------------------------------------------------------------------------- |
+| Real-time C++ executable          | `spatial_engine/realtimeEngine/build/sonoPleth_realtime`                                    |
+| Offline C++ executable            | `spatial_engine/spatialRender/build/sonoPleth_spatial_render`                               |
+| CMakeLists (real-time)            | `spatial_engine/realtimeEngine/CMakeLists.txt`                                              |
+| Shared JSONLoader                 | `spatial_engine/src/JSONLoader.cpp` / `.hpp`                                                |
+| Shared LayoutLoader               | `spatial_engine/src/LayoutLoader.cpp` / `.hpp`                                              |
+| Shared WavUtils                   | `spatial_engine/src/WavUtils.cpp` / `.hpp`                                                  |
+| LUSID XML parser                  | `LUSID/src/xml_etree_parser.py`                                                             |
+| LUSID scene model                 | `LUSID/src/scene.py`                                                                        |
 | Package/scene writer              | `src/packageADM/packageForRender.py` (has both `packageForRender()` and `writeSceneOnly()`) |
-| Python launcher                   | `runRealtime.py` (project root)                                                       |
-| Speaker layouts dir               | `spatial_engine/speaker_layouts/`                                                     |
-| Processed data (scene JSON, etc.) | `processedData/stageForRender/scene.lusid.json`                                      |
-| ADM extracted metadata            | `processedData/currentMetaData.xml`                                                   |
-| LUSID schema                      | `LUSID/schema/lusid_scene_v0.5.schema.json`                                          |
-| Design doc (streaming/DBAP)       | `internalDocsMD/realtime_planning/realtimeEngine_designDoc.md`                        |
-| ADM streaming design doc          | `internalDocsMD/realtime_planning/agentDocs/agent_adm_direct_streaming.md`            |
+| Python launcher                   | `runRealtime.py` (project root)                                                             |
+| Speaker layouts dir               | `spatial_engine/speaker_layouts/`                                                           |
+| Processed data (scene JSON, etc.) | `processedData/stageForRender/scene.lusid.json`                                             |
+| ADM extracted metadata            | `processedData/currentMetaData.xml`                                                         |
+| LUSID schema                      | `LUSID/schema/lusid_scene_v0.5.schema.json`                                                 |
+| Design doc (streaming/DBAP)       | `internalDocsMD/realtime_planning/realtimeEngine_designDoc.md`                              |
+| ADM streaming design doc          | `internalDocsMD/realtime_planning/agentDocs/agent_adm_direct_streaming.md`                  |
 
 ### Verified Test Commands (End-to-End)
 
