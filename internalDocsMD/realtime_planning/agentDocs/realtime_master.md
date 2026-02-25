@@ -105,11 +105,9 @@ Based on the architecture's data-flow dependencies, the planned order is:
 | 5     | **LFE Router**            | ~~Runs in audio callback after spatializer~~          | ⏭️ Skipped  |
 | 6     | **Compensation and Gain** | Loudspeaker/sub mix sliders + focus auto-compensation | ✅ Complete |
 | 7     | **Output Remap**          | Final channel shuffle before hardware                 | ✅ Complete |
-
-INSERT - potential remove scan audio from pipeline and just read in empty files to save up front compute time. perhaps add a toggle for this?
-| 8 | **Threading and Safety** | Harden all inter-thread communication | Not started |
-
-| 9 | **GUI Agent** | Qt integration, last because engine must work first | Not started |
+| —     | **Audio Scan Toggle**     | `scan_audio=False` default in `runRealtime.py`        | ✅ Complete |
+| 8     | **Threading and Safety**  | Harden all inter-thread communication                 | Not started |
+| 9     | **GUI Agent**             | Qt integration, last because engine must work first   | Not started |
 
 > **Note:** Phases 1-4 together form the minimum audible prototype (sound
 > comes out of speakers). Phases 5-7 add correctness. Phase 8 hardens
@@ -543,23 +541,42 @@ default parameter in `run_pipeline_from_ADM()`). This will crash with
 `NameError` if someone runs the offline pipeline CLI with a LUSID package input.
 **Not a real-time engine issue** — but worth knowing about.
 
-### Future Optimization Opportunity — Skip Channel Analysis
+### Audio Scan Toggle — `scan_audio` (✅ Implemented)
 
-The current `run_realtime_from_ADM()` still runs Steps 1-3 of the offline
-pipeline before launching the C++ engine:
+The ADM real-time path (`run_realtime_from_ADM()`) previously ran a full
+per-channel audio activity scan unconditionally at Step 2, adding ~14 seconds
+of startup latency before the engine could launch.
 
-| Step | What it does                           | Time       |
-| ---- | -------------------------------------- | ---------- |
-| 1    | `extractMetaData()` — bwfmetaedit      | ~14s       |
-| 2    | `channelHasAudio()` — scan full WAV    | ~14s       |
-| 3    | `parse_adm_xml_to_lusid_scene()`       | ~1s        |
-| 4    | ~~`packageForRender()` — split stems~~ | ~~30-60s~~ |
-| —    | `writeSceneOnly()` — JSON only         | <1s        |
+**What changed (`runRealtime.py`):**
 
-Steps 1-2 take ~28s. A future optimization could **skip step 2** (audio
-channel analysis) entirely for the real-time path, since the C++ engine can
-detect silence per-source during streaming. Step 1 (metadata extraction) is
-still required because the LUSID parser reads the extracted XML.
+| Step | What it does                              | Default |
+| ---- | ----------------------------------------- | ------- |
+| 2a   | `exportAudioActivity()` — write JSON      | **skipped** |
+| 2b   | `channelHasAudio()` — scan full WAV       | **skipped** |
+| 2c   | Synthetic all-active dict passed to parser | **used**    |
+
+- `run_realtime_from_ADM()` gains a `scan_audio=False` keyword argument.
+- When `False` (the default): both scan calls are skipped. A synthetic
+  `contains_audio_data` dict is built from `sf.info()` alone (no I/O beyond
+  the file header), marking all channels active. Startup time drops by ~14s.
+- When `True`: the original scan runs and writes `processedData/containsAudio.json`
+  as before. Use this if the LUSID parser needs accurate silence data.
+- CLI flag: append `--scan_audio` to the positional arguments to enable it.
+  Absence of the flag means `False`.
+- The LUSID path (`run_realtime_from_LUSID`) has no scan — unaffected.
+
+**Synthetic fallback dict format** (matches `channelHasAudio()` return schema):
+```python
+{
+    "sample_rate": <int>,
+    "threshold_db": -100,
+    "elapsed_seconds": 0.0,
+    "channels": [
+        {"channel_index": i, "rms_db": 0.0, "contains_audio": True}
+        for i in range(num_channels)
+    ]
+}
+```
 
 ### Exact File Paths for Key Artifacts
 

@@ -227,17 +227,18 @@ def run_realtime_from_ADM(
     master_gain=0.5,
     dbap_focus=1.5,
     samplerate=48000,
-    buffersize=512
+    buffersize=512,
+    scan_audio=False
 ):
     """
     Run the complete ADM → real-time spatial audio pipeline.
 
     Same preprocessing as runPipeline.run_pipeline_from_ADM:
       1. Setup C++ tools (idempotent)
-      2. Analyze audio channels for content
+      2. Analyze audio channels for content  ← skipped by default (scan_audio=False)
       3. Extract ADM metadata from source WAV
       4. Parse ADM XML to LUSID scene
-      5. Package for render (split stems + write scene.lusid.json)
+      5. Write scene.lusid.json (no stem splitting — ADM direct streaming)
     Then launches the real-time engine instead of the offline renderer.
 
     Parameters
@@ -254,6 +255,18 @@ def run_realtime_from_ADM(
         Audio sample rate in Hz (default: 48000).
     buffersize : int
         Frames per audio callback (default: 512).
+    scan_audio : bool
+        Whether to run the full per-channel audio activity scan before
+        parsing the ADM XML (default: False).
+
+        When False (default): skips channelHasAudio() and exportAudioActivity().
+        A synthetic "all channels active" result is passed to the LUSID parser
+        instead, saving ~14 seconds of up-front I/O on large ADM files.
+        Use this for real-time playback where startup latency matters.
+
+        When True: runs the full scan and writes processedData/containsAudio.json.
+        Useful if the LUSID parser needs accurate per-channel silence data
+        (e.g., to suppress truly silent channels from the scene graph).
 
     Returns
     -------
@@ -283,13 +296,33 @@ def run_realtime_from_ADM(
 
     processed_data_dir = "processedData"
 
-    # Step 2: Audio channel analysis
+    # Step 2: Audio channel analysis (optional — skipped by default)
     print("\n" + "=" * 80)
-    print("STEP 2: Analyzing audio channels and extracting ADM metadata")
-    print("=" * 80)
-    print("Checking audio channels for content...")
-    exportAudioActivity(source_adm_file, output_path="processedData/containsAudio.json", threshold_db=-100)
-    contains_audio_data = channelHasAudio(source_adm_file, threshold_db=-100, printChannelUpdate=False)
+    if scan_audio:
+        print("STEP 2: Analyzing audio channels and extracting ADM metadata")
+        print("=" * 80)
+        print("Scanning audio channels for content (scan_audio=True)...")
+        exportAudioActivity(source_adm_file, output_path="processedData/containsAudio.json", threshold_db=-100)
+        contains_audio_data = channelHasAudio(source_adm_file, threshold_db=-100, printChannelUpdate=False)
+    else:
+        print("STEP 2: Skipping audio channel scan (scan_audio=False — default)")
+        print("=" * 80)
+        # Build a synthetic all-channels-active result so the LUSID parser
+        # treats every channel as containing audio. The real-time engine
+        # handles silent channels gracefully during streaming — no scan needed.
+        import soundfile as sf
+        _info = sf.info(source_adm_file)
+        contains_audio_data = {
+            "sample_rate": _info.samplerate,
+            "threshold_db": -100,
+            "elapsed_seconds": 0.0,
+            "channels": [
+                {"channel_index": i, "rms_db": 0.0, "contains_audio": True}
+                for i in range(_info.channels)
+            ]
+        }
+        print(f"  Treating all {_info.channels} channels as active (no scan performed).")
+        print("  Pass scan_audio=True or --scan_audio on the CLI to run the full scan.")
 
     # Extract ADM XML metadata from WAV
     print("Extracting ADM metadata from WAV file...")
@@ -443,13 +476,14 @@ if __name__ == "__main__":
         master_gain = float(sys.argv[3]) if len(sys.argv) >= 4 else 0.5
         dbap_focus = float(sys.argv[4]) if len(sys.argv) >= 5 else 1.5
         buffersize = int(sys.argv[5]) if len(sys.argv) >= 6 else 512
+        scan_audio = "--scan_audio" in sys.argv  # flag: default OFF
 
         if source_type == "ADM":
             print(f"Detected ADM source: {source_input}")
             success = run_realtime_from_ADM(
                 source_input, source_speaker_layout,
                 master_gain=master_gain, dbap_focus=dbap_focus,
-                buffersize=buffersize
+                buffersize=buffersize, scan_audio=scan_audio
             )
         elif source_type == "LUSID":
             print(f"Detected LUSID package: {source_input}")
@@ -470,18 +504,24 @@ if __name__ == "__main__":
 
     else:
         print("\nUsage:")
-        print("  python runRealtime.py <source> [speaker_layout] [master_gain] [dbap_focus] [buffersize]")
+        print("  python runRealtime.py <source> [speaker_layout] [master_gain] [dbap_focus] [buffersize] [--scan_audio]")
         print("\nArguments:")
         print("  <source>          ADM WAV file (.wav) or LUSID package directory")
         print("  [speaker_layout]  Speaker layout JSON (default: allosphere_layout.json)")
         print("  [master_gain]     Master gain 0.0–1.0 (default: 0.5)")
         print("  [dbap_focus]      DBAP focus/rolloff 0.2–5.0 (default: 1.5)")
         print("  [buffersize]      Audio buffer size in frames (default: 512)")
+        print("  [--scan_audio]    Run full per-channel audio activity scan before")
+        print("                    parsing ADM metadata (ADM path only, default: OFF).")
+        print("                    Adds ~14s startup time but filters truly silent channels.")
         print("\nExamples:")
-        print("  # From ADM WAV (runs full preprocessing pipeline):")
+        print("  # From ADM WAV (runs full preprocessing pipeline, scan skipped):")
         print("  python runRealtime.py sourceData/driveExampleSpruce.wav")
         print("")
-        print("  # From LUSID package (skips preprocessing):")
+        print("  # From ADM WAV with audio scan enabled:")
+        print("  python runRealtime.py sourceData/driveExampleSpruce.wav allosphere_layout.json 0.5 1.5 512 --scan_audio")
+        print("")
+        print("  # From LUSID package (skips preprocessing entirely):")
         print("  python runRealtime.py sourceData/lusid_package")
         print("")
         print("  # With custom layout and settings:")
