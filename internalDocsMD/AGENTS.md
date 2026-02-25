@@ -1453,7 +1453,7 @@ python LUSID/tests/benchmark_xml_parsers.py
 - [ ] **Real-time rendering engine — remaining phases**
   - Phases 1-4 complete (Backend, Streaming, Pose, Spatializer) + ADM Direct Streaming optimization
   - Phase 5: LFE Router — ⏭️ Skipped (LFE pass-through already implemented in Spatializer.hpp)
-  - Phase 6: Compensation Agent — per-channel gain/delay trim
+  - Phase 6: Compensation Agent — loudspeaker mix + sub mix sliders (±10 dB post-DBAP trims) + focus auto-compensation toggle
   - Phase 7: Output Remap — logical-to-physical channel mapping (using layout `deviceChannel` fields)
   - Phase 8: Transport Agent — seek, loop, scene reload
   - Phase 9: Control Surface — GUI integration (Qt)

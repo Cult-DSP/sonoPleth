@@ -72,8 +72,11 @@ struct RealtimeConfig {
 
     // ── Gain settings ────────────────────────────────────────────────────
     // masterGain is atomic because the GUI/control thread may adjust it
-    // while the audio thread is reading it. Other gains will follow the
-    // same pattern in Phase 6 (Compensation and Gain Agent).
+    // while the audio thread is reading it. Phase 6 (Compensation and Gain
+    // Agent) adds three more atomics on the same pattern:
+    //   std::atomic<float> loudspeakerMix{1.0f};  // post-DBAP main-channel trim (±10 dB)
+    //   std::atomic<float> subMix{1.0f};           // post-DBAP sub-channel trim  (±10 dB)
+    //   std::atomic<bool>  focusAutoCompensation{false}; // auto-update loudspeakerMix on focus change
     std::atomic<float> masterGain{0.5f};  // Global output gain (0.0–1.0)
 
     // ── File paths (set at startup, read-only after) ─────────────────────
