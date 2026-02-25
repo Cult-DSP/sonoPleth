@@ -1451,12 +1451,10 @@ python LUSID/tests/benchmark_xml_parsers.py
   - `width` — source width parameter (DBAP/reverb)
 
 - [ ] **Real-time rendering engine — remaining phases**
-  - Phases 1-2 complete (backend adapter + streaming agent)
-  - Phase 3: Pose Agent — interpolate LUSID keyframes per audio block
-  - Phase 4: Spatializer Agent — DBAP panning to speaker layout
-  - Phase 5: LFE Router — route LFE source to subwoofer channels
+  - Phases 1-4 complete (Backend, Streaming, Pose, Spatializer) + ADM Direct Streaming optimization
+  - Phase 5: LFE Router — dedicated agent for crossover filtering + subwoofer routing (currently inline in Spatializer)
   - Phase 6: Compensation Agent — per-channel gain/delay trim
-  - Phase 7: Output Remap — logical-to-physical channel mapping
+  - Phase 7: Output Remap — logical-to-physical channel mapping (using layout `deviceChannel` fields)
   - Phase 8: Transport Agent — seek, loop, scene reload
   - Phase 9: Control Surface — GUI integration (Qt)
 
@@ -1595,6 +1593,7 @@ python LUSID/tests/benchmark_xml_parsers.py
 
 - `sys.argv[1]` accessed before bounds check (line 158 vs check on line 162)
 - Double audio-channel scan wastes ~28 s per run (calls both `exportAudioActivity()` and `channelHasAudio()`)
+- **LUSID CLI branch bug (line 177):** `run_pipeline_from_LUSID()` is called with `outputRenderPath` which is never defined in the `__main__` block — will crash with `NameError` if a LUSID package is passed via CLI
 
 #### ℹ️ NOTE — Large Interleaved Buffer Allocation
 

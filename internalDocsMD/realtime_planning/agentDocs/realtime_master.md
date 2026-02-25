@@ -296,6 +296,157 @@ Based on the architecture's data-flow dependencies, the planned order is:
 
 ---
 
+## Critical Implementation Details for Future Context Windows
+
+> These details were captured at the end of the ADM Direct Streaming implementation
+> session to preserve context that isn't obvious from reading code alone.
+
+### Full LFE Channel Mapping Chain (Python → C++)
+
+The LFE channel mapping crosses two codebases and involves a hardcoded flag:
+
+1. **Python LUSID parser** (`LUSID/src/xml_etree_parser.py` line 44):
+   `_DEV_LFE_HARDCODED = True` — when `True`, any DirectSpeaker at 1-based
+   ADM channel 4 is tagged as LFE (function `_is_lfe_channel()`). When `False`,
+   it falls back to checking `speakerLabel` for the substring "lfe".
+
+2. **LUSID scene JSON output**: The LFE source gets key `"LFE"` (from the
+   `LFENode(id=f"{group_id}.1")` construction at line 371). In the SWALE test
+   file, the DirectSpeaker group containing channel 4 has `group_id = "4"`,
+   so the LFE source key becomes `"4.1"` in the scene — but its **type** is
+   `"lfe"` in the JSON, so the C++ engine identifies it as LFE.
+
+3. **C++ `parseChannelIndex()`** (`Streaming.hpp`): For source key `"LFE"` or
+   any source flagged as LFE, returns hardcoded index 3 (0-based ADM channel 4).
+   For normal sources like `"11.1"`, extracts the number before the dot and
+   subtracts 1 → channel index 10.
+
+4. **C++ `Spatializer.hpp`**: LFE sources (identified by `pose.isLFE`) bypass
+   DBAP entirely and route directly to subwoofer channels from the speaker layout.
+
+**Implication**: Changing `_DEV_LFE_HARDCODED` to `False` in the parser will
+make LFE detection label-based, but the C++ `parseChannelIndex()` hardcoded
+index 3 would still need to be made dynamic (read from the scene JSON).
+
+### Shared Loaders — Offline ↔ Real-Time Code Sharing
+
+The real-time engine compiles three `.cpp` files from the offline renderer's
+`spatial_engine/src/` directory (see `realtimeEngine/CMakeLists.txt` lines 29-33):
+
+```
+add_executable(sonoPleth_realtime
+    src/main.cpp
+    ../src/JSONLoader.cpp      # Parses scene.lusid.json → SpatialData struct
+    ../src/LayoutLoader.cpp    # Parses speaker_layout.json → SpeakerLayout struct
+    ../src/WavUtils.cpp        # WAV I/O (used for metadata only in realtime)
+)
+```
+
+These are the **exact same source files** the offline renderer
+(`spatial_engine/spatialRender/`) uses. Any changes to these shared files affect
+both the offline and real-time pipelines. The offline renderer is at
+`spatial_engine/spatialRender/build/sonoPleth_spatial_render`.
+
+### Circular Header Pattern (MultichannelReader ↔ Streaming)
+
+`MultichannelReader.hpp` forward-declares `struct SourceStream` and declares
+methods `deinterleaveInto(SourceStream&, ...)` and `zeroFillBuffer(SourceStream&, ...)`.
+The **implementations** of these methods are placed at the very bottom of
+`Streaming.hpp` (after `SourceStream` is fully defined) as inline free-standing
+functions within the `MultichannelReader` class scope. This is standard C++ for
+resolving circular dependencies between header-only types. If you move
+`SourceStream` to its own header, the method impls should move with it.
+
+### Known Bug — `runPipeline.py` Line 177
+
+In the `if __name__ == "__main__"` CLI block, the LUSID branch calls:
+```python
+run_pipeline_from_LUSID(sourceADMFile, sourceSpeakerLayout, renderMode, createRenderAnalysis, outputRenderPath)
+```
+But `outputRenderPath` is **never defined** in this code path (it's only a
+default parameter in `run_pipeline_from_ADM()`). This will crash with
+`NameError` if someone runs the offline pipeline CLI with a LUSID package input.
+**Not a real-time engine issue** — but worth knowing about.
+
+### Future Optimization Opportunity — Skip Channel Analysis
+
+The current `run_realtime_from_ADM()` still runs Steps 1-3 of the offline
+pipeline before launching the C++ engine:
+
+| Step | What it does                         | Time   |
+| ---- | ------------------------------------ | ------ |
+| 1    | `extractMetaData()` — bwfmetaedit    | ~14s   |
+| 2    | `channelHasAudio()` — scan full WAV  | ~14s   |
+| 3    | `parse_adm_xml_to_lusid_scene()`     | ~1s    |
+| 4    | ~~`packageForRender()` — split stems~~ | ~~30-60s~~ |
+| —    | `writeSceneOnly()` — JSON only       | <1s    |
+
+Steps 1-2 take ~28s. A future optimization could **skip step 2** (audio
+channel analysis) entirely for the real-time path, since the C++ engine can
+detect silence per-source during streaming. Step 1 (metadata extraction) is
+still required because the LUSID parser reads the extracted XML.
+
+### Exact File Paths for Key Artifacts
+
+| Artifact                          | Path                                                                                  |
+| --------------------------------- | ------------------------------------------------------------------------------------- |
+| Real-time C++ executable          | `spatial_engine/realtimeEngine/build/sonoPleth_realtime`                              |
+| Offline C++ executable            | `spatial_engine/spatialRender/build/sonoPleth_spatial_render`                          |
+| CMakeLists (real-time)            | `spatial_engine/realtimeEngine/CMakeLists.txt`                                        |
+| Shared JSONLoader                 | `spatial_engine/src/JSONLoader.cpp` / `.hpp`                                          |
+| Shared LayoutLoader               | `spatial_engine/src/LayoutLoader.cpp` / `.hpp`                                        |
+| Shared WavUtils                   | `spatial_engine/src/WavUtils.cpp` / `.hpp`                                            |
+| LUSID XML parser                  | `LUSID/src/xml_etree_parser.py`                                                      |
+| LUSID scene model                 | `LUSID/src/scene.py`                                                                  |
+| Package/scene writer              | `src/packageADM/packageForRender.py` (has both `packageForRender()` and `writeSceneOnly()`) |
+| Python launcher                   | `runRealtime.py` (project root)                                                       |
+| Speaker layouts dir               | `spatial_engine/speaker_layouts/`                                                     |
+| Processed data (scene JSON, etc.) | `processedData/stageForRender/scene.lusid.json`                                      |
+| ADM extracted metadata            | `processedData/currentMetaData.xml`                                                   |
+| LUSID schema                      | `LUSID/schema/lusid_scene_v0.5.schema.json`                                          |
+| Design doc (streaming/DBAP)       | `internalDocsMD/realtime_planning/realtimeEngine_designDoc.md`                        |
+| ADM streaming design doc          | `internalDocsMD/realtime_planning/agentDocs/agent_adm_direct_streaming.md`            |
+
+### Verified Test Commands (End-to-End)
+
+```bash
+# ADM direct streaming (SWALE test file, TransLab layout):
+python runRealtime.py sourceData/SWALE-ATMOS-LFE.wav \
+    spatial_engine/speaker_layouts/translab-sono-layout.json
+
+# LUSID package (pre-split mono stems, Allosphere layout):
+python runRealtime.py sourceData/lusid_package \
+    spatial_engine/speaker_layouts/allosphere_layout.json 0.3 1.5 512
+
+# C++ engine directly (ADM mode):
+cd spatial_engine/realtimeEngine
+./build/sonoPleth_realtime \
+    --layout ../speaker_layouts/translab-sono-layout.json \
+    --scene ../../processedData/stageForRender/scene.lusid.json \
+    --adm ../../sourceData/SWALE-ATMOS-LFE.wav \
+    --gain 0.5 --buffersize 512
+
+# C++ engine directly (mono mode):
+./build/sonoPleth_realtime \
+    --layout ../speaker_layouts/allosphere_layout.json \
+    --scene ../../processedData/stageForRender/scene.lusid.json \
+    --sources ../../sourceData/lusid_package \
+    --gain 0.1 --buffersize 512
+
+# Build from scratch:
+cd spatial_engine/realtimeEngine/build
+cmake ..
+make -j4
+```
+
+### Python Environment
+
+- **Venv**: `sonoPleth/bin/python` (Python 3.12.2)
+- **Activation**: `source activate.sh` (from project root)
+- **Key packages**: PySide6 (GUI), lxml (legacy XML), gdown (example downloads)
+
+---
+
 ## Architecture Overview
 
 This real-time spatial audio engine is designed as a collection of specialized **agents**, each handling a distinct aspect of audio processing. Splitting functionality into separate agents enables **sequential, testable development** where each piece is verified before the next begins. The engine's goal is to render spatial audio with minimal latency and no glitches, even under heavy load, by carefully coordinating these components.
