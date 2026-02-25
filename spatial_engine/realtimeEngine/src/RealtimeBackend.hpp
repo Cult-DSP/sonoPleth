@@ -16,8 +16,9 @@
 // - The callback function is static (required by AlloLib's C-style callback).
 //   It receives `this` via the userData pointer and dispatches to the member
 //   function `processBlock()`.
-// - In Phase 1, processBlock() outputs silence. Future phases will insert
-//   the streaming → spatializer → LFE → compensation → remap chain.
+// - Phase 1: outputs silence.
+// - Phase 2: reads audio from StreamingAgent and outputs a mono mix to all
+//   channels (verifies streaming works). Full DBAP spatialization in Phase 4.
 // - The callback must NEVER allocate, lock, or do I/O. It runs on the audio
 //   thread at real-time priority.
 //
@@ -34,11 +35,14 @@
 #include <iostream>
 #include <string>
 #include <functional>
-#include <cstring> // memset
+#include <cstring>  // memset, memcpy
+#include <vector>
+#include <algorithm> // std::min
 
 #include "al/io/al_AudioIO.hpp"
 
 #include "RealtimeTypes.hpp"
+#include "StreamingAgent.hpp"  // StreamingAgent — needed for inline processBlock()
 
 // ─────────────────────────────────────────────────────────────────────────────
 // RealtimeBackend — AlloLib AudioIO wrapper for the real-time engine
@@ -149,6 +153,30 @@ public:
     /// Used by agents that need to append their own AudioCallbacks.
     al::AudioIO& audioIO() { return mAudioIO; }
 
+    // ── Agent wiring ─────────────────────────────────────────────────────
+    //
+    // The backend holds a raw pointer to the StreamingAgent. Ownership
+    // stays with main(). The pointer is set once before start() and never
+    // changes during audio streaming — no synchronization needed.
+
+    /// Connect the streaming agent. Must be called BEFORE start().
+    /// Also caches the source names so the audio callback doesn't need
+    /// to query the map on every block.
+    void setStreamingAgent(StreamingAgent* agent) {
+        mStreamer = agent;
+    }
+
+    /// Cache source names from the streaming agent for use in processBlock().
+    /// Must be called AFTER loadScene() and BEFORE start().
+    void cacheSourceNames(const std::vector<std::string>& names) {
+        mSourceNames = names;
+        // Pre-allocate the mono mix buffer for the largest possible block.
+        // This avoids allocation on the audio thread.
+        mMonoMixBuffer.resize(mConfig.bufferSize, 0.0f);
+        std::cout << "[Backend] Cached " << mSourceNames.size()
+                  << " source names for audio callback." << std::endl;
+    }
+
 
 private:
 
@@ -166,42 +194,79 @@ private:
 
     // ── Per-block processing (called on audio thread) ────────────────────
     //
-    // Phase 1: outputs silence and updates engine state.
+    // Phase 2: reads mono audio from each source via StreamingAgent, sums
+    //   all sources into a mono mix, applies master gain, and copies to
+    //   all output channels (flat mono output for streaming verification).
+    //
     // Future phases will insert the full processing chain here:
-    //   1. Streaming agent → fills per-source mono buffers
-    //   2. Pose agent → computes per-source positions for this block
-    //   3. Spatializer agent → DBAP panning → writes to output channels
-    //   4. LFE router → routes LFE-tagged sources to subwoofer channels
-    //   5. Compensation & gain → applies master gain, per-channel trim
-    //   6. Output remap → maps logical channels to physical device channels
+    //   3. Pose agent → computes per-source positions for this block
+    //   4. Spatializer agent → DBAP panning → writes to output channels
+    //   5. LFE router → routes LFE-tagged sources to subwoofer channels
+    //   6. Compensation & gain → per-channel trim
+    //   7. Output remap → maps logical channels to physical device channels
+    //
+    // REAL-TIME CONTRACT:
+    // - No allocation, no locks, no I/O.
+    // - Only reads from pre-filled streaming buffers (lock-free).
 
     void processBlock(al::AudioIOData& io) {
 
-        const unsigned int numFrames = io.framesPerBuffer();
+        const unsigned int numFrames   = io.framesPerBuffer();
         const unsigned int numChannels = io.channelsOut();
 
-        // ── Phase 1: Silence output ──────────────────────────────────────
-        // Zero all output channels. This is the baseline — future agents
-        // will fill these buffers with spatialized audio.
+        // ── Step 1: Zero all output channels ─────────────────────────────
         for (unsigned int ch = 0; ch < numChannels; ++ch) {
             float* buf = io.outBuffer(ch);
             std::memset(buf, 0, numFrames * sizeof(float));
         }
 
-        // ── Update engine state ──────────────────────────────────────────
-        // Advance the frame counter and playback time.
+        // ── Step 2: Read and mix all sources ─────────────────────────────
+        // For each source, get a mono block from the streaming agent, then
+        // accumulate into the first output channel. This is a simple sum
+        // (no spatialization) — just proves the streaming pipeline works.
+        //
+        // In Phase 4, this becomes per-source DBAP → per-speaker channels.
+
+        if (mStreamer && !mSourceNames.empty()) {
+            uint64_t currentFrame = mState.frameCounter.load(std::memory_order_relaxed);
+            float masterGain = mConfig.masterGain.load(std::memory_order_relaxed);
+
+            // Scale factor to prevent clipping when summing many sources.
+            // Simple 1/N normalization — sufficient for testing.
+            float sourceScale = 1.0f / static_cast<float>(mSourceNames.size());
+            float gainPerSource = masterGain * sourceScale;
+
+            float* outCh0 = io.outBuffer(0);
+
+            for (const auto& name : mSourceNames) {
+                // Fill the pre-allocated mono buffer with this source's audio
+                mStreamer->getBlock(name, currentFrame, numFrames,
+                                    mMonoMixBuffer.data());
+
+                // Accumulate into output channel 0
+                for (unsigned int f = 0; f < numFrames; ++f) {
+                    outCh0[f] += mMonoMixBuffer[f] * gainPerSource;
+                }
+            }
+
+            // Copy channel 0 to all other channels (mono mirror for testing)
+            // This lets us hear the mix on any connected speaker/headphone.
+            for (unsigned int ch = 1; ch < numChannels; ++ch) {
+                float* dest = io.outBuffer(ch);
+                std::memcpy(dest, outCh0, numFrames * sizeof(float));
+            }
+        }
+
+        // ── Step 3: Update engine state ──────────────────────────────────
         uint64_t prevFrames = mState.frameCounter.load(std::memory_order_relaxed);
-        uint64_t newFrames = prevFrames + numFrames;
+        uint64_t newFrames  = prevFrames + numFrames;
         mState.frameCounter.store(newFrames, std::memory_order_relaxed);
         mState.playbackTimeSec.store(
             static_cast<double>(newFrames) / mConfig.sampleRate,
             std::memory_order_relaxed
         );
 
-        // ── CPU load monitoring ──────────────────────────────────────────
-        // AlloLib's cpu() returns the fraction of the buffer period used
-        // by the callback. We clamp to [0, 1] because AlloLib can return
-        // negative values when the callback is trivially fast.
+        // ── Step 4: CPU load monitoring ──────────────────────────────────
         float rawCpu = static_cast<float>(mAudioIO.cpu());
         float clampedCpu = (rawCpu < 0.0f) ? 0.0f : (rawCpu > 1.0f ? 1.0f : rawCpu);
         mState.cpuLoad.store(clampedCpu, std::memory_order_relaxed);
@@ -213,5 +278,12 @@ private:
     EngineState&    mState;     // Reference to shared engine state
     al::AudioIO     mAudioIO;   // AlloLib audio device wrapper
     bool            mInitialized = false;
+
+    // ── Agent pointers (set once before start(), never changed) ──────────
+    StreamingAgent* mStreamer = nullptr;
+
+    // ── Cached data for audio callback (set once, read-only in callback) ─
+    std::vector<std::string> mSourceNames;  // Source name list for iteration
+    std::vector<float>       mMonoMixBuffer; // Pre-allocated per-source temp buffer
 };
 

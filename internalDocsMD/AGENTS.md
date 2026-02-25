@@ -1,6 +1,6 @@
 # sonoPleth — Comprehensive Agent Context
 
-**Last Updated:** February 22, 2026  
+**Last Updated:** February 24, 2026  
 **Project:** sonoPleth - Open Spatial Audio Infrastructure  
 **Lead Developer:** Lucian Parisi
 
@@ -14,12 +14,13 @@
 3. [Core Components](#core-components)
 4. [LUSID Scene Format](#lusid-scene-format)
 5. [Spatial Rendering System](#spatial-rendering-system)
-6. [File Structure & Organization](#file-structure--organization)
-7. [Python Virtual Environment](#python-virtual-environment)
-8. [Common Issues & Solutions](#common-issues--solutions)
-9. [Development Workflow](#development-workflow)
-10. [Testing & Validation](#testing--validation)
-11. [Future Work & Known Limitations](#future-work--known-limitations)
+6. [Real-Time Spatial Audio Engine](#real-time-spatial-audio-engine)
+7. [File Structure & Organization](#file-structure--organization)
+8. [Python Virtual Environment](#python-virtual-environment)
+9. [Common Issues & Solutions](#common-issues--solutions)
+10. [Development Workflow](#development-workflow)
+11. [Testing & Validation](#testing--validation)
+12. [Future Work & Known Limitations](#future-work--known-limitations)
 
 ---
 
@@ -838,6 +839,74 @@ Core dataclasses for LUSID Scene v0.5.2:
 
 ---
 
+## Real-Time Spatial Audio Engine
+
+### Overview
+
+The real-time engine (`spatial_engine/realtimeEngine/`) performs live spatial audio rendering. It reads the same LUSID scene files and source WAVs as the offline renderer but streams them through an audio device in real-time instead of rendering to a WAV file.
+
+**Status:** Phase 2 complete (streaming verification). Phases 3–9 pending.
+
+### Architecture — Agent Model
+
+The engine follows a sequential agent architecture where each agent handles one stage of the audio processing chain. All agents share `RealtimeConfig` and `EngineState` structs defined in `RealtimeTypes.hpp`.
+
+| Phase | Agent | Status | File |
+|-------|-------|--------|------|
+| 1 | **Backend Adapter** (Agent 8) | ✅ Complete | `RealtimeBackend.hpp` |
+| 2 | **Streaming Agent** (Agent 1) | ✅ Complete | `StreamingAgent.hpp` |
+| 3 | Pose Agent (Agent 2) | Not started | — |
+| 4 | Spatializer Agent (Agent 3) | Not started | — |
+| 5 | LFE Router (Agent 4) | Not started | — |
+| 6 | Compensation Agent (Agent 5) | Not started | — |
+| 7 | Output Remap (Agent 6) | Not started | — |
+| 8 | Transport Agent (Agent 7) | Not started | — |
+| 9 | Control Surface (Agent 9) | Not started | — |
+
+### Key Files
+
+- **`RealtimeTypes.hpp`** — Shared data types: `RealtimeConfig` (sample rate, buffer size, channels, paths, atomic gain/playing/shouldExit), `EngineState` (atomic frame counter, playback time, CPU load, source/speaker counts).
+
+- **`RealtimeBackend.hpp`** — Agent 8. Wraps AlloLib's `AudioIO` for audio I/O. Registers a static callback that dispatches to `processBlock()`. Phase 2: reads mono blocks from StreamingAgent for each source, sums with 1/N normalization, applies master gain, mirrors to all output channels.
+
+- **`StreamingAgent.hpp`** — Agent 1. Double-buffered disk streaming for mono WAV sources. Each source gets two pre-allocated 5-second buffers (240k frames at 48kHz). A background loader thread monitors consumption and preloads the next chunk into the inactive buffer when the active buffer is 50% consumed. The audio callback reads from buffers using atomic state flags — no locks on the audio thread.
+
+- **`main.cpp`** — CLI entry point. Parses arguments, loads LUSID scene via `JSONLoader`, creates StreamingAgent (opens all source WAVs), creates RealtimeBackend, wires agents together, starts audio, runs monitoring loop, handles SIGINT for clean shutdown.
+
+- **`runRealtime.py`** — Python launcher that mirrors `createRender.py` pattern. Validates paths and launches the C++ executable via subprocess.
+
+### Build System
+
+```bash
+cd spatial_engine/realtimeEngine/build
+cmake ..
+make -j4
+```
+
+The CMake config (`CMakeLists.txt`) compiles `src/main.cpp` plus shared loaders from `spatial_engine/src/` (JSONLoader, LayoutLoader, WavUtils). Links `al` (AlloLib) and `Gamma` (DSP library, provides libsndfile transitively).
+
+**Dependencies:** No new dependencies beyond what AlloLib/Gamma already provide. libsndfile comes through Gamma's CMake (`find_package(LibSndFile)` → exports via PUBLIC link).
+
+### Run Example
+
+```bash
+./build/sonoPleth_realtime \
+    --layout ../speaker_layouts/allosphere_layout.json \
+    --scene ../../processedData/stageForRender/scene.lusid.json \
+    --sources ../../sourceData/lusid_package \
+    --channels 2 --gain 0.1 --buffersize 512
+```
+
+### Streaming Agent Design
+
+**Double-buffer pattern:** Each source has two float buffers (A and B). Buffer states cycle through `EMPTY → LOADING → READY → PLAYING`. The audio thread reads from the `PLAYING` buffer. When playback crosses 50% of the active buffer, the loader thread fills the inactive buffer with the next chunk from disk.
+
+**Buffer swap is lock-free:** The audio thread atomically switches `activeBuffer` when it detects the other buffer is `READY` and contains the needed data. The mutex in `SourceStream` only protects `sf_seek()`/`sf_read_float()` calls and is only ever held by the loader thread.
+
+**Source naming convention:** Source key (e.g., `"11.1"`) maps to WAV filename `"11.1.wav"`. LFE source key `"LFE"` → `"LFE.wav"`. Same convention as `WavUtils::loadSources()`.
+
+---
+
 ## File Structure & Organization
 
 ### Project Root
@@ -928,7 +997,14 @@ sonoPleth/
 │   ├── spatialRender/
 │   │   ├── CMakeLists.txt           # CMake config
 │   │   └── build/                   # Build output dir
-│   └── realtimeEngine/              # Future: live rendering
+│   └── realtimeEngine/              # Real-time spatial audio engine
+│       ├── CMakeLists.txt           # Build config (links AlloLib + Gamma)
+│       ├── build/                   # Build output dir
+│       └── src/
+│           ├── main.cpp             # CLI entry point
+│           ├── RealtimeTypes.hpp    # Shared data types (config, state)
+│           ├── RealtimeBackend.hpp  # Agent 8: AlloLib AudioIO wrapper
+│           └── StreamingAgent.hpp   # Agent 1: double-buffered WAV streaming
 ├── thirdparty/
 │   └── allolib/                     # Git submodule (audio lib)
 ├── processedData/                   # Pipeline outputs
@@ -1349,10 +1425,15 @@ python LUSID/tests/benchmark_xml_parsers.py
   - `interpolation_hint` — per-node interpolation mode
   - `width` — source width parameter (DBAP/reverb)
 
-- [ ] **Real-time rendering engine**
-  - `spatial_engine/realtimeEngine/` placeholder exists
-  - Live LUSID scene streaming (OSC, network, file watch)
-  - Low-latency audio I/O
+- [ ] **Real-time rendering engine — remaining phases**
+  - Phases 1-2 complete (backend adapter + streaming agent)
+  - Phase 3: Pose Agent — interpolate LUSID keyframes per audio block
+  - Phase 4: Spatializer Agent — DBAP panning to speaker layout
+  - Phase 5: LFE Router — route LFE source to subwoofer channels
+  - Phase 6: Compensation Agent — per-channel gain/delay trim
+  - Phase 7: Output Remap — logical-to-physical channel mapping
+  - Phase 8: Transport Agent — seek, loop, scene reload
+  - Phase 9: Control Surface — GUI integration (Qt)
 
 - [ ] **AlloLib player bundle**
   - Package renderer + player + layout loader as single allolib app

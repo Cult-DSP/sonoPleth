@@ -84,7 +84,7 @@ Based on the architecture's data-flow dependencies, the planned order is:
 | Phase | Agent(s)                  | Why this order                                      | Status      |
 | ----- | ------------------------- | --------------------------------------------------- | ----------- |
 | 1     | **Backend Adapter**       | Need audio output before anything else is audible   | ✅ Complete |
-| 2     | **Streaming**             | Need audio data to feed the mixer                   | Not started |
+| 2     | **Streaming**             | Need audio data to feed the mixer                   | ✅ Complete |
 | 3     | **Pose and Control**      | Need positions before spatialization                | Not started |
 | 4     | **Spatializer (DBAP)**    | Core mixing — depends on 1-3                        | Not started |
 | 5     | **LFE Router**            | Runs in audio callback after spatializer            | Not started |
@@ -101,13 +101,13 @@ Based on the architecture's data-flow dependencies, the planned order is:
 
 **Files created:**
 
-| File | Purpose |
-| ---- | ------- |
-| `spatial_engine/realtimeEngine/CMakeLists.txt` | Build system — links AlloLib + Gamma, shares `JSONLoader`/`LayoutLoader`/`WavUtils` from `../src/` |
-| `spatial_engine/realtimeEngine/src/RealtimeTypes.hpp` | Shared data types: `RealtimeConfig` (device settings, paths, atomic gain/playback flags) and `EngineState` (frame counter, playback time, CPU load, xrun count) |
+| File                                                    | Purpose                                                                                                                                                                             |
+| ------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `spatial_engine/realtimeEngine/CMakeLists.txt`          | Build system — links AlloLib + Gamma, shares `JSONLoader`/`LayoutLoader`/`WavUtils` from `../src/`                                                                                  |
+| `spatial_engine/realtimeEngine/src/RealtimeTypes.hpp`   | Shared data types: `RealtimeConfig` (device settings, paths, atomic gain/playback flags) and `EngineState` (frame counter, playback time, CPU load, xrun count)                     |
 | `spatial_engine/realtimeEngine/src/RealtimeBackend.hpp` | Agent 8 implementation — wraps AlloLib `AudioIO` with `init()`/`start()`/`stop()`/`shutdown()` lifecycle, static C-style callback dispatches to `processBlock()`, CPU load clamping |
-| `spatial_engine/realtimeEngine/src/main.cpp` | CLI entry point — parses `--layout`/`--scene`/`--sources` + optional args, runs monitoring loop with status display, handles SIGINT for clean shutdown |
-| `runRealtime.py` | Python launcher — mirrors `src/createRender.py` pattern, validates paths, launches C++ executable via `subprocess.Popen`, handles Ctrl+C forwarding |
+| `spatial_engine/realtimeEngine/src/main.cpp`            | CLI entry point — parses `--layout`/`--scene`/`--sources` + optional args, runs monitoring loop with status display, handles SIGINT for clean shutdown                              |
+| `runRealtime.py`                                        | Python launcher — mirrors `src/createRender.py` pattern, validates paths, launches C++ executable via `subprocess.Popen`, handles Ctrl+C forwarding                                 |
 
 **Build & test results:**
 
@@ -124,6 +124,44 @@ Based on the architecture's data-flow dependencies, the planned order is:
 - `processBlock(AudioIOData&)` is the insertion point for all future agents
 - `RealtimeConfig` and `EngineState` are the shared state structs
 - `runRealtime.py` is ready to call from the GUI
+
+### Phase 2 Completion Log (Streaming Agent)
+
+**Files created/modified:**
+
+| File | Action | Purpose |
+|------|--------|---------|
+| `spatial_engine/realtimeEngine/src/StreamingAgent.hpp` | **Created** | Agent 1 — double-buffered per-source WAV streaming with background loader thread. Each source gets two 5-second buffers (240k frames at 48kHz). Lock-free audio-thread reads via atomic buffer states. |
+| `spatial_engine/realtimeEngine/src/RealtimeBackend.hpp` | **Modified** | Added `StreamingAgent*` pointer and `setStreamingAgent()`/`cacheSourceNames()` methods. `processBlock()` now reads mono blocks from each source, sums with 1/N normalization × master gain, mirrors to all output channels. |
+| `spatial_engine/realtimeEngine/src/main.cpp` | **Modified** | Now loads LUSID scene via `JSONLoader::loadLusidScene()`, creates `StreamingAgent`, opens all source WAVs, wires into backend, starts loader thread before audio, shuts down in correct order (backend → streaming). |
+| `internalDocsMD/AGENTS.md` | **Modified** | Added "Real-Time Spatial Audio Engine" section with architecture, file descriptions, build instructions, streaming design, run example. Updated file structure tree and Future Work. |
+
+**Design decisions:**
+
+- **libsndfile access**: Uses `<sndfile.h>` directly (same as `WavUtils.cpp`). Available transitively through Gamma → `find_package(LibSndFile QUIET)` → exported via PUBLIC link. No new dependencies.
+- **Per-source double buffers**: Each source gets independent buffers (not a shared multichannel buffer). Simpler, avoids cross-source contention.
+- **5-second chunk size** (240k frames): Balances memory (~1.8 MB per source, ~63 MB for 35 sources) against seek frequency. Only needs ~20 loads per source over a 98-second piece.
+- **50% preload threshold**: Background thread starts loading the next chunk when playback passes the halfway point of the active buffer. Gives 2.5 seconds of runway before the buffer switch.
+- **Single loader thread**: One thread services all sources sequentially. At 2ms poll interval and ~35 sources, worst-case full scan takes <1ms. Sufficient for current source count.
+- **Mutable atomics for buffer state**: `stateA`, `stateB`, `activeBuffer` are `mutable` in `SourceStream` because the audio thread may switch buffers during a logically-const `getSample()` call.
+
+**Build & test results:**
+
+- `cmake .. && make -j4` compiles with zero errors
+- 35 sources loaded successfully (34 audio objects + LFE), each ~98 seconds (4,703,695 frames at 48kHz)
+- Ran for 69.7 seconds with 2 output channels, --gain 0.1
+- CPU load: 0.0% (mono sum of 35 sources + memcpy is trivially fast)
+- No xruns, no underruns, no file handle leaks
+- Clean SIGINT shutdown: backend stops → streaming agent closes all SNDFILE handles → exit 0
+- Background loader thread joins cleanly
+
+**What the next phase gets:**
+
+- `StreamingAgent::getBlock(sourceName, startFrame, numFrames, outBuffer)` — lock-free mono block read from any source
+- `StreamingAgent::sourceNames()` — list of all loaded source keys
+- `StreamingAgent::isLFE(sourceName)` — LFE detection for routing in Phase 5
+- The audio callback in `processBlock()` is the insertion point for Pose Agent (Phase 3) and Spatializer Agent (Phase 4)
+- Current mono mix (equal-sum to all channels) will be replaced by per-source DBAP panning in Phase 4
 
 ---
 

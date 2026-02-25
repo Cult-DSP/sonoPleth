@@ -3,12 +3,16 @@
 // This is the CLI entry point for the real-time engine. It:
 //   1. Parses command-line arguments (layout, scene, sources, etc.)
 //   2. Creates the RealtimeConfig and EngineState
-//   3. Initializes the Backend Adapter (AlloLib AudioIO)
-//   4. Starts audio streaming
-//   5. Runs a monitoring loop until interrupted (Ctrl+C or scene end)
-//   6. Shuts down cleanly
+//   3. Loads the LUSID scene and opens all source WAV files
+//   4. Initializes the Backend Adapter (AlloLib AudioIO)
+//   5. Wires the StreamingAgent into the audio callback
+//   6. Starts audio streaming
+//   7. Runs a monitoring loop until interrupted (Ctrl+C or scene end)
+//   8. Shuts down cleanly (streaming agent → backend)
 //
-// PHASE 1: Outputs silence. Validates that the audio device opens and streams.
+// PHASE 2: Streams all sources from disk and outputs a flat mono mix to all
+//   channels. Verifies that the double-buffered streaming pipeline works
+//   end-to-end with real audio data.
 //
 // Usage:
 //   ./sonoPleth_realtime_engine \
@@ -30,6 +34,8 @@
 
 #include "RealtimeTypes.hpp"
 #include "RealtimeBackend.hpp"
+#include "StreamingAgent.hpp"
+#include "JSONLoader.hpp"  // SpatialData, JSONLoader::loadLusidScene()
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Signal handling for clean shutdown on Ctrl+C
@@ -91,8 +97,8 @@ static bool hasArg(int argc, char* argv[], const std::string& flag) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 static void printUsage(const char* progName) {
-    std::cout << "\nsonoPleth Real-Time Spatial Audio Engine (Phase 1 — silence test)\n"
-              << "─────────────────────────────────────────────────────────────────\n"
+    std::cout << "\nsonoPleth Real-Time Spatial Audio Engine (Phase 2 — streaming test)\n"
+              << "─────────────────────────────────────────────────────────────────────\n"
               << "Usage: " << progName << " [options]\n\n"
               << "Required:\n"
               << "  --layout <path>     Speaker layout JSON file\n"
@@ -120,7 +126,7 @@ int main(int argc, char* argv[]) {
     }
 
     std::cout << "\n╔══════════════════════════════════════════════════════════╗" << std::endl;
-    std::cout << "║   sonoPleth Real-Time Spatial Audio Engine  (Phase 1)   ║" << std::endl;
+    std::cout << "║   sonoPleth Real-Time Spatial Audio Engine  (Phase 2)   ║" << std::endl;
     std::cout << "╚══════════════════════════════════════════════════════════╝\n" << std::endl;
 
     // ── Parse arguments ──────────────────────────────────────────────────
@@ -137,8 +143,6 @@ int main(int argc, char* argv[]) {
     config.masterGain.store(getArgFloat(argc, argv, "--gain", 0.5f));
 
     // ── Validate required arguments ──────────────────────────────────────
-    // Phase 1 doesn't actually load files, but we still validate the args
-    // are provided so the CLI contract is established early.
 
     if (config.layoutPath.empty()) {
         std::cerr << "[Main] ERROR: --layout is required." << std::endl;
@@ -171,7 +175,36 @@ int main(int argc, char* argv[]) {
     std::signal(SIGINT, signalHandler);
     std::signal(SIGTERM, signalHandler);
 
-    // ── Phase 1: Initialize and start the Backend Adapter ────────────────
+    // ── Phase 2: Load LUSID scene and open source WAV files ──────────────
+
+    std::cout << "[Main] Loading LUSID scene: " << config.scenePath << std::endl;
+    SpatialData scene;
+    try {
+        scene = JSONLoader::loadLusidScene(config.scenePath);
+    } catch (const std::exception& e) {
+        std::cerr << "[Main] FATAL: Failed to load LUSID scene: " << e.what() << std::endl;
+        return 1;
+    }
+    std::cout << "[Main] Scene loaded: " << scene.sources.size()
+              << " sources";
+    if (scene.duration > 0) {
+        std::cout << ", duration: " << scene.duration << "s";
+    }
+    std::cout << "." << std::endl;
+
+    // Create the streaming agent and load all source WAVs
+    StreamingAgent streaming(config, state);
+    if (!streaming.loadScene(scene)) {
+        std::cerr << "[Main] FATAL: No source files could be loaded." << std::endl;
+        return 1;
+    }
+
+    // Store scene duration (longest source determines total length)
+    // The streaming agent already populated numSources in engine state.
+    std::cout << "[Main] " << streaming.numSources() << " sources ready for streaming."
+              << std::endl;
+
+    // ── Initialize the Backend Adapter ───────────────────────────────────
 
     RealtimeBackend backend(config, state);
 
@@ -180,8 +213,17 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
+    // Wire the streaming agent into the audio callback
+    backend.setStreamingAgent(&streaming);
+    backend.cacheSourceNames(streaming.sourceNames());
+
+    // Start the background loader thread BEFORE audio begins.
+    // This ensures the first buffer swap is ready when the callback fires.
+    streaming.startLoader();
+
     if (!backend.start()) {
         std::cerr << "[Main] FATAL: Backend failed to start." << std::endl;
+        streaming.shutdown();
         return 1;
     }
 
@@ -189,7 +231,8 @@ int main(int argc, char* argv[]) {
     // Run until Ctrl+C or shouldExit is set. Print status every second.
     // This is where the GUI event loop would go in the future.
 
-    std::cout << "[Main] Audio streaming. Press Ctrl+C to stop.\n" << std::endl;
+    std::cout << "[Main] Audio streaming " << streaming.numSources()
+              << " sources. Press Ctrl+C to stop.\n" << std::endl;
 
     while (!config.shouldExit.load()) {
 
@@ -203,6 +246,7 @@ int main(int argc, char* argv[]) {
                   << "  |  CPU: ";
         std::cout.precision(1);
         std::cout << (cpu * 100.0f) << "%"
+                  << "  |  Sources: " << state.numSources.load(std::memory_order_relaxed)
                   << "  |  Frames: " << state.frameCounter.load(std::memory_order_relaxed)
                   << "     " << std::flush;
 
@@ -212,9 +256,12 @@ int main(int argc, char* argv[]) {
     std::cout << std::endl;
 
     // ── Clean shutdown ───────────────────────────────────────────────────
+    // Order matters: stop audio first, then streaming agent, so the callback
+    // doesn't try to read from freed buffers.
 
     std::cout << "\n[Main] Shutting down..." << std::endl;
     backend.shutdown();
+    streaming.shutdown();
 
     std::cout << "[Main] Final stats:" << std::endl;
     std::cout << "  Total frames: " << state.frameCounter.load() << std::endl;
