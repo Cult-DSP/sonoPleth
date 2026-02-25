@@ -149,7 +149,9 @@ def checkSourceType(arg):
             return "ADM"
     
     if os.path.isdir(arg):
-        if os.path.basename(arg) == "lusid_package":
+        # Check for scene.lusid.json inside the directory (more robust
+        # than checking basename — works for any package directory name)
+        if os.path.exists(os.path.join(arg, "scene.lusid.json")):
             return "LUSID"
     
     return "Wrong Input Type"

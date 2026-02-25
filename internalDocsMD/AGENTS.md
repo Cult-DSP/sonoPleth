@@ -877,7 +877,7 @@ The engine follows a sequential agent architecture where each agent handles one 
 
 - **`main.cpp`** — CLI entry point. Parses arguments (`--layout`, `--scene`, `--sources`, `--samplerate`, `--buffersize`, `--gain`), loads LUSID scene via `JSONLoader`, loads speaker layout via `LayoutLoader`, creates Streaming (opens all source WAVs), creates Pose (analyzes layout, stores keyframes), creates Spatializer (builds speakers, computes output channels from layout, creates DBAP), creates RealtimeBackend (opens AudioIO with layout-derived channel count), wires all agents together, starts audio, runs monitoring loop, handles SIGINT for clean shutdown. No `--channels` flag — channel count is always derived from the layout.
 
-- **`runRealtime.py`** — Python launcher that mirrors `createRender.py` pattern. Validates paths and launches the C++ executable via subprocess.
+- **`runRealtime.py`** — Python launcher that mirrors `runPipeline.py`. Accepts the same inputs: ADM WAV file or LUSID package directory + speaker layout. For ADM sources, runs the full preprocessing pipeline (extract ADM metadata → parse to LUSID scene → split stems → write scene.lusid.json) then launches the C++ real-time engine. For LUSID packages, validates the package and launches directly. Provides `run_realtime_from_ADM()` and `run_realtime_from_LUSID()` entry points. Uses `checkSourceType()` to detect input type from CLI. No `--channels` parameter — channel count derived from speaker layout by the C++ engine.
 
 ### Build System
 

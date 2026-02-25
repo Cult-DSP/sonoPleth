@@ -51,9 +51,19 @@ Continue using **AlloLib's AudioIO** (already a dependency via
 
 ### Python Entry Point – `runRealtime.py`
 
-- A new file **`runRealtime.py`** at the project root mimics the offline
-  `runPipeline.py` but calls the real-time engine executable instead of the
-  offline renderer.
+- **`runRealtime.py`** at the project root mirrors `runPipeline.py` — it
+  accepts the **same inputs** (ADM WAV file or LUSID package directory +
+  speaker layout) and runs the **same preprocessing pipeline** (ADM extract
+  → parse to LUSID → package/split stems → write scene.lusid.json).
+- The only divergence point: at the final step it launches the **real-time
+  C++ engine** instead of the offline renderer.
+- Two pipeline entry points:
+  - `run_realtime_from_ADM(source_adm, layout)` — full ADM preprocessing
+  - `run_realtime_from_LUSID(package_dir, layout)` — direct launch
+- CLI uses `checkSourceType()` to auto-detect ADM vs LUSID input, same
+  pattern as `runPipeline.py`.
+- No `--channels` parameter — channel count is derived from the speaker
+  layout by the C++ engine's `Spatializer::init()`.
 - Keeps everything **segmented** — the offline pipeline is never touched, and
   `runRealtime.py` can be debugged independently.
 - The Qt GUI will call `runRealtime.py` via `QProcess` (same pattern as
@@ -63,8 +73,9 @@ Continue using **AlloLib's AudioIO** (already a dependency via
 
 The first working version must:
 
-1. Accept the same inputs as the offline pipeline (LUSID scene JSON + mono
-   stems + speaker layout JSON).
+1. Accept the same inputs as the offline pipeline: **ADM WAV file** or
+   **LUSID package directory** + speaker layout JSON. Run the same
+   preprocessing (ADM extract → parse → package) before launching.
 2. Parse the LUSID scene (reuse existing `LUSID/` Python package — this part
    is straightforward and safe).
 3. Stream the mono stems from disk (double-buffered, real-time safe).
@@ -101,13 +112,13 @@ Based on the architecture's data-flow dependencies, the planned order is:
 
 **Files created:**
 
-| File                                                    | Purpose                                                                                                                                                                             |
-| ------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `spatial_engine/realtimeEngine/CMakeLists.txt`          | Build system — links AlloLib + Gamma, shares `JSONLoader`/`LayoutLoader`/`WavUtils` from `../src/`                                                                                  |
-| `spatial_engine/realtimeEngine/src/RealtimeTypes.hpp`   | Shared data types: `RealtimeConfig` (device settings, paths, atomic gain/playback flags) and `EngineState` (frame counter, playback time, CPU load, xrun count)                     |
-| `spatial_engine/realtimeEngine/src/RealtimeBackend.hpp` | Agent 8 implementation — wraps AlloLib `AudioIO` with `init()`/`start()`/`stop()`/`shutdown()` lifecycle, static C-style callback dispatches to `processBlock()`, CPU load clamping |
-| `spatial_engine/realtimeEngine/src/main.cpp`            | CLI entry point — parses `--layout`/`--scene`/`--sources` + optional args, runs monitoring loop with status display, handles SIGINT for clean shutdown                              |
-| `runRealtime.py`                                        | Python launcher — mirrors `src/createRender.py` pattern, validates paths, launches C++ executable via `subprocess.Popen`, handles Ctrl+C forwarding                                 |
+| File                                                    | Purpose                                                                                                                                                                                                                                                 |
+| ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `spatial_engine/realtimeEngine/CMakeLists.txt`          | Build system — links AlloLib + Gamma, shares `JSONLoader`/`LayoutLoader`/`WavUtils` from `../src/`                                                                                                                                                      |
+| `spatial_engine/realtimeEngine/src/RealtimeTypes.hpp`   | Shared data types: `RealtimeConfig` (device settings, paths, atomic gain/playback flags) and `EngineState` (frame counter, playback time, CPU load, xrun count)                                                                                         |
+| `spatial_engine/realtimeEngine/src/RealtimeBackend.hpp` | Agent 8 implementation — wraps AlloLib `AudioIO` with `init()`/`start()`/`stop()`/`shutdown()` lifecycle, static C-style callback dispatches to `processBlock()`, CPU load clamping                                                                     |
+| `spatial_engine/realtimeEngine/src/main.cpp`            | CLI entry point — parses `--layout`/`--scene`/`--sources` + optional args, runs monitoring loop with status display, handles SIGINT for clean shutdown                                                                                                  |
+| `runRealtime.py`                                        | Python launcher — mirrors `runPipeline.py` with same input types (ADM WAV or LUSID package). Runs preprocessing pipeline, then launches C++ executable. `run_realtime_from_ADM()` / `run_realtime_from_LUSID()` entry points. Handles Ctrl+C forwarding |
 
 **Build & test results:**
 
@@ -123,7 +134,7 @@ Based on the architecture's data-flow dependencies, the planned order is:
 - A working audio callback that currently outputs silence
 - `processBlock(AudioIOData&)` is the insertion point for all future agents
 - `RealtimeConfig` and `EngineState` are the shared state structs
-- `runRealtime.py` is ready to call from the GUI
+- `runRealtime.py` is ready to call from the GUI (accepts same inputs as `runPipeline.py`)
 
 ### Phase 2 Completion Log (Streaming Agent)
 
