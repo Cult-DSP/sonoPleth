@@ -129,12 +129,12 @@ Based on the architecture's data-flow dependencies, the planned order is:
 
 **Files created/modified:**
 
-| File | Action | Purpose |
-|------|--------|---------|
-| `spatial_engine/realtimeEngine/src/StreamingAgent.hpp` | **Created** | Agent 1 — double-buffered per-source WAV streaming with background loader thread. Each source gets two 5-second buffers (240k frames at 48kHz). Lock-free audio-thread reads via atomic buffer states. |
-| `spatial_engine/realtimeEngine/src/RealtimeBackend.hpp` | **Modified** | Added `StreamingAgent*` pointer and `setStreamingAgent()`/`cacheSourceNames()` methods. `processBlock()` now reads mono blocks from each source, sums with 1/N normalization × master gain, mirrors to all output channels. |
-| `spatial_engine/realtimeEngine/src/main.cpp` | **Modified** | Now loads LUSID scene via `JSONLoader::loadLusidScene()`, creates `StreamingAgent`, opens all source WAVs, wires into backend, starts loader thread before audio, shuts down in correct order (backend → streaming). |
-| `internalDocsMD/AGENTS.md` | **Modified** | Added "Real-Time Spatial Audio Engine" section with architecture, file descriptions, build instructions, streaming design, run example. Updated file structure tree and Future Work. |
+| File                                                    | Action       | Purpose                                                                                                                                                                                                                     |
+| ------------------------------------------------------- | ------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `spatial_engine/realtimeEngine/src/Streaming.hpp`       | **Created**  | Agent 1 — double-buffered per-source WAV streaming with background loader thread. Each source gets two 5-second buffers (240k frames at 48kHz). Lock-free audio-thread reads via atomic buffer states.                      |
+| `spatial_engine/realtimeEngine/src/RealtimeBackend.hpp` | **Modified** | Added `Streaming*` pointer and `setStreaming()`/`cacheSourceNames()` methods. `processBlock()` now reads mono blocks from each source, sums with 1/N normalization × master gain, mirrors to all output channels.           |
+| `spatial_engine/realtimeEngine/src/main.cpp`            | **Modified** | Now loads LUSID scene via `JSONLoader::loadLusidScene()`, creates `Streaming`, opens all source WAVs, wires into backend, starts loader thread before audio, shuts down in correct order (backend → streaming).             |
+| `internalDocsMD/AGENTS.md`                              | **Modified** | Added "Real-Time Spatial Audio Engine" section with architecture, file descriptions, build instructions, streaming design, run example. Updated file structure tree and Future Work.                                        |
 
 **Design decisions:**
 
@@ -162,6 +162,48 @@ Based on the architecture's data-flow dependencies, the planned order is:
 - `StreamingAgent::isLFE(sourceName)` — LFE detection for routing in Phase 5
 - The audio callback in `processBlock()` is the insertion point for Pose Agent (Phase 3) and Spatializer Agent (Phase 4)
 - Current mono mix (equal-sum to all channels) will be replaced by per-source DBAP panning in Phase 4
+
+### Phase 3 Completion Log (Pose — Source Position Interpolation)
+
+**Files created/modified:**
+
+| File                                                    | Action       | Purpose                                                                                                                                                                                                                                                              |
+| ------------------------------------------------------- | ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `spatial_engine/realtimeEngine/src/Pose.hpp`            | **Created**  | Agent 2 — source position interpolation and layout-aware transforms. SLERP between LUSID keyframes, elevation sanitization (3 modes), DBAP coordinate transform. Outputs `SourcePose` vector per audio block.                                                        |
+| `spatial_engine/realtimeEngine/src/RealtimeTypes.hpp`   | **Modified** | Added `ElevationMode` enum (Clamp, RescaleAtmosUp, RescaleFullSphere) and `elevationMode` field to `RealtimeConfig`.                                                                                                                                                |
+| `spatial_engine/realtimeEngine/src/RealtimeBackend.hpp` | **Modified** | Added `Pose*` pointer and `setPose()` method. `processBlock()` now calls `mPose->computePositions(blockCenterSec)` at step 1.5, computing per-source positions before the audio mixing loop. Positions are computed but not yet used for spatialization (Phase 4).   |
+| `spatial_engine/realtimeEngine/src/main.cpp`            | **Modified** | Now loads speaker layout via `LayoutLoader::loadLayout()`, creates `Pose`, calls `pose.loadScene(scene, layout)` to analyze layout and store keyframes, wires Pose into backend via `backend.setPose(&pose)`. Updated to Phase 3 banner and help text.               |
+| `internalDocsMD/AGENTS.md`                              | **Modified** | Updated Phase 3 row to ✅ Complete, added `Pose.hpp` description to Key Files section.                                                                                                                                                                              |
+
+**Design decisions:**
+
+- **SLERP interpolation** (not linear Cartesian): Prevents direction vectors from passing through near-zero magnitude when keyframes are far apart on the sphere. Adapted from `SpatialRenderer::slerpDir()`.
+- **Three elevation modes**: `Clamp` (hard clip to layout bounds), `RescaleAtmosUp` (default, maps [0,π/2] → layout), `RescaleFullSphere` (maps [-π/2,π/2] → layout). Identical to offline renderer.
+- **DBAP coordinate transform**: Our system (y-forward, x-right, z-up) → AlloLib DBAP internal does `Vec3d(pos.x, -pos.z, pos.y)`, so we pre-compensate with `(x, z, -y)`. Adapted from `SpatialRenderer::directionToDBAPPosition()`.
+- **Layout radius = median speaker distance**: Same calculation as offline renderer constructor. Used to scale unit direction vectors to DBAP positions at the speaker ring distance.
+- **2D detection**: If speaker elevation span < 3°, all directions are flattened to the horizontal plane (z=0). Same threshold as offline renderer.
+- **Fallback chain for degenerate directions**: (1) normalize raw interpolation, (2) last-good cached direction, (3) nearest keyframe direction, (4) front (0,1,0). Same logic as `SpatialRenderer::safeDirForSource()`.
+- **Block-center sampling**: Position is computed at the center of each audio block (`frameCounter + bufferSize/2`) per design doc specification.
+- **Pre-allocated output vector**: `mPoses` and `mSourceOrder` are allocated once at `loadScene()` time. `computePositions()` updates entries in-place — no allocation on the audio thread.
+- **`std::map` for keyframe lookup**: Acceptable because `computePositions()` iterates sequentially through the pre-built source order, not doing random lookups. The map is read-only during playback.
+
+**Build & test results:**
+
+- `cmake --build .` compiles with zero errors
+- 35 sources loaded, 54 speakers + 1 subwoofer in AlloSphere layout
+- Layout analysis: median radius 5.856m, elevation [-27.7°, 32.7°], 3D mode
+- Ran for 8.6 seconds with 2 output channels, --gain 0.3
+- CPU load: 0.0% (SLERP + transforms for 35 sources add negligible overhead)
+- No xruns, no crashes
+- Clean shutdown via SIGINT
+
+**What the next phase gets:**
+
+- `Pose::computePositions(blockCenterTimeSec)` — called once per audio block, updates internal pose vector
+- `Pose::getPoses()` → `const vector<SourcePose>&` — per-source `{name, position, isLFE, isValid}` ready for DBAP
+- Positions are in DBAP-ready coordinates (pre-transformed), scaled to layout radius
+- LFE sources have `isLFE=true` → route to subwoofer channels, skip DBAP
+- The spatializer (Phase 4) will iterate `getPoses()` and compute per-speaker gain coefficients
 
 ---
 

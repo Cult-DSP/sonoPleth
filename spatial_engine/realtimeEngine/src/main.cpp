@@ -3,16 +3,19 @@
 // This is the CLI entry point for the real-time engine. It:
 //   1. Parses command-line arguments (layout, scene, sources, etc.)
 //   2. Creates the RealtimeConfig and EngineState
-//   3. Loads the LUSID scene and opens all source WAV files
-//   4. Initializes the Backend Adapter (AlloLib AudioIO)
-//   5. Wires the StreamingAgent into the audio callback
-//   6. Starts audio streaming
-//   7. Runs a monitoring loop until interrupted (Ctrl+C or scene end)
-//   8. Shuts down cleanly (streaming agent → backend)
+//   3. Loads the LUSID scene and speaker layout
+//   4. Opens all source WAV files (Streaming agent)
+//   5. Computes layout analysis and loads keyframes (Pose agent)
+//   6. Initializes the Backend Adapter (AlloLib AudioIO)
+//   7. Wires Streaming + Pose into the audio callback
+//   8. Starts audio streaming
+//   9. Runs a monitoring loop until interrupted (Ctrl+C or scene end)
+//  10. Shuts down cleanly (streaming agent → backend)
 //
-// PHASE 2: Streams all sources from disk and outputs a flat mono mix to all
-//   channels. Verifies that the double-buffered streaming pipeline works
-//   end-to-end with real audio data.
+// PHASE 3: Streams all sources and computes per-source positions at each
+//   audio block. Positions are computed via SLERP interpolation and
+//   layout-aware transforms but are not yet used for spatialization.
+//   Audio output is still the flat mono mix from Phase 2.
 //
 // Usage:
 //   ./sonoPleth_realtime_engine \
@@ -34,8 +37,10 @@
 
 #include "RealtimeTypes.hpp"
 #include "RealtimeBackend.hpp"
-#include "StreamingAgent.hpp"
-#include "JSONLoader.hpp"  // SpatialData, JSONLoader::loadLusidScene()
+#include "Streaming.hpp"
+#include "Pose.hpp"            // Pose — source position interpolation
+#include "JSONLoader.hpp"      // SpatialData, JSONLoader::loadLusidScene()
+#include "LayoutLoader.hpp"    // SpeakerLayoutData, LayoutLoader::loadLayout()
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Signal handling for clean shutdown on Ctrl+C
@@ -97,7 +102,7 @@ static bool hasArg(int argc, char* argv[], const std::string& flag) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 static void printUsage(const char* progName) {
-    std::cout << "\nsonoPleth Real-Time Spatial Audio Engine (Phase 2 — streaming test)\n"
+    std::cout << "\nsonoPleth Real-Time Spatial Audio Engine (Phase 3 — pose + streaming)\n"
               << "─────────────────────────────────────────────────────────────────────\n"
               << "Usage: " << progName << " [options]\n\n"
               << "Required:\n"
@@ -126,7 +131,7 @@ int main(int argc, char* argv[]) {
     }
 
     std::cout << "\n╔══════════════════════════════════════════════════════════╗" << std::endl;
-    std::cout << "║   sonoPleth Real-Time Spatial Audio Engine  (Phase 2)   ║" << std::endl;
+    std::cout << "║   sonoPleth Real-Time Spatial Audio Engine  (Phase 3)   ║" << std::endl;
     std::cout << "╚══════════════════════════════════════════════════════════╝\n" << std::endl;
 
     // ── Parse arguments ──────────────────────────────────────────────────
@@ -193,7 +198,7 @@ int main(int argc, char* argv[]) {
     std::cout << "." << std::endl;
 
     // Create the streaming agent and load all source WAVs
-    StreamingAgent streaming(config, state);
+    Streaming streaming(config, state);
     if (!streaming.loadScene(scene)) {
         std::cerr << "[Main] FATAL: No source files could be loaded." << std::endl;
         return 1;
@@ -204,6 +209,29 @@ int main(int argc, char* argv[]) {
     std::cout << "[Main] " << streaming.numSources() << " sources ready for streaming."
               << std::endl;
 
+    // ── Phase 3: Load speaker layout and create Pose agent ───────────────
+
+    std::cout << "[Main] Loading speaker layout: " << config.layoutPath << std::endl;
+    SpeakerLayoutData layout;
+    try {
+        layout = LayoutLoader::loadLayout(config.layoutPath);
+    } catch (const std::exception& e) {
+        std::cerr << "[Main] FATAL: Failed to load speaker layout: " << e.what() << std::endl;
+        return 1;
+    }
+    std::cout << "[Main] Layout loaded: " << layout.speakers.size()
+              << " speakers, " << layout.subwoofers.size() << " subwoofers."
+              << std::endl;
+
+    // Create the pose agent and load keyframes + layout analysis
+    Pose pose(config, state);
+    if (!pose.loadScene(scene, layout)) {
+        std::cerr << "[Main] FATAL: Pose agent failed to initialize." << std::endl;
+        return 1;
+    }
+    std::cout << "[Main] Pose agent ready: " << pose.numSources()
+              << " source positions will be computed per block." << std::endl;
+
     // ── Initialize the Backend Adapter ───────────────────────────────────
 
     RealtimeBackend backend(config, state);
@@ -213,8 +241,9 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    // Wire the streaming agent into the audio callback
-    backend.setStreamingAgent(&streaming);
+    // Wire the streaming and pose agents into the audio callback
+    backend.setStreaming(&streaming);
+    backend.setPose(&pose);
     backend.cacheSourceNames(streaming.sourceNames());
 
     // Start the background loader thread BEFORE audio begins.
@@ -232,7 +261,8 @@ int main(int argc, char* argv[]) {
     // This is where the GUI event loop would go in the future.
 
     std::cout << "[Main] Audio streaming " << streaming.numSources()
-              << " sources. Press Ctrl+C to stop.\n" << std::endl;
+              << " sources through " << pose.numSources()
+              << " pose computations. Press Ctrl+C to stop.\n" << std::endl;
 
     while (!config.shouldExit.load()) {
 

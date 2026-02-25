@@ -845,23 +845,23 @@ Core dataclasses for LUSID Scene v0.5.2:
 
 The real-time engine (`spatial_engine/realtimeEngine/`) performs live spatial audio rendering. It reads the same LUSID scene files and source WAVs as the offline renderer but streams them through an audio device in real-time instead of rendering to a WAV file.
 
-**Status:** Phase 2 complete (streaming verification). Phases 3–9 pending.
+**Status:** Phase 3 complete (pose interpolation). Phases 4–9 pending.
 
 ### Architecture — Agent Model
 
 The engine follows a sequential agent architecture where each agent handles one stage of the audio processing chain. All agents share `RealtimeConfig` and `EngineState` structs defined in `RealtimeTypes.hpp`.
 
-| Phase | Agent | Status | File |
-|-------|-------|--------|------|
-| 1 | **Backend Adapter** (Agent 8) | ✅ Complete | `RealtimeBackend.hpp` |
-| 2 | **Streaming Agent** (Agent 1) | ✅ Complete | `StreamingAgent.hpp` |
-| 3 | Pose Agent (Agent 2) | Not started | — |
-| 4 | Spatializer Agent (Agent 3) | Not started | — |
-| 5 | LFE Router (Agent 4) | Not started | — |
-| 6 | Compensation Agent (Agent 5) | Not started | — |
-| 7 | Output Remap (Agent 6) | Not started | — |
-| 8 | Transport Agent (Agent 7) | Not started | — |
-| 9 | Control Surface (Agent 9) | Not started | — |
+| Phase | Agent                         | Status      | File                  |
+| ----- | ----------------------------- | ----------- | --------------------- |
+| 1     | **Backend Adapter** (Agent 8) | ✅ Complete | `RealtimeBackend.hpp` |
+| 2     | **Streaming** (Agent 1)       | ✅ Complete | `Streaming.hpp`       |
+| 3     | **Pose** (Agent 2)            | ✅ Complete | `Pose.hpp`            |
+| 4     | Spatializer Agent (Agent 3)   | Not started | —                     |
+| 5     | LFE Router (Agent 4)          | Not started | —                     |
+| 6     | Compensation Agent (Agent 5)  | Not started | —                     |
+| 7     | Output Remap (Agent 6)        | Not started | —                     |
+| 8     | Transport Agent (Agent 7)     | Not started | —                     |
+| 9     | Control Surface (Agent 9)     | Not started | —                     |
 
 ### Key Files
 
@@ -869,9 +869,11 @@ The engine follows a sequential agent architecture where each agent handles one 
 
 - **`RealtimeBackend.hpp`** — Agent 8. Wraps AlloLib's `AudioIO` for audio I/O. Registers a static callback that dispatches to `processBlock()`. Phase 2: reads mono blocks from StreamingAgent for each source, sums with 1/N normalization, applies master gain, mirrors to all output channels.
 
-- **`StreamingAgent.hpp`** — Agent 1. Double-buffered disk streaming for mono WAV sources. Each source gets two pre-allocated 5-second buffers (240k frames at 48kHz). A background loader thread monitors consumption and preloads the next chunk into the inactive buffer when the active buffer is 50% consumed. The audio callback reads from buffers using atomic state flags — no locks on the audio thread.
+- **`Streaming.hpp`** — Agent 1. Double-buffered disk streaming for mono WAV sources. Each source gets two pre-allocated 5-second buffers (240k frames at 48kHz). A background loader thread monitors consumption and preloads the next chunk into the inactive buffer when the active buffer is 50% consumed. The audio callback reads from buffers using atomic state flags — no locks on the audio thread.
 
-- **`main.cpp`** — CLI entry point. Parses arguments, loads LUSID scene via `JSONLoader`, creates StreamingAgent (opens all source WAVs), creates RealtimeBackend, wires agents together, starts audio, runs monitoring loop, handles SIGINT for clean shutdown.
+- **`Pose.hpp`** — Agent 2. Source position interpolation and layout-aware transforms. At each audio block, SLERP-interpolates between LUSID keyframes to compute each source's direction, sanitizes elevation for the speaker layout (clamp, rescale-atmos-up, or rescale-full-sphere modes), and applies the DBAP coordinate transform (direction × layout radius → position). Outputs a flat `SourcePose` vector consumed by the spatializer. All math is adapted from `SpatialRenderer.cpp` with provenance comments.
+
+- **`main.cpp`** — CLI entry point. Parses arguments, loads LUSID scene via `JSONLoader`, loads speaker layout via `LayoutLoader`, creates Streaming (opens all source WAVs), creates Pose (analyzes layout, stores keyframes), creates RealtimeBackend, wires agents together, starts audio, runs monitoring loop, handles SIGINT for clean shutdown.
 
 - **`runRealtime.py`** — Python launcher that mirrors `createRender.py` pattern. Validates paths and launches the C++ executable via subprocess.
 
@@ -1004,7 +1006,7 @@ sonoPleth/
 │           ├── main.cpp             # CLI entry point
 │           ├── RealtimeTypes.hpp    # Shared data types (config, state)
 │           ├── RealtimeBackend.hpp  # Agent 8: AlloLib AudioIO wrapper
-│           └── StreamingAgent.hpp   # Agent 1: double-buffered WAV streaming
+│           └── Streaming.hpp         # Agent 1: double-buffered WAV streaming
 ├── thirdparty/
 │   └── allolib/                     # Git submodule (audio lib)
 ├── processedData/                   # Pipeline outputs

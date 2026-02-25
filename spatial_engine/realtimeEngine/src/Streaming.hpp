@@ -1,4 +1,4 @@
-// StreamingAgent.hpp — Agent 1: Audio Streaming from Disk
+// Streaming.hpp — Agent 1: Audio Streaming from Disk
 //
 // Streams mono WAV source files from disk in real-time using double-buffered
 // I/O. Each source gets two pre-allocated buffers that alternate: one is read
@@ -373,16 +373,16 @@ struct SourceStream {
 
 
 // ─────────────────────────────────────────────────────────────────────────────
-// StreamingAgent — Manages all source streams and the background loader
+// Streaming — Manages all source streams and the background loader
 // ─────────────────────────────────────────────────────────────────────────────
 
-class StreamingAgent {
+class Streaming {
 public:
 
-    StreamingAgent(RealtimeConfig& config, EngineState& state)
+    Streaming(RealtimeConfig& config, EngineState& state)
         : mConfig(config), mState(state) {}
 
-    ~StreamingAgent() { shutdown(); }
+    ~Streaming() { shutdown(); }
 
     // ── Load all sources from a LUSID scene ──────────────────────────────
     // Opens each source WAV file and pre-loads the first chunk.

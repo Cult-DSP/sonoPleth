@@ -32,6 +32,17 @@
 #include <vector>
 
 // ─────────────────────────────────────────────────────────────────────────────
+// ElevationMode — Elevation handling for directions outside speaker coverage
+// ─────────────────────────────────────────────────────────────────────────────
+// Replicated from SpatialRenderer.hpp so the real-time engine doesn't depend
+// on the offline renderer headers. Must stay in sync.
+enum class ElevationMode {
+    Clamp,              // Hard clip elevation to layout bounds
+    RescaleAtmosUp,     // Default. Assumes content in [0, +π/2]. Maps to layout range.
+    RescaleFullSphere   // Assumes content in [-π/2, +π/2]. Maps to layout range.
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
 // RealtimeConfig — Global configuration for the real-time engine
 // ─────────────────────────────────────────────────────────────────────────────
 // Set once at startup, read-only during playback.
@@ -47,6 +58,7 @@ struct RealtimeConfig {
 
     // ── Spatializer settings (mirrors offline RenderConfig) ──────────────
     float  dbapFocus        = 1.0f;    // DBAP focus/rolloff exponent (0.2–5.0)
+    ElevationMode elevationMode = ElevationMode::RescaleAtmosUp;  // Elevation mapping
 
     // ── Gain settings ────────────────────────────────────────────────────
     // masterGain is atomic because the GUI/control thread may adjust it

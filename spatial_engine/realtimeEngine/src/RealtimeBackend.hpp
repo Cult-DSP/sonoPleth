@@ -17,7 +17,7 @@
 //   It receives `this` via the userData pointer and dispatches to the member
 //   function `processBlock()`.
 // - Phase 1: outputs silence.
-// - Phase 2: reads audio from StreamingAgent and outputs a mono mix to all
+// - Phase 2: reads audio from Streaming and outputs a mono mix to all
 //   channels (verifies streaming works). Full DBAP spatialization in Phase 4.
 // - The callback must NEVER allocate, lock, or do I/O. It runs on the audio
 //   thread at real-time priority.
@@ -42,7 +42,8 @@
 #include "al/io/al_AudioIO.hpp"
 
 #include "RealtimeTypes.hpp"
-#include "StreamingAgent.hpp"  // StreamingAgent — needed for inline processBlock()
+#include "Streaming.hpp"  // Streaming — needed for inline processBlock()
+#include "Pose.hpp"       // Pose — needed for inline processBlock()
 
 // ─────────────────────────────────────────────────────────────────────────────
 // RealtimeBackend — AlloLib AudioIO wrapper for the real-time engine
@@ -155,15 +156,20 @@ public:
 
     // ── Agent wiring ─────────────────────────────────────────────────────
     //
-    // The backend holds a raw pointer to the StreamingAgent. Ownership
+    // The backend holds a raw pointer to the Streaming agent. Ownership
     // stays with main(). The pointer is set once before start() and never
     // changes during audio streaming — no synchronization needed.
 
     /// Connect the streaming agent. Must be called BEFORE start().
     /// Also caches the source names so the audio callback doesn't need
     /// to query the map on every block.
-    void setStreamingAgent(StreamingAgent* agent) {
+    void setStreaming(Streaming* agent) {
         mStreamer = agent;
+    }
+
+    /// Connect the pose agent. Must be called BEFORE start().
+    void setPose(Pose* agent) {
+        mPose = agent;
     }
 
     /// Cache source names from the streaming agent for use in processBlock().
@@ -194,12 +200,12 @@ private:
 
     // ── Per-block processing (called on audio thread) ────────────────────
     //
-    // Phase 2: reads mono audio from each source via StreamingAgent, sums
-    //   all sources into a mono mix, applies master gain, and copies to
-    //   all output channels (flat mono output for streaming verification).
+    // Phase 3: computes source positions via the Pose agent, reads mono
+    //   audio from each source via Streaming, sums all sources into a mono
+    //   mix, applies master gain, and copies to all output channels.
+    //   Positions are computed but not yet used for spatialization.
     //
     // Future phases will insert the full processing chain here:
-    //   3. Pose agent → computes per-source positions for this block
     //   4. Spatializer agent → DBAP panning → writes to output channels
     //   5. LFE router → routes LFE-tagged sources to subwoofer channels
     //   6. Compensation & gain → per-channel trim
@@ -218,6 +224,19 @@ private:
         for (unsigned int ch = 0; ch < numChannels; ++ch) {
             float* buf = io.outBuffer(ch);
             std::memset(buf, 0, numFrames * sizeof(float));
+        }
+
+        // ── Step 1.5: Compute source positions for this block ────────────
+        // Pose agent interpolates keyframes at the block-center time and
+        // transforms directions to DBAP positions. The resulting poses are
+        // available via mPose->getPoses() for the spatializer.
+        // In Phase 3 we compute them but don't use them yet — Phase 4 will
+        // feed them to the DBAP spatializer.
+        if (mPose) {
+            uint64_t curFrame = mState.frameCounter.load(std::memory_order_relaxed);
+            double blockCenterSec = static_cast<double>(curFrame + numFrames / 2)
+                                    / mConfig.sampleRate;
+            mPose->computePositions(blockCenterSec);
         }
 
         // ── Step 2: Read and mix all sources ─────────────────────────────
@@ -280,7 +299,8 @@ private:
     bool            mInitialized = false;
 
     // ── Agent pointers (set once before start(), never changed) ──────────
-    StreamingAgent* mStreamer = nullptr;
+    Streaming* mStreamer = nullptr;
+    Pose*      mPose     = nullptr;
 
     // ── Cached data for audio callback (set once, read-only in callback) ─
     std::vector<std::string> mSourceNames;  // Source name list for iteration
