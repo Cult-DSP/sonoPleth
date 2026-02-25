@@ -104,8 +104,10 @@ Based on the architecture's data-flow dependencies, the planned order is:
 | —     | **ADM Direct Streaming**  | Optimization: skip stem splitting for ADM sources     | ✅ Complete |
 | 5     | **LFE Router**            | ~~Runs in audio callback after spatializer~~          | ⏭️ Skipped  |
 | 6     | **Compensation and Gain** | Loudspeaker/sub mix sliders + focus auto-compensation | ✅ Complete |
-| 7     | **Output Remap**          | Final channel shuffle before hardware                 | Not started |
-| 8     | **Threading and Safety**  | Harden all inter-thread communication                 | Not started |
+| 7     | **Output Remap**          | Final channel shuffle before hardware                 | ✅ Complete |
+
+insert - audio driver compatibility - check if this will be an issue
+| 8 | **Threading and Safety** | Harden all inter-thread communication | Not started |
 
 INSERT - potential remove scan audio from pipeline and just read in empty files to save up front compute time. perhaps add a toggle for this?
 | 9 | **GUI Agent** | Qt integration, last because engine must work first | Not started |
@@ -353,6 +355,42 @@ priority / experimental.
 - `mConfig.loudspeakerMix` and `mConfig.subMix` are live atomics — any agent (GUI, control thread) can update them at runtime and the audio callback picks them up within one block
 - `spatializer.computeFocusCompensation()` is callable from any non-audio-thread context when focus changes
 - The copy-from-render-to-output section in `renderBlock()` is now cleanly separated from the gain application section, making it the clear insertion point for the Channel Remap agent (Phase 7)
+
+---
+
+### Phase 7 Completion Log (Output Remap)
+
+**Files created/modified:**
+
+| File                                                        | Action      | Purpose                                                                                                                                                                                                                                                                              |
+| ----------------------------------------------------------- | ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `spatial_engine/realtimeEngine/src/OutputRemap.hpp`         | **Created** | CSV-based channel remap table. Parses a `layout,device` CSV once at startup. Stores a compact `std::vector<RemapEntry>` for the audio thread to iterate. Detects identity maps and sets the `identity=true` fast-path flag. All out-of-range rows are dropped and logged once (never per-frame). |
+| `spatial_engine/realtimeEngine/src/Spatializer.hpp`         | **Modified** | Added `#include "OutputRemap.hpp"`. Added `mRemap` (const pointer, default nullptr). Added `setRemap()` method. Replaced the old identity-copy loop in `renderBlock()` with a two-branch remap: identity fast-path (bit-identical to Phase 6) or accumulate-via-entries-list remap path. |
+| `spatial_engine/realtimeEngine/src/main.cpp`                | **Modified** | Added `#include "OutputRemap.hpp"`. Added `--remap <path>` CLI flag + help text. After Spatializer init, creates an `OutputRemap`, calls `load()` with render and device channel counts, passes `&outputRemap` to `spatializer.setRemap()`. Updated banner to Phase 7 and comment block. |
+
+**Design decisions:**
+
+- **CSV schema from the spec**: `layout,device` headers required (case-insensitive), 0-based indices, extra columns ignored, `#` comment lines and empty lines skipped. Matches `agent_output_remap.md` exactly.
+- **Accumulate (not replace)**: multiple `layout` entries mapping to the same `device` channel are summed, matching the AlloApp reference behavior in `channelMapping.hpp`.
+- **Identity detection**: after parsing, `checkIdentity()` verifies that every entry has `layout == device`, there are no duplicates, and coverage is complete (exactly `renderChannels` entries). Only then is the fast-path flag set.
+- **No ownership transfer**: `OutputRemap` is stack-allocated in `main()` and passed as a `const*`. The Spatializer never deletes it. The object lives for the entire playback duration.
+- **No `--remap` → zero overhead**: when the flag is omitted, `setRemap()` is never called (`mRemap` stays `nullptr`), the `identity` branch fires, and the loop is identical to pre-Phase-7 code.
+- **Device channel count for range-checking**: `load()` is called with `config.outputChannels` for both `renderChannels` and `deviceChannels`. Since the engine currently uses identity hardware mapping, both counts are the same layout-derived value. Phase 8 or the Allosphere-specific CSV will use the real device channel count.
+- **Allosphere usage**: to apply the Allosphere-specific remap, generate a CSV from `channelMapping.hpp`'s `defaultChannelMap` (54 entries + sub) and pass it with `--remap allosphere.csv`. No code change needed.
+
+**Build & test results:**
+
+- `cmake --build . -j4` compiles with zero errors
+- No `--remap` → identity fast-path, output bit-identical to Phase 6
+- `--remap identity.csv` (all `layout==device`) → identity detected, fast-path active
+- `--remap swap.csv` (two channels swapped) → remap path active, entries logged
+
+**What the next phase gets:**
+
+- `Spatializer::setRemap(const OutputRemap*)` — can be called at any time before audio starts
+- `OutputRemap::load(path, renderCh, deviceCh)` — returns true on success, logs warnings on bad rows
+- The audio output is now fully configurable for any hardware channel layout via a two-column CSV
+- Phase 8 (Threading and Safety) can harden the existing atomic usage; no new remap-related thread concerns (the table is immutable during playback)
 
 ---
 

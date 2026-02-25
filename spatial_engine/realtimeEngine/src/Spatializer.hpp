@@ -60,6 +60,7 @@
 
 #include "RealtimeTypes.hpp"
 #include "LayoutLoader.hpp"
+#include "OutputRemap.hpp"
 #include "Streaming.hpp"
 #include "Pose.hpp"
 
@@ -311,23 +312,42 @@ public:
             }
         }
 
-        // ── Copy render buffer to real output (Channel Remap point) ──────
-        // Currently identity mapping: render channel N → device channel N.
-        // Only copy channels that exist in both the render buffer and the
-        // real AudioIO output (they should be the same size since both are
-        // derived from the layout, but we guard against mismatch).
+        // ── Phase 7: Copy render buffer → real output via OutputRemap ────
+        // If no remap is set (or remap is identity), use the direct-copy
+        // fast path (same as pre-Phase-7 behaviour, bit-identical output).
+        // Otherwise iterate the remap entries and accumulate each
+        // layout channel into its target device channel.
         //
-        // FUTURE: The Channel Remap agent will replace this loop with a
-        // mapping table (like channelMapping.hpp's defaultChannelMap),
-        // routing logical render channels to physical hardware outputs.
-        const unsigned int numOutputChannels = io.channelsOut();
-        const unsigned int copyChannels = std::min(renderChannels, numOutputChannels);
+        // FUTURE: The Channel Remap agent is now implemented here.
+        // To apply the Allosphere-specific channel map, generate a CSV from
+        // channelMapping.hpp's defaultChannelMap and pass it via --remap.
 
-        for (unsigned int ch = 0; ch < copyChannels; ++ch) {
-            const float* src = mRenderIO.outBuffer(ch);
-            float* dst = io.outBuffer(ch);
-            for (unsigned int f = 0; f < numFrames; ++f) {
-                dst[f] += src[f];
+        const unsigned int numOutputChannels = io.channelsOut();
+
+        bool useIdentity = (mRemap == nullptr) || mRemap->identity();
+
+        if (useIdentity) {
+            // Fast path: direct copy, render ch N → device ch N.
+            const unsigned int copyChannels = std::min(renderChannels, numOutputChannels);
+            for (unsigned int ch = 0; ch < copyChannels; ++ch) {
+                const float* src = mRenderIO.outBuffer(ch);
+                float* dst = io.outBuffer(ch);
+                for (unsigned int f = 0; f < numFrames; ++f) {
+                    dst[f] += src[f];
+                }
+            }
+        } else {
+            // Remap path: accumulate layout → device per entry list.
+            // Destination buffers in io were zeroed by the backend before
+            // renderBlock() was called, so accumulation is safe.
+            for (const auto& entry : mRemap->entries()) {
+                if (static_cast<unsigned int>(entry.layout) >= renderChannels) continue;
+                if (static_cast<unsigned int>(entry.device) >= numOutputChannels) continue;
+                const float* src = mRenderIO.outBuffer(entry.layout);
+                float* dst = io.outBuffer(entry.device);
+                for (unsigned int f = 0; f < numFrames; ++f) {
+                    dst[f] += src[f];
+                }
             }
         }
     }
@@ -335,6 +355,12 @@ public:
     // ── Accessors ────────────────────────────────────────────────────────
     int numSpeakers() const { return mNumSpeakers; }
     bool isInitialized() const { return mInitialized; }
+
+    // ── Phase 7: Output Remap ─────────────────────────────────────────────
+    // Call after init() and before the audio stream starts.
+    // The OutputRemap object must outlive the Spatializer.
+    // Passing nullptr (the default) restores the identity fast-path.
+    void setRemap(const OutputRemap* remap) { mRemap = remap; }
 
     // ── Phase 6: Focus auto-compensation ─────────────────────────────────
     // Called on the control/main thread (NOT audio thread) whenever the
@@ -466,9 +492,13 @@ private:
 
     // ── Internal render buffer (sized for layout-derived outputChannels) ──
     // DBAP and LFE both render into this buffer. The copy step in
-    // renderBlock() is the future Channel Remap insertion point.
+    // renderBlock() applies the OutputRemap (Phase 7) then writes to AudioIO.
     al::AudioIOData             mRenderIO;
 
     // ── Pre-allocated audio buffer (one source at a time) ────────────────
     std::vector<float>          mSourceBuffer;
+
+    // ── Phase 7: Output remap table ──────────────────────────────────────
+    // Non-owning pointer. nullptr → identity fast-path.
+    const OutputRemap*          mRemap = nullptr;
 };

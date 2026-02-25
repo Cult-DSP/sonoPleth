@@ -12,12 +12,11 @@
 //   9. Runs a monitoring loop until interrupted (Ctrl+C or scene end)
 //  10. Shuts down cleanly (streaming agent → backend)
 //
-// PHASE 6: Compensation and Gain Agent — adds loudspeaker and sub mix trims
-//   (--speaker_mix, --sub_mix in dB), plus focus auto-compensation
-//   (--auto_compensation flag). Mix trims are applied in Spatializer::renderBlock()
-//   to mRenderIO after DBAP rendering and before the copy-to-output step.
-//   Focus auto-compensation is computed on the main thread and stored in
-//   mConfig.loudspeakerMix (atomic) for the audio thread to read.
+// PHASE 7: Output Remap Agent — adds --remap <csv> flag. Loads a CSV that maps
+//   internal render-buffer channel indices to physical device output channel
+//   indices. Applied in Spatializer::renderBlock() at the copy-to-output step.
+//   Identity fast-path (no CSV) is bit-identical to Phase 6.
+//   Phase 6 (Compensation and Gain) features are unchanged.
 //
 // Usage:
 //   ./sonoPleth_realtime_engine \
@@ -41,7 +40,8 @@
 #include "RealtimeBackend.hpp"
 #include "Streaming.hpp"
 #include "Pose.hpp"            // Pose — source position interpolation
-#include "Spatializer.hpp"     // Spatializer — DBAP spatial panning
+#include "Spatializer.hpp"     // Spatializer — DBAP spatial panning (includes OutputRemap)
+#include "OutputRemap.hpp"     // OutputRemap — CSV-based channel remap table
 #include "JSONLoader.hpp"      // SpatialData, JSONLoader::loadLusidScene()
 #include "LayoutLoader.hpp"    // SpeakerLayoutData, LayoutLoader::loadLayout()
 
@@ -105,8 +105,8 @@ static bool hasArg(int argc, char* argv[], const std::string& flag) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 static void printUsage(const char* progName) {
-    std::cout << "\nsonoPleth Real-Time Spatial Audio Engine (Phase 6 — Compensation and Gain)\n"
-              << "─────────────────────────────────────────────────────────────────────────\n"
+    std::cout << "\nsonoPleth Real-Time Spatial Audio Engine (Phase 7 — Output Remap)\n"
+              << "───────────────────────────────────────────────────────────────────\n"
               << "Usage: " << progName << " [options]\n\n"
               << "Required:\n"
               << "  --layout <path>     Speaker layout JSON file\n"
@@ -122,6 +122,9 @@ static void printUsage(const char* progName) {
               << "  --speaker_mix <dB>  Loudspeaker mix trim in dB (±10, default: 0)\n"
               << "  --sub_mix <dB>      Subwoofer mix trim in dB (±10, default: 0)\n"
               << "  --auto_compensation Enable focus auto-compensation (default: off)\n"
+              << "  --remap <path>      CSV file mapping internal layout channels to device\n"
+              << "                      output channels (default: identity, no remapping)\n"
+              << "                      CSV format: 'layout,device' (0-based, headers required)\n"
               << "  --help              Show this message\n"
               << "\nNote: Output channel count is derived automatically from the speaker\n"
               << "layout (speakers + subwoofers). No manual channel count needed.\n"
@@ -141,7 +144,7 @@ int main(int argc, char* argv[]) {
     }
 
     std::cout << "\n╔══════════════════════════════════════════════════════════╗" << std::endl;
-    std::cout << "║  sonoPleth Real-Time Spatial Audio Engine  (Phase 6)    ║" << std::endl;
+    std::cout << "║  sonoPleth Real-Time Spatial Audio Engine  (Phase 7)    ║" << std::endl;
     std::cout << "╚══════════════════════════════════════════════════════════╝\n" << std::endl;
 
     // ── Parse arguments ──────────────────────────────────────────────────
@@ -299,6 +302,29 @@ int main(int argc, char* argv[]) {
               << " (" << (20.0f * std::log10(config.loudspeakerMix.load())) << " dB)"
               << "  subMix=" << config.subMix.load()
               << " (" << (20.0f * std::log10(config.subMix.load())) << " dB)" << std::endl;
+
+    // ── Phase 7: Output Remap ─────────────────────────────────────────────
+    // Load the CSV remap table if --remap was provided. The OutputRemap
+    // object is created here (on the main thread), loaded once, then handed
+    // to the Spatializer as a const pointer. The audio callback reads it
+    // without any locking (immutable during playback).
+    //
+    // If --remap is omitted the Spatializer uses its identity fast-path
+    // (same behaviour as Phase 6 and earlier — zero overhead change).
+    std::string remapPath = getArgString(argc, argv, "--remap");
+    OutputRemap outputRemap;
+    if (!remapPath.empty()) {
+        std::cout << "[Main] Loading output remap CSV: " << remapPath << std::endl;
+        bool remapOk = outputRemap.load(remapPath,
+                                        config.outputChannels,
+                                        config.outputChannels);
+        if (!remapOk) {
+            std::cout << "[Main] Remap load failed or resulted in identity — continuing with identity mapping." << std::endl;
+        }
+        spatializer.setRemap(&outputRemap);
+    } else {
+        std::cout << "[Main] No --remap provided — using identity channel mapping." << std::endl;
+    }
 
     // ── Initialize the Backend Adapter ───────────────────────────────────
 
