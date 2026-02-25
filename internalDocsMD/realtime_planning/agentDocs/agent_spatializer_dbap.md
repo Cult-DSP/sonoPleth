@@ -1,5 +1,11 @@
 # Spatializer (DBAP) Agent
 
+> **Implementation Status: ✅ COMPLETE (Phase 4, Feb 24 2026)**
+> Implemented in `spatial_engine/realtimeEngine/src/Spatializer.hpp`.
+> See `realtime_master.md` Phase 4 Completion Log for details.
+> Key design: output channels derived from layout, internal render buffer
+> for future Channel Remap, no hardcoded speaker layout values.
+
 ## Overview
 
 The **Spatializer (DBAP) Agent** is the core audio processing component of the engine, responsible for rendering multiple sound sources into a spatial audio scene using the Distance-Based Amplitude Panning (DBAP) algorithm. It takes audio frames from each source and computes how loud each source should be in each output speaker channel based on the distances between the source and the speakers. The result is a multi-channel audio mix that gives the illusion of sounds originating from specific points in space.

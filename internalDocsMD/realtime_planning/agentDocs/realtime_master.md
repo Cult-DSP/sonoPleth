@@ -85,8 +85,8 @@ Based on the architecture's data-flow dependencies, the planned order is:
 | ----- | ------------------------- | --------------------------------------------------- | ----------- |
 | 1     | **Backend Adapter**       | Need audio output before anything else is audible   | ✅ Complete |
 | 2     | **Streaming**             | Need audio data to feed the mixer                   | ✅ Complete |
-| 3     | **Pose and Control**      | Need positions before spatialization                | Not started |
-| 4     | **Spatializer (DBAP)**    | Core mixing — depends on 1-3                        | Not started |
+| 3     | **Pose and Control**      | Need positions before spatialization                | ✅ Complete |
+| 4     | **Spatializer (DBAP)**    | Core mixing — depends on 1-3                        | ✅ Complete |
 | 5     | **LFE Router**            | Runs in audio callback after spatializer            | Not started |
 | 6     | **Compensation and Gain** | Post-mix gain staging                               | Not started |
 | 7     | **Output Remap**          | Final channel shuffle before hardware               | Not started |
@@ -204,6 +204,48 @@ Based on the architecture's data-flow dependencies, the planned order is:
 - Positions are in DBAP-ready coordinates (pre-transformed), scaled to layout radius
 - LFE sources have `isLFE=true` → route to subwoofer channels, skip DBAP
 - The spatializer (Phase 4) will iterate `getPoses()` and compute per-speaker gain coefficients
+
+### Phase 4 Completion Log (Spatializer — DBAP Spatial Panning)
+
+**Files created/modified:**
+
+| File                                                    | Action       | Purpose                                                                                                                                                                                                                                                              |
+| ------------------------------------------------------- | ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `spatial_engine/realtimeEngine/src/Spatializer.hpp`     | **Created**  | Agent 3 — DBAP spatial audio panning. Builds `al::Speakers` from layout, computes output channels from layout, creates `al::Dbap`, renders all sources via internal render buffer, routes LFE to subwoofers. Internal render buffer is the future Channel Remap insertion point. |
+| `spatial_engine/realtimeEngine/src/RealtimeTypes.hpp`   | **Modified** | `outputChannels` default changed from 60 → 0. Now computed from speaker layout by `Spatializer::init()`. Added documentation comment explaining the formula.                                                                                                        |
+| `spatial_engine/realtimeEngine/src/RealtimeBackend.hpp` | **Modified** | Added `Spatializer*` pointer and `setSpatializer()` method. `processBlock()` now calls Spatializer `renderBlock()` instead of the Phase 2 mono-mix fallback. Pipeline: zero outputs → Pose positions → Spatializer render → update state → CPU monitor.               |
+| `spatial_engine/realtimeEngine/src/main.cpp`            | **Modified** | Removed `--channels` CLI argument. Creates `Spatializer`, calls `init(layout)` which computes `outputChannels` into config. Backend reads the layout-derived channel count. Updated help text, banner, and config printout.                                           |
+| `internalDocsMD/AGENTS.md`                              | **Modified** | Updated Phase 4 row to ✅ Complete, added `Spatializer.hpp` description, updated run example (no `--channels`), updated file tree.                                                                                                                                  |
+
+**Design decisions:**
+
+- **Layout-derived output channels** (not user-specified): `outputChannels = max(numSpeakers-1, max(subwooferDeviceChannels)) + 1`. Same formula as offline `SpatialRenderer.cpp` (lines 837-842). For the Allosphere layout: `max(53, 55) + 1 = 56`. Removed the `--channels` CLI flag entirely.
+- **Internal render buffer (`mRenderIO`)**: All rendering (DBAP + LFE) goes into an `al::AudioIOData` buffer sized to `outputChannels`. The copy step from render buffer → real AudioIO is the future **Channel Remap insertion point**, where logical render channels will be mapped to physical device outputs (like `channelMapping.hpp`'s `defaultChannelMap` does for the Allosphere ADM player). Currently identity mapping.
+- **Nothing hardcoded to any layout**: No Allosphere-specific values anywhere. Channel count, speaker positions, subwoofer channels — all derived from the layout JSON at runtime. Works with any speaker layout.
+- **Consecutive 0-based speaker channels**: Same as offline renderer. `al::Speaker` gets indices 0..N-1 for N speakers. The hardware `deviceChannel` numbers from the layout JSON (1-based, non-consecutive with gaps) are only used for subwoofer routing. Future Channel Remap will handle mapping render channels to hardware channels.
+- **LFE into render buffer** (not directly to AudioIO): LFE sources write into `mRenderIO` subwoofer channels, so all audio flows through the same remap point. Consistent with the design where the copy step is the single point of channel routing.
+- **Sub compensation**: `masterGain * 0.95 / numSubwoofers` — same formula as offline `SpatialRenderer::renderPerBlock()`.
+- **DBAP panning**: Uses `al::Dbap::renderBuffer()` directly. Source audio is pre-multiplied by `masterGain` before DBAP accumulates into speaker channels. Focus parameter is configurable via `RealtimeConfig::dbapFocus`.
+
+**Build & test results:**
+
+- `cmake .. && make -j4` compiles with zero errors
+- 35 sources loaded, 54 speakers + 1 subwoofer in AlloSphere layout
+- Output channels derived from layout: 56 (speakers 0-53, sub at deviceChannel 55)
+- AudioIO opened with 56 output channels
+- Internal render buffer: 56 channels × 512 frames
+- Ran for 6 seconds with `--gain 0.1`
+- CPU load: 0.0% (DBAP for 35 sources × 54 speakers + LFE is trivially fast)
+- No xruns, no assertion failures, no crashes
+- Clean shutdown via SIGINT/kill
+
+**What the next phase gets:**
+
+- `Spatializer::renderBlock(io, streaming, poses, frame, numFrames)` — renders all sources into the real AudioIO output
+- Layout-derived `config.outputChannels` — backend opens AudioIO with the right channel count automatically
+- Internal render buffer (`mRenderIO`) — future Channel Remap agent replaces the identity copy loop with a mapping table
+- LFE routing already handled (subwoofer channels from layout, no DBAP on LFE sources)
+- Phases 1-4 together form the **minimum audible spatial prototype** — sound comes out of the correct speakers based on LUSID scene positions
 
 ---
 

@@ -53,8 +53,18 @@ struct RealtimeConfig {
     // ── Audio device settings ────────────────────────────────────────────
     int    sampleRate       = 48000;   // Audio sample rate in Hz
     int    bufferSize       = 512;     // Frames per audio callback buffer
-    int    outputChannels   = 60;      // Total output channels (speakers + subs)
     int    inputChannels    = 0;       // Input channels (0 = output only)
+
+    // ── Layout-derived channel count ─────────────────────────────────────
+    // COMPUTED from the speaker layout at load time — never set by the user.
+    // Formula (matches offline SpatialRenderer.cpp):
+    //   maxChannel = max(numSpeakers - 1, max(subwooferDeviceChannels))
+    //   outputChannels = maxChannel + 1
+    // This means the output buffer may contain gap channels (e.g., Allosphere
+    // channels 13-16, 47-48 are unused). A future Channel Remap agent will
+    // map these logical render channels to physical device outputs.
+    // For now, AudioIO opens with this many channels (identity mapping).
+    int    outputChannels   = 0;       // Set by Spatializer::init() from layout
 
     // ── Spatializer settings (mirrors offline RenderConfig) ──────────────
     float  dbapFocus        = 1.0f;    // DBAP focus/rolloff exponent (0.2–5.0)

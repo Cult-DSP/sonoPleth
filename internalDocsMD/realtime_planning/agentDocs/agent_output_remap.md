@@ -1,5 +1,14 @@
 # Output Remap Agent
 
+> **Implementation Status: Not started (Phase 7)**
+> The **insertion point** for this agent already exists in `Spatializer.hpp`'s
+> `renderBlock()` method — the copy loop from `mRenderIO` (internal render
+> buffer) to real `AudioIO` output. Currently an identity mapping. When this
+> agent is implemented, it will replace that loop with a mapping table (like
+> `channelMapping.hpp`'s `defaultChannelMap`) that routes logical render
+> channels to physical device outputs.
+> See `realtime_master.md` Phase 4 Completion Log for context.
+
 ## Overview
 
 The **Output Remap Agent** is responsible for translating the engine’s internal channel layout and format into the format required by the actual audio output device or target environment. In a spatial audio engine, internal processing might use a logical channel order or even a higher channel count than the output. This agent takes the mixed audio from the Spatializer (and LFE Router, etc.) and **reorders, remaps, or downmixes** it so that it matches the physical speaker setup or output mode.

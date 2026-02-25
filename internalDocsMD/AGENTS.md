@@ -845,7 +845,7 @@ Core dataclasses for LUSID Scene v0.5.2:
 
 The real-time engine (`spatial_engine/realtimeEngine/`) performs live spatial audio rendering. It reads the same LUSID scene files and source WAVs as the offline renderer but streams them through an audio device in real-time instead of rendering to a WAV file.
 
-**Status:** Phase 3 complete (pose interpolation). Phases 4–9 pending.
+**Status:** Phase 4 complete (DBAP spatialization with layout-derived channels). Phases 5–9 pending.
 
 ### Architecture — Agent Model
 
@@ -856,7 +856,7 @@ The engine follows a sequential agent architecture where each agent handles one 
 | 1     | **Backend Adapter** (Agent 8) | ✅ Complete | `RealtimeBackend.hpp` |
 | 2     | **Streaming** (Agent 1)       | ✅ Complete | `Streaming.hpp`       |
 | 3     | **Pose** (Agent 2)            | ✅ Complete | `Pose.hpp`            |
-| 4     | Spatializer Agent (Agent 3)   | Not started | —                     |
+| 4     | **Spatializer** (Agent 3)     | ✅ Complete | `Spatializer.hpp`     |
 | 5     | LFE Router (Agent 4)          | Not started | —                     |
 | 6     | Compensation Agent (Agent 5)  | Not started | —                     |
 | 7     | Output Remap (Agent 6)        | Not started | —                     |
@@ -865,15 +865,17 @@ The engine follows a sequential agent architecture where each agent handles one 
 
 ### Key Files
 
-- **`RealtimeTypes.hpp`** — Shared data types: `RealtimeConfig` (sample rate, buffer size, channels, paths, atomic gain/playing/shouldExit), `EngineState` (atomic frame counter, playback time, CPU load, source/speaker counts).
+- **`RealtimeTypes.hpp`** — Shared data types: `RealtimeConfig` (sample rate, buffer size, layout-derived output channels, paths, atomic gain/playing/shouldExit), `EngineState` (atomic frame counter, playback time, CPU load, source/speaker counts). Output channel count is computed from the speaker layout by `Spatializer::init()` — not user-specified.
 
-- **`RealtimeBackend.hpp`** — Agent 8. Wraps AlloLib's `AudioIO` for audio I/O. Registers a static callback that dispatches to `processBlock()`. Phase 2: reads mono blocks from StreamingAgent for each source, sums with 1/N normalization, applies master gain, mirrors to all output channels.
+- **`RealtimeBackend.hpp`** — Agent 8. Wraps AlloLib's `AudioIO` for audio I/O. Registers a static callback that dispatches to `processBlock()`. Phase 4: zeroes all output channels, calls Pose to compute positions, calls Spatializer to render DBAP-panned audio into all speaker channels including LFE routing to subwoofers.
 
 - **`Streaming.hpp`** — Agent 1. Double-buffered disk streaming for mono WAV sources. Each source gets two pre-allocated 5-second buffers (240k frames at 48kHz). A background loader thread monitors consumption and preloads the next chunk into the inactive buffer when the active buffer is 50% consumed. The audio callback reads from buffers using atomic state flags — no locks on the audio thread.
 
 - **`Pose.hpp`** — Agent 2. Source position interpolation and layout-aware transforms. At each audio block, SLERP-interpolates between LUSID keyframes to compute each source's direction, sanitizes elevation for the speaker layout (clamp, rescale-atmos-up, or rescale-full-sphere modes), and applies the DBAP coordinate transform (direction × layout radius → position). Outputs a flat `SourcePose` vector consumed by the spatializer. All math is adapted from `SpatialRenderer.cpp` with provenance comments.
 
-- **`main.cpp`** — CLI entry point. Parses arguments, loads LUSID scene via `JSONLoader`, loads speaker layout via `LayoutLoader`, creates Streaming (opens all source WAVs), creates Pose (analyzes layout, stores keyframes), creates RealtimeBackend, wires agents together, starts audio, runs monitoring loop, handles SIGINT for clean shutdown.
+- **`Spatializer.hpp`** — Agent 3. DBAP spatial audio panning. Builds `al::Speakers` from the speaker layout (radians → degrees, consecutive 0-based channels), computes `outputChannels` from the layout (`max(numSpeakers-1, max(subDeviceChannels)) + 1` — same formula as offline renderer), creates `al::Dbap` with configurable focus. At each audio block: spatializes non-LFE sources via `renderBuffer()` into an internal render buffer, routes LFE sources directly to subwoofer channels with `masterGain * 0.95 / numSubwoofers` compensation, then copies the render buffer to the real AudioIO output. The copy step is the future insertion point for Channel Remap (mapping logical render channels to physical device outputs). Nothing is hardcoded to any specific speaker layout. All math adapted from `SpatialRenderer.cpp` with provenance comments.
+
+- **`main.cpp`** — CLI entry point. Parses arguments (`--layout`, `--scene`, `--sources`, `--samplerate`, `--buffersize`, `--gain`), loads LUSID scene via `JSONLoader`, loads speaker layout via `LayoutLoader`, creates Streaming (opens all source WAVs), creates Pose (analyzes layout, stores keyframes), creates Spatializer (builds speakers, computes output channels from layout, creates DBAP), creates RealtimeBackend (opens AudioIO with layout-derived channel count), wires all agents together, starts audio, runs monitoring loop, handles SIGINT for clean shutdown. No `--channels` flag — channel count is always derived from the layout.
 
 - **`runRealtime.py`** — Python launcher that mirrors `createRender.py` pattern. Validates paths and launches the C++ executable via subprocess.
 
@@ -896,8 +898,10 @@ The CMake config (`CMakeLists.txt`) compiles `src/main.cpp` plus shared loaders 
     --layout ../speaker_layouts/allosphere_layout.json \
     --scene ../../processedData/stageForRender/scene.lusid.json \
     --sources ../../sourceData/lusid_package \
-    --channels 2 --gain 0.1 --buffersize 512
+    --gain 0.1 --buffersize 512
 ```
+
+Output channels are derived from the speaker layout automatically (e.g., 56 for the AlloSphere layout: 54 speakers at channels 0-53 + subwoofer at device channel 55).
 
 ### Streaming Agent Design
 
@@ -1006,7 +1010,9 @@ sonoPleth/
 │           ├── main.cpp             # CLI entry point
 │           ├── RealtimeTypes.hpp    # Shared data types (config, state)
 │           ├── RealtimeBackend.hpp  # Agent 8: AlloLib AudioIO wrapper
-│           └── Streaming.hpp         # Agent 1: double-buffered WAV streaming
+│           ├── Streaming.hpp        # Agent 1: double-buffered WAV streaming
+│           ├── Pose.hpp             # Agent 2: source position interpolation
+│           └── Spatializer.hpp      # Agent 3: DBAP spatial panning
 ├── thirdparty/
 │   └── allolib/                     # Git submodule (audio lib)
 ├── processedData/                   # Pipeline outputs

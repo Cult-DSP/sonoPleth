@@ -39,6 +39,7 @@
 #include "RealtimeBackend.hpp"
 #include "Streaming.hpp"
 #include "Pose.hpp"            // Pose — source position interpolation
+#include "Spatializer.hpp"     // Spatializer — DBAP spatial panning
 #include "JSONLoader.hpp"      // SpatialData, JSONLoader::loadLusidScene()
 #include "LayoutLoader.hpp"    // SpeakerLayoutData, LayoutLoader::loadLayout()
 
@@ -102,7 +103,7 @@ static bool hasArg(int argc, char* argv[], const std::string& flag) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 static void printUsage(const char* progName) {
-    std::cout << "\nsonoPleth Real-Time Spatial Audio Engine (Phase 3 — pose + streaming)\n"
+    std::cout << "\nsonoPleth Real-Time Spatial Audio Engine (Phase 4 — DBAP spatialization)\n"
               << "─────────────────────────────────────────────────────────────────────\n"
               << "Usage: " << progName << " [options]\n\n"
               << "Required:\n"
@@ -112,9 +113,10 @@ static void printUsage(const char* progName) {
               << "Optional:\n"
               << "  --samplerate <int>  Audio sample rate in Hz (default: 48000)\n"
               << "  --buffersize <int>  Frames per audio callback (default: 512)\n"
-              << "  --channels <int>    Number of output channels (default: 60)\n"
               << "  --gain <float>      Master gain 0.0–1.0 (default: 0.5)\n"
               << "  --help              Show this message\n"
+              << "\nNote: Output channel count is derived automatically from the speaker\n"
+              << "layout (speakers + subwoofers). No manual channel count needed.\n"
               << std::endl;
 }
 
@@ -131,7 +133,7 @@ int main(int argc, char* argv[]) {
     }
 
     std::cout << "\n╔══════════════════════════════════════════════════════════╗" << std::endl;
-    std::cout << "║   sonoPleth Real-Time Spatial Audio Engine  (Phase 3)   ║" << std::endl;
+    std::cout << "║   sonoPleth Real-Time Spatial Audio Engine  (Phase 4)   ║" << std::endl;
     std::cout << "╚══════════════════════════════════════════════════════════╝\n" << std::endl;
 
     // ── Parse arguments ──────────────────────────────────────────────────
@@ -144,8 +146,9 @@ int main(int argc, char* argv[]) {
     config.sourcesFolder = getArgString(argc, argv, "--sources");
     config.sampleRate    = getArgInt(argc, argv, "--samplerate", 48000);
     config.bufferSize    = getArgInt(argc, argv, "--buffersize", 512);
-    config.outputChannels = getArgInt(argc, argv, "--channels", 60);
     config.masterGain.store(getArgFloat(argc, argv, "--gain", 0.5f));
+    // NOTE: outputChannels is computed from the speaker layout (see Spatializer::init).
+    //       No --channels flag needed.
 
     // ── Validate required arguments ──────────────────────────────────────
 
@@ -171,8 +174,8 @@ int main(int argc, char* argv[]) {
     std::cout << "  Sources:      " << config.sourcesFolder << std::endl;
     std::cout << "  Sample rate:  " << config.sampleRate << " Hz" << std::endl;
     std::cout << "  Buffer size:  " << config.bufferSize << " frames" << std::endl;
-    std::cout << "  Channels:     " << config.outputChannels << std::endl;
     std::cout << "  Master gain:  " << config.masterGain.load() << std::endl;
+    std::cout << "  (Output channels will be derived from speaker layout)" << std::endl;
     std::cout << std::endl;
 
     // ── Register signal handler for clean Ctrl+C shutdown ────────────────
@@ -232,6 +235,17 @@ int main(int argc, char* argv[]) {
     std::cout << "[Main] Pose agent ready: " << pose.numSources()
               << " source positions will be computed per block." << std::endl;
 
+    // ── Phase 4: Create Spatializer (DBAP) ───────────────────────────────
+
+    Spatializer spatializer(config, state);
+    if (!spatializer.init(layout)) {
+        std::cerr << "[Main] FATAL: Spatializer initialization failed." << std::endl;
+        return 1;
+    }
+    std::cout << "[Main] Spatializer ready: DBAP with " << spatializer.numSpeakers()
+              << " speakers, focus=" << config.dbapFocus << "." << std::endl;
+    std::cout << "[Main] Output channels (from layout): " << config.outputChannels << std::endl;
+
     // ── Initialize the Backend Adapter ───────────────────────────────────
 
     RealtimeBackend backend(config, state);
@@ -241,9 +255,10 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    // Wire the streaming and pose agents into the audio callback
+    // Wire all agents into the audio callback
     backend.setStreaming(&streaming);
     backend.setPose(&pose);
+    backend.setSpatializer(&spatializer);
     backend.cacheSourceNames(streaming.sourceNames());
 
     // Start the background loader thread BEFORE audio begins.
@@ -260,9 +275,9 @@ int main(int argc, char* argv[]) {
     // Run until Ctrl+C or shouldExit is set. Print status every second.
     // This is where the GUI event loop would go in the future.
 
-    std::cout << "[Main] Audio streaming " << streaming.numSources()
-              << " sources through " << pose.numSources()
-              << " pose computations. Press Ctrl+C to stop.\n" << std::endl;
+    std::cout << "[Main] DBAP spatialization active: " << streaming.numSources()
+              << " sources → " << spatializer.numSpeakers()
+              << " speakers. Press Ctrl+C to stop.\n" << std::endl;
 
     while (!config.shouldExit.load()) {
 

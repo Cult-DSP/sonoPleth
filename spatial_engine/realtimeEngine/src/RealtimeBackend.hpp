@@ -42,8 +42,9 @@
 #include "al/io/al_AudioIO.hpp"
 
 #include "RealtimeTypes.hpp"
-#include "Streaming.hpp"  // Streaming — needed for inline processBlock()
-#include "Pose.hpp"       // Pose — needed for inline processBlock()
+#include "Streaming.hpp"      // Streaming — needed for inline processBlock()
+#include "Pose.hpp"           // Pose — needed for inline processBlock()
+#include "Spatializer.hpp"    // Spatializer — needed for inline processBlock()
 
 // ─────────────────────────────────────────────────────────────────────────────
 // RealtimeBackend — AlloLib AudioIO wrapper for the real-time engine
@@ -156,13 +157,11 @@ public:
 
     // ── Agent wiring ─────────────────────────────────────────────────────
     //
-    // The backend holds a raw pointer to the Streaming agent. Ownership
-    // stays with main(). The pointer is set once before start() and never
-    // changes during audio streaming — no synchronization needed.
+    // The backend holds raw pointers to agents. Ownership stays with main().
+    // Pointers are set once before start() and never change during audio
+    // streaming — no synchronization needed.
 
     /// Connect the streaming agent. Must be called BEFORE start().
-    /// Also caches the source names so the audio callback doesn't need
-    /// to query the map on every block.
     void setStreaming(Streaming* agent) {
         mStreamer = agent;
     }
@@ -170,6 +169,11 @@ public:
     /// Connect the pose agent. Must be called BEFORE start().
     void setPose(Pose* agent) {
         mPose = agent;
+    }
+
+    /// Connect the spatializer agent. Must be called BEFORE start().
+    void setSpatializer(Spatializer* agent) {
+        mSpatializer = agent;
     }
 
     /// Cache source names from the streaming agent for use in processBlock().
@@ -200,14 +204,14 @@ private:
 
     // ── Per-block processing (called on audio thread) ────────────────────
     //
-    // Phase 3: computes source positions via the Pose agent, reads mono
-    //   audio from each source via Streaming, sums all sources into a mono
-    //   mix, applies master gain, and copies to all output channels.
-    //   Positions are computed but not yet used for spatialization.
+    // Phase 4: Full spatial rendering pipeline:
+    //   1. Zero output buffers
+    //   2. Pose agent computes per-source positions (SLERP + layout transform)
+    //   3. Spatializer distributes each source via DBAP across speakers
+    //      LFE sources are routed directly to subwoofer channels
     //
-    // Future phases will insert the full processing chain here:
-    //   4. Spatializer agent → DBAP panning → writes to output channels
-    //   5. LFE router → routes LFE-tagged sources to subwoofer channels
+    // Future phases will add:
+    //   5. LFE crossover filter (currently LFE is pass-through)
     //   6. Compensation & gain → per-channel trim
     //   7. Output remap → maps logical channels to physical device channels
     //
@@ -226,12 +230,7 @@ private:
             std::memset(buf, 0, numFrames * sizeof(float));
         }
 
-        // ── Step 1.5: Compute source positions for this block ────────────
-        // Pose agent interpolates keyframes at the block-center time and
-        // transforms directions to DBAP positions. The resulting poses are
-        // available via mPose->getPoses() for the spatializer.
-        // In Phase 3 we compute them but don't use them yet — Phase 4 will
-        // feed them to the DBAP spatializer.
+        // ── Step 2: Compute source positions for this block ──────────────
         if (mPose) {
             uint64_t curFrame = mState.frameCounter.load(std::memory_order_relaxed);
             double blockCenterSec = static_cast<double>(curFrame + numFrames / 2)
@@ -239,44 +238,18 @@ private:
             mPose->computePositions(blockCenterSec);
         }
 
-        // ── Step 2: Read and mix all sources ─────────────────────────────
-        // For each source, get a mono block from the streaming agent, then
-        // accumulate into the first output channel. This is a simple sum
-        // (no spatialization) — just proves the streaming pipeline works.
-        //
-        // In Phase 4, this becomes per-source DBAP → per-speaker channels.
-
-        if (mStreamer && !mSourceNames.empty()) {
+        // ── Step 3: Spatialize all sources via DBAP ──────────────────────
+        // The Spatializer reads each source's audio from Streaming, gets
+        // its position from Pose, and distributes it across speakers.
+        // LFE sources are routed directly to subwoofer channels.
+        if (mSpatializer && mStreamer && mPose) {
             uint64_t currentFrame = mState.frameCounter.load(std::memory_order_relaxed);
-            float masterGain = mConfig.masterGain.load(std::memory_order_relaxed);
-
-            // Scale factor to prevent clipping when summing many sources.
-            // Simple 1/N normalization — sufficient for testing.
-            float sourceScale = 1.0f / static_cast<float>(mSourceNames.size());
-            float gainPerSource = masterGain * sourceScale;
-
-            float* outCh0 = io.outBuffer(0);
-
-            for (const auto& name : mSourceNames) {
-                // Fill the pre-allocated mono buffer with this source's audio
-                mStreamer->getBlock(name, currentFrame, numFrames,
-                                    mMonoMixBuffer.data());
-
-                // Accumulate into output channel 0
-                for (unsigned int f = 0; f < numFrames; ++f) {
-                    outCh0[f] += mMonoMixBuffer[f] * gainPerSource;
-                }
-            }
-
-            // Copy channel 0 to all other channels (mono mirror for testing)
-            // This lets us hear the mix on any connected speaker/headphone.
-            for (unsigned int ch = 1; ch < numChannels; ++ch) {
-                float* dest = io.outBuffer(ch);
-                std::memcpy(dest, outCh0, numFrames * sizeof(float));
-            }
+            const auto& poses = mPose->getPoses();
+            mSpatializer->renderBlock(io, *mStreamer, poses,
+                                       currentFrame, numFrames);
         }
 
-        // ── Step 3: Update engine state ──────────────────────────────────
+        // ── Step 4: Update engine state ──────────────────────────────────
         uint64_t prevFrames = mState.frameCounter.load(std::memory_order_relaxed);
         uint64_t newFrames  = prevFrames + numFrames;
         mState.frameCounter.store(newFrames, std::memory_order_relaxed);
@@ -285,7 +258,7 @@ private:
             std::memory_order_relaxed
         );
 
-        // ── Step 4: CPU load monitoring ──────────────────────────────────
+        // ── Step 5: CPU load monitoring ──────────────────────────────────
         float rawCpu = static_cast<float>(mAudioIO.cpu());
         float clampedCpu = (rawCpu < 0.0f) ? 0.0f : (rawCpu > 1.0f ? 1.0f : rawCpu);
         mState.cpuLoad.store(clampedCpu, std::memory_order_relaxed);
@@ -299,11 +272,12 @@ private:
     bool            mInitialized = false;
 
     // ── Agent pointers (set once before start(), never changed) ──────────
-    Streaming* mStreamer = nullptr;
-    Pose*      mPose     = nullptr;
+    Streaming*    mStreamer     = nullptr;
+    Pose*         mPose         = nullptr;
+    Spatializer*  mSpatializer  = nullptr;
 
     // ── Cached data for audio callback (set once, read-only in callback) ─
-    std::vector<std::string> mSourceNames;  // Source name list for iteration
-    std::vector<float>       mMonoMixBuffer; // Pre-allocated per-source temp buffer
+    std::vector<std::string> mSourceNames;  // Source name list (for future use)
+    std::vector<float>       mMonoMixBuffer; // Pre-allocated temp buffer (for future use)
 };
 
