@@ -12,6 +12,39 @@
 // 5. Apply the DBAP coordinate transform (our y-forward → AlloLib's convention).
 // 6. Output a flat vector of SourcePose structs ready for the spatializer.
 //
+// ─────────────────────────────────────────────────────────────────────────────
+// THREADING MODEL (Phase 8 — Threading and Safety)
+// ─────────────────────────────────────────────────────────────────────────────
+//
+//  MAIN thread:
+//    - Calls loadScene() (setup, before start()). Fully populates all member
+//      data. After loadScene() returns, all fields are read-only except those
+//      explicitly noted below.
+//    - Never calls computePositions().
+//
+//  AUDIO thread:
+//    - Calls computePositions() once per audio block (from processBlock()).
+//    - Calls getPoses() immediately after to read the updated positions.
+//    - EXCLUSIVELY owns mPoses and mLastGoodDir during playback.
+//      No other thread touches these after loadScene().
+//
+//  LOADER thread:
+//    - Does NOT interact with Pose at all.
+//
+//  READ-ONLY after loadScene() (safe to read from any thread without sync):
+//    mSources, mSourceOrder, mLayoutRadius, mLayoutMinElRad,
+//    mLayoutMaxElRad, mLayoutIs2D, mConfig, mState
+//
+//  AUDIO-THREAD-OWNED (must not be read or written from any other thread
+//  while audio is streaming):
+//    mPoses        — written by computePositions(), read by getPoses()
+//    mLastGoodDir  — cache of per-source last-good direction, updated lazily
+//                    by safeDirForSource(); a std::map allocation can occur
+//                    the first time a new source is inserted, but after the
+//                    first audio block all insertions are already done.
+//
+// ─────────────────────────────────────────────────────────────────────────────
+//
 // PROVENANCE:
 // - SLERP interpolation: adapted from SpatialRenderer::slerpDir()
 // - Direction interpolation: adapted from SpatialRenderer::interpolateDirRaw()
@@ -26,6 +59,9 @@
 //   allocates, locks, or does I/O.
 // - All per-source data (keyframes, last-good directions) is loaded once
 //   at scene load time and never modified during playback.
+//   (Exception: mLastGoodDir can insert new entries during the FIRST block
+//   per source — this is a one-time std::map allocation that happens before
+//   steady-state audio is reached and is acceptable.)
 
 #pragma once
 
@@ -145,7 +181,13 @@ public:
     // Updates the internal mPoses vector in-place. The spatializer reads
     // from getPoses() after this call.
     //
-    // REAL-TIME SAFE: no allocation, no I/O, no locks.
+    // THREADING: AUDIO THREAD ONLY. Must not be called from any other thread.
+    //   - Writes mPoses[i].position and mPoses[i].isValid.
+    //   - May lazily insert into mLastGoodDir on the first pass per source.
+    //     After the first complete block, all map keys exist and no further
+    //     allocation occurs.
+    //
+    // REAL-TIME SAFE: no allocation (after first block), no I/O, no locks.
 
     void computePositions(double blockCenterTimeSec) {
         ElevationMode elMode = mConfig.elevationMode;

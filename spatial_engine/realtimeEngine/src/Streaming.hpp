@@ -11,6 +11,68 @@
 // 4. Provide a lock-free getSamples() method for the audio callback.
 // 5. Handle end-of-file (output silence after source ends).
 //
+// ─────────────────────────────────────────────────────────────────────────────
+// THREADING MODEL (Phase 8 — Threading and Safety)
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// Three threads interact with Streaming:
+//
+//  MAIN thread:
+//    - Calls loadScene() / loadSceneFromADM() (setup, before start())
+//    - Calls startLoader() (before start())
+//    - Calls shutdown() (ONLY after Backend::stop() has returned)
+//    Owns: mStreams map lifetime, mMultichannelReader lifetime,
+//          mLoaderRunning write (false → stops loader)
+//
+//  AUDIO thread:
+//    - Calls getSample() / getBlock() on every audio callback
+//    - NEVER holds a lock, never accesses SNDFILE*
+//    Reads: SourceStream::bufferA/B, stateA/B (acquire), chunkStartA/B,
+//           validFramesA/B, activeBuffer (acquire)
+//    Writes: activeBuffer (release), stateA/B (release, on buffer switch only)
+//
+//  LOADER thread:
+//    - Runs loaderWorker() in background
+//    - Holds fileMutex only while calling libsndfile (sf_seek / sf_readf_float)
+//    - Reads mState.frameCounter (relaxed) to check playback position
+//    Reads:  stateA/B, activeBuffer (acquire) to decide which buf to fill
+//    Writes: bufferA/B data, then chunkStart/validFrames (release),
+//            then state (EMPTY→LOADING→READY) (release)
+//
+// MEMORY ORDERING (double-buffer acquire/release protocol):
+//
+//  Loader writes:
+//    1. state ← LOADING  (release)    — marks buffer in-flight
+//    2. buffer data written            — normal store (no ordering needed;
+//                                         visibility guaranteed by step 3)
+//    3. chunkStart ← N   (release)    — publish start position
+//    4. validFrames ← F  (release)    — publish frame count
+//    5. state ← READY    (release)    — final visibility fence;
+//                                        audio thread may now use buffer
+//
+//  Audio reads in getSample() / getBlock():
+//    - All loads use memory_order_acquire, which synchronizes with the
+//      corresponding release stores above. When the audio thread sees
+//      state == READY, it is guaranteed to also see the data written in
+//      steps 2–4.
+//
+// SHUTDOWN ORDERING CONTRACT (INVARIANT — must never be violated):
+//
+//  The correct shutdown sequence is:
+//    1. backend.stop()         — waits for the audio stream to stop;
+//                                after this returns, no more audio callbacks
+//                                will fire and getSample()/getBlock() will
+//                                never be called again.
+//    2. streaming.shutdown()   — sets mLoaderRunning=false, joins loader
+//                                thread, then clears mStreams.
+//                                Safe because the audio thread is already done.
+//
+//  If shutdown() were called BEFORE stop(), the audio thread could be inside
+//  getSample() while mStreams is being cleared → use-after-free crash.
+//  See main.cpp for the correct ordering.
+//
+// ─────────────────────────────────────────────────────────────────────────────
+//
 // REAL-TIME SAFETY:
 // - The audio callback (getSamples) NEVER does file I/O, locks, or allocates.
 // - It reads from a pre-filled buffer and uses atomic state flags.
@@ -636,9 +698,21 @@ public:
     size_t numSources() const { return mStreams.size(); }
 
     // ── Shutdown ─────────────────────────────────────────────────────────
+    // THREADING CONTRACT: Caller MUST call Backend::stop() and wait for the
+    // audio stream to finish before calling this method.
+    //
+    // After Backend::stop() returns, the audio thread will never call
+    // getSample() / getBlock() again. Only then is it safe to:
+    //   (a) signal the loader thread to exit (mLoaderRunning = false)
+    //   (b) join the loader thread (no more writes to buffer data)
+    //   (c) destroy mStreams (no more readers of buffer memory)
+    //
+    // Violating this ordering → use-after-free on the audio thread.
 
     void shutdown() {
-        // Stop loader thread
+        // Stop loader thread first — sets the flag (release) and joins.
+        // After join() returns, the loader thread has exited and will never
+        // again write to any SourceStream buffer.
         mLoaderRunning.store(false, std::memory_order_release);
         if (mLoaderThread.joinable()) {
             mLoaderThread.join();
@@ -649,7 +723,9 @@ public:
             mMultichannelReader.reset();
         }
         mMultichannelMode = false;
-        // Close all file handles
+        // Close all file handles and destroy stream objects.
+        // Safe because: (1) audio thread is stopped (caller precondition),
+        //               (2) loader thread is joined (just above).
         for (auto& [name, stream] : mStreams) {
             stream->close();
         }

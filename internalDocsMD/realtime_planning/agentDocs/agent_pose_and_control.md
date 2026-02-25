@@ -1,5 +1,13 @@
 # Pose and Control Agent
 
+> **Implementation Status: ✅ COMPLETE (Phase 3, Feb 24 2026)**
+> Implemented in `spatial_engine/realtimeEngine/src/Pose.hpp`.
+> See `realtime_master.md` Phase 3 Completion Log for details.
+> Key design: SLERP keyframe interpolation, elevation sanitization
+> (Clamp / RescaleAtmosUp / RescaleFullSphere), DBAP coordinate transform.
+> `computePositions()` is audio-thread-only; all data read-only after `loadScene()`.
+> Thread ownership contracts documented in Phase 8 (see `Pose.hpp` header).
+
 ## Overview
 
 The **Pose and Control Agent** manages dynamic scene parameters, including the positions and orientations (poses) of sound sources and the listener, as well as handling external control commands. In a spatial audio context, “pose” typically refers to spatial coordinates and rotation of an object (here, sound sources and possibly the listener or microphones). This agent ensures that the Spatializer always has up-to-date spatial metadata for every sound, which is crucial for accurate rendering via the DBAP algorithm. It also processes control inputs from the user or other systems – for example, commands to add/remove a source, change a source’s properties, or global engine settings.

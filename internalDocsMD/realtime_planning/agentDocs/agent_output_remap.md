@@ -1,6 +1,14 @@
 # Output Remap Agent (CSV-based, minimal)
 
-> **Purpose**: remap the engine’s internal **layout channel order** to the **physical device channel order** at the very end of the audio callback.
+> **Implementation Status: ✅ COMPLETE (Phase 7, Feb 25 2026)**
+> Implemented in `spatial_engine/realtimeEngine/src/OutputRemap.hpp`.
+> See `realtime_master.md` Phase 7 Completion Log for details.
+> CSV format: `layout,device` (0-based, `#` comments, case-insensitive headers).
+> Identity fast-path detected automatically — zero overhead when no CSV supplied.
+> `mRemap` pointer set once before `start()`, const/read-only during playback.
+> CLI flag: `--remap <path>` in `main.cpp`.
+
+> **Purpose**: remap the engine's internal **layout channel order** to the **physical device channel order** at the very end of the audio callback.
 > Keep this **simple**: load a CSV once, build a mapping table, then apply the exact same “copy/accumulate” loop we already use in the AlloApp remap.
 
 ---
@@ -21,10 +29,10 @@ This agent should do **one thing**:
 
 The remap file is a **CSV with headers**:
 
-| column | meaning |
-|---|---|
+| column   | meaning                                                                                |
+| -------- | -------------------------------------------------------------------------------------- |
 | `layout` | internal channel index (0-based) in the engine’s render buffer (the “layout” ordering) |
-| `device` | output channel index (0-based) in the physical device / `AudioIO` |
+| `device` | output channel index (0-based) in the physical device / `AudioIO`                      |
 
 Optional extra columns are allowed and ignored (so we can keep notes in the CSV).
 
@@ -62,6 +70,7 @@ struct OutputRemapTable {
 ```
 
 Why “entries list” instead of a big matrix:
+
 - It matches the AlloApp approach: **iterate rows, copy/accumulate**.
 - It’s minimal and avoids per-frame branching.
 
@@ -70,16 +79,19 @@ Why “entries list” instead of a big matrix:
 ## Load behavior
 
 ### Where the CSV comes from
+
 - A path provided in config/flags (whatever mechanism the engine already uses for file paths).
 - If missing: **identity mapping**.
 
 ### Parsing rules
+
 - Parse once on startup (or during explicit reconfigure, never inside the audio callback).
 - Accept headers case-insensitively: `layout`, `device`.
 - Trim whitespace.
 - Skip empty lines and comment lines that start with `#` (optional, nice-to-have).
 
 ### Validation
+
 - Remove duplicates of the exact same `(layout, device)` pair.
 - Mark `identity=true` only if the mapping is exactly `layout==device` for all channels and covers the active range.
 
@@ -88,6 +100,7 @@ Why “entries list” instead of a big matrix:
 ## Runtime application (audio thread)
 
 ### Insertion point
+
 Use the existing end-of-block copy loop that currently does identity mapping from `mRenderIO` → `AudioIO`.
 Replace it with:
 
@@ -114,6 +127,7 @@ if (remap.identity) {
 ```
 
 ### Real-time constraints
+
 - No allocations.
 - No file IO.
 - No logging per callback.
@@ -142,6 +156,7 @@ if (remap.identity) {
 ## Documentation update rule
 
 When this agent is implemented:
+
 - Update `RENDERING.md` with:
   - the CSV schema (`layout,device`)
   - the runtime behavior (accumulate remap)

@@ -3,6 +3,88 @@
 // These structs are used across multiple agents (Backend, Streaming, Pose,
 // Spatializer, etc.) to pass data through the processing pipeline.
 //
+// ─────────────────────────────────────────────────────────────────────────────
+// THREADING MODEL (Phase 8 — Threading and Safety)
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// The engine uses THREE threads:
+//
+//  ┌───────────────┬───────────────────────────────────────────────────────┐
+//  │ Thread        │ Role                                                  │
+//  ├───────────────┼───────────────────────────────────────────────────────┤
+//  │ MAIN thread   │ Setup, monitoring loop, clean shutdown. Owns all      │
+//  │               │ agent object lifetimes. Calls computeFocusComp(),     │
+//  │               │ reads EngineState atomics for display.                │
+//  ├───────────────┼───────────────────────────────────────────────────────┤
+//  │ AUDIO thread  │ AlloLib AudioIO callback at real-time priority.       │
+//  │               │ Runs audioCallback() → processBlock() every buffer.   │
+//  │               │ MUST NOT allocate, lock, or do I/O.                  │
+//  │               │ Owns: EngineState writes, mPoses (via Pose),          │
+//  │               │       mLastGoodDir (via Pose), mRenderIO (Spatializer)│
+//  ├───────────────┼───────────────────────────────────────────────────────┤
+//  │ LOADER thread │ Background WAV streaming (Streaming::loaderWorker()). │
+//  │               │ Reads next audio chunk from disk into the inactive    │
+//  │               │ double-buffer slot. Owns: SNDFILE* via fileMutex,     │
+//  │               │ inactive buffer write (with memory_order_release).    │
+//  └───────────────┴───────────────────────────────────────────────────────┘
+//
+// MEMORY ORDERING RULES:
+//
+//  ┌─────────────────────────────┬────────────────────────────────────────┐
+//  │ Atomic                      │ Ordering used                          │
+//  ├─────────────────────────────┼────────────────────────────────────────┤
+//  │ RealtimeConfig::masterGain  │ relaxed (audio reads; GUI writes — OK  │
+//  │ ::loudspeakerMix, ::subMix  │ because stale value = smooth fade,     │
+//  │                             │ not a data race on non-atomic data)    │
+//  │ ::focusAutoCompensation     │ relaxed (same reasoning)               │
+//  │ ::playing, ::shouldExit     │ relaxed (polling-only, no dep. data)   │
+//  ├─────────────────────────────┼────────────────────────────────────────┤
+//  │ EngineState::frameCounter   │ relaxed (single writer: audio thread;  │
+//  │ ::playbackTimeSec           │ readers: main/loader for monitoring —  │
+//  │ ::cpuLoad, ::xrunCount      │ display lag of one buffer is fine)     │
+//  ├─────────────────────────────┼────────────────────────────────────────┤
+//  │ SourceStream::stateA/B      │ release on write (loader & audio)      │
+//  │ ::chunkStartA/B             │ acquire on read (audio & loader)       │
+//  │ ::validFramesA/B            │ Forms a acquire/release pair that      │
+//  │ ::activeBuffer              │ ensures buffer data is visible before  │
+//  │                             │ the READY/PLAYING state flip.          │
+//  ├─────────────────────────────┼────────────────────────────────────────┤
+//  │ Streaming::mLoaderRunning   │ release on write (main sets false);    │
+//  │                             │ acquire on read (loader polls in loop) │
+//  └─────────────────────────────┴────────────────────────────────────────┘
+//
+// INVARIANTS THAT MUST NEVER BE VIOLATED:
+//
+//  1. Agent pointers in RealtimeBackend (mStreamer, mPose, mSpatializer) are
+//     set ONCE before Backend::start() and NEVER changed while audio runs.
+//     No atomic or lock is needed — the happens-before from start() covers it.
+//
+//  2. All agent data structures (mStreams, mPoses, mSourceOrder, mSources)
+//     are fully populated before start() and never modified during playback.
+//     The audio thread only reads them.
+//
+//  3. Streaming::shutdown() MUST be called only AFTER Backend::stop() returns.
+//     The audio thread calls getSample()/getBlock() via mStreamer. After stop()
+//     returns, no more audio callbacks will fire. Only then is it safe to
+//     clear mStreams (which destroys the SourceStream objects).
+//
+//  4. Pose::computePositions() is owned EXCLUSIVELY by the audio thread.
+//     mLastGoodDir and mPoses are written only there. getPoses() returns a
+//     const reference safe to read from within the same processBlock() call.
+//
+//  5. Spatializer::computeFocusCompensation() MUST be called from the MAIN
+//     thread only, and ONLY when audio is not streaming (i.e., before start()
+//     or after stop()). It performs temporary allocation and DBAP panning
+//     that are not RT-safe.
+//
+//  6. The loader thread never writes to a buffer that is in PLAYING state.
+//     It only writes to EMPTY buffers → sets LOADING → then READY.
+//     The audio thread reads PLAYING state buffers and transitions them to
+//     EMPTY on buffer switch. The acquire/release pairs on stateA/B ensure
+//     the data write is visible before the state flag is.
+//
+// ─────────────────────────────────────────────────────────────────────────────
+//
 // DESIGN NOTES:
 // - Structs here must be POD-friendly or at least trivially copyable where
 //   they are shared between threads (audio callback vs control thread).
@@ -10,8 +92,6 @@
 //   Any struct read by the audio thread should be accessed via atomic pointers,
 //   double-buffering, or lock-free queues — that coordination is handled by
 //   the agents themselves, not by these types.
-// - Types are intentionally kept simple for Phase 1. Future phases will add
-//   fields (e.g., per-source gain, mute flags, velocity for Doppler, etc.).
 //
 // PROVENANCE:
 // - SpeakerLayoutData, SpeakerData, subwooferData → reused directly from
@@ -71,13 +151,17 @@ struct RealtimeConfig {
     ElevationMode elevationMode = ElevationMode::RescaleAtmosUp;  // Elevation mapping
 
     // ── Gain settings ────────────────────────────────────────────────────
-    // masterGain is atomic because the GUI/control thread may adjust it
-    // while the audio thread is reading it. Phase 6 (Compensation and Gain
-    // Agent) adds three more atomics on the same pattern:
+    // All gain controls are atomic<float> / atomic<bool> so the GUI/control
+    // thread can update them while the audio thread reads them without a lock.
+    // Read ordering on the audio thread is relaxed — a one-buffer lag on a
+    // gain change is inaudible and does not constitute a data race.
+    // (Phase 6 — Compensation and Gain Agent)
     std::atomic<float> masterGain{0.5f};          // Global output gain (0.0–1.0)
     std::atomic<float> loudspeakerMix{1.0f};      // post-DBAP main-channel trim (±10 dB)
     std::atomic<float> subMix{1.0f};              // post-DBAP sub-channel trim  (±10 dB)
     std::atomic<bool>  focusAutoCompensation{false}; // auto-update loudspeakerMix on focus change
+                                                     // NOTE: computeFocusCompensation() writes this
+                                                     // from the MAIN thread only (see invariant 5)
 
     // ── File paths (set at startup, read-only after) ─────────────────────
     std::string layoutPath;       // Speaker layout JSON

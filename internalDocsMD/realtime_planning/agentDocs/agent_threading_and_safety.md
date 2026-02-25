@@ -1,5 +1,21 @@
 # Threading and Safety Agent
 
+> **Implementation Status: ✅ COMPLETE (Phase 8, Feb 25 2026)**
+> No new runtime mechanisms were needed — the engine was already correct.
+> Phase 8 was a full cross-agent threading audit + documentation pass.
+>
+> **What was implemented:**
+>
+> - Canonical threading model documented in `RealtimeTypes.hpp` (3-thread table,
+>   memory order table, 6 invariants that must never be violated)
+> - `Streaming.hpp`: shutdown ordering contract, acquire/release protocol documented
+> - `Pose.hpp`: audio-thread ownership of `mPoses`/`mLastGoodDir` documented
+> - `Spatializer.hpp`: `computeFocusCompensation()` marked MAIN THREAD ONLY + reason
+> - `RealtimeBackend.hpp`: `processBlock()` threading annotations, null-guard hardened
+>
+> See `realtime_master.md` Phase 8 Completion Log for the full memory order audit
+> table and invariant list.
+
 ## Overview
 
 The **Threading and Safety Agent** defines and oversees the multi-threading model of the real-time spatial audio engine. This agent’s role is somewhat abstract compared to others: it doesn’t process audio data itself, but it establishes how different components (agents) run concurrently and how they communicate without compromising real-time performance or data integrity. It provides guidelines, utilities, and possibly base implementations (like thread classes or synchronization primitives) to ensure that each agent can operate in parallel where appropriate, and that the real-time audio thread is protected from any blocking or unsafe operations.

@@ -204,20 +204,25 @@ private:
 
     // ── Per-block processing (called on audio thread) ────────────────────
     //
-    // Phase 4: Full spatial rendering pipeline:
+    // Full spatial rendering pipeline (all phases integrated):
     //   1. Zero output buffers
     //   2. Pose agent computes per-source positions (SLERP + layout transform)
-    //   3. Spatializer distributes each source via DBAP across speakers
-    //      LFE sources are routed directly to subwoofer channels
+    //   3. Spatializer distributes each source via DBAP across speakers;
+    //      LFE sources are routed directly to subwoofer channels (Phase 2/4);
+    //      loudspeaker/sub mix trims applied after DBAP (Phase 6);
+    //      output channel remap applied before copy-to-device (Phase 7).
+    //   4. Update EngineState frame counter + playback time
+    //   5. CPU load monitoring
     //
-    // Future phases will add:
-    //   5. LFE crossover filter (currently LFE is pass-through)
-    //   6. Compensation & gain → per-channel trim
-    //   7. Output remap → maps logical channels to physical device channels
+    // THREADING:  All code here runs on the AUDIO THREAD exclusively.
+    //             See RealtimeTypes.hpp for the full threading model.
     //
     // REAL-TIME CONTRACT:
     // - No allocation, no locks, no I/O.
-    // - Only reads from pre-filled streaming buffers (lock-free).
+    // - Streaming read is lock-free (double-buffered, atomic state flags).
+    // - Pose read is single-threaded (audio thread owns mPoses/mLastGoodDir).
+    // - All EngineState writes use memory_order_relaxed (single writer here;
+    //   main/loader threads only poll for display, one-buffer lag is fine).
 
     void processBlock(al::AudioIOData& io) {
 
@@ -231,6 +236,7 @@ private:
         }
 
         // ── Step 2: Compute source positions for this block ──────────────
+        // Guard: mPose must be non-null (same guard as Step 3 for consistency).
         if (mPose) {
             uint64_t curFrame = mState.frameCounter.load(std::memory_order_relaxed);
             double blockCenterSec = static_cast<double>(curFrame + numFrames / 2)
@@ -242,6 +248,8 @@ private:
         // The Spatializer reads each source's audio from Streaming, gets
         // its position from Pose, and distributes it across speakers.
         // LFE sources are routed directly to subwoofer channels.
+        // Requires all three agents to be wired; silently outputs nothing if any
+        // pointer is null (should never happen in production after init()).
         if (mSpatializer && mStreamer && mPose) {
             uint64_t currentFrame = mState.frameCounter.load(std::memory_order_relaxed);
             const auto& poses = mPose->getPoses();
@@ -250,6 +258,9 @@ private:
         }
 
         // ── Step 4: Update engine state ──────────────────────────────────
+        // memory_order_relaxed is correct: we are the sole writer; main thread
+        // reads these only for display and does not derive safety decisions from
+        // their exact value relative to any other memory operation.
         uint64_t prevFrames = mState.frameCounter.load(std::memory_order_relaxed);
         uint64_t newFrames  = prevFrames + numFrames;
         mState.frameCounter.store(newFrames, std::memory_order_relaxed);
@@ -272,12 +283,17 @@ private:
     bool            mInitialized = false;
 
     // ── Agent pointers (set once before start(), never changed) ──────────
+    // THREADING: Set on the MAIN thread before start(). After start() these
+    // are read-only on the AUDIO thread. No synchronization needed —
+    // start() provides the required happens-before relationship.
     Streaming*    mStreamer     = nullptr;
     Pose*         mPose         = nullptr;
     Spatializer*  mSpatializer  = nullptr;
 
     // ── Cached data for audio callback (set once, read-only in callback) ─
-    std::vector<std::string> mSourceNames;  // Source name list (for future use)
-    std::vector<float>       mMonoMixBuffer; // Pre-allocated temp buffer (for future use)
+    // THREADING: Written by main thread (cacheSourceNames) before start(),
+    // then only read on the audio thread. Same happens-before as agent ptrs.
+    std::vector<std::string> mSourceNames;   // Source name list (reserved for future use)
+    std::vector<float>       mMonoMixBuffer; // Pre-allocated temp buffer (reserved for future use)
 };
 

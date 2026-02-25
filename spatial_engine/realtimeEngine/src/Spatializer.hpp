@@ -17,16 +17,53 @@
 // 3. Create al::Dbap with the speaker array and apply focus setting.
 // 4. For each audio block, spatialize every non-LFE source via renderBuffer().
 // 5. Route LFE sources directly to subwoofer channels (no spatialization).
-// 6. Apply master gain to all output.
+// 6. Apply loudspeaker/sub mix trims and master gain (Phase 6).
+// 7. Apply output channel remap to physical device outputs (Phase 7).
 //
 // INTERNAL RENDER BUFFER:
 //   DBAP renders into an internal AudioIOData buffer (mRenderIO) sized for
 //   outputChannels (layout-derived). After rendering, channels are copied
-//   to the real AudioIO output. This copy step is currently an identity
-//   mapping, but in the future a Channel Remap agent will re-route logical
-//   render channels to physical device outputs (e.g., mapping consecutive
-//   speaker channels to non-consecutive hardware outputs like the Allosphere).
+//   to the real AudioIO output. Phase 7 (OutputRemap) optionally re-routes
+//   logical render channels to physical device outputs (e.g., the Allosphere's
+//   non-consecutive hardware channel map). Without a remap CSV, an identity
+//   fast-path is taken (bit-identical to pre-Phase-7 behavior).
 //   See channelMapping.hpp for the Allosphere-specific mapping reference.
+//
+// ─────────────────────────────────────────────────────────────────────────────
+// THREADING MODEL (Phase 8 — Threading and Safety)
+// ─────────────────────────────────────────────────────────────────────────────
+//
+//  MAIN thread:
+//    - Calls init() / setRemap() before start(). After start() returns,
+//      all Spatializer members are treated as read-only by the main thread.
+//    - Calls computeFocusCompensation() — MAIN THREAD ONLY, and ONLY when
+//      audio is NOT streaming (i.e., before start() or after stop()).
+//      Reason: computeFocusCompensation() creates a temporary al::AudioIOData,
+//      runs a simulated render pass, and writes mConfig.loudspeakerMix. The
+//      temporary allocation makes it not RT-safe, and the write to the atomic
+//      from main thread while the audio thread reads it is safe (atomic), but
+//      the simulation render itself touches mRenderIO which is audio-thread-owned.
+//
+//  AUDIO thread:
+//    - Calls renderBlock() once per audio block.
+//    - EXCLUSIVELY owns mRenderIO and mSourceBuffer during playback.
+//    - Reads mConfig.{loudspeakerMix, subMix, masterGain, focusAutoCompensation}
+//      with memory_order_relaxed — these are atomics, stale-by-one-block is fine.
+//    - Reads mRemap via the non-owning pointer (set once before start(),
+//      then read-only). mRemap->entries() and mRemap->identity() are const.
+//
+//  LOADER thread:
+//    - Does NOT interact with Spatializer at all.
+//
+//  READ-ONLY after init() / setRemap() (safe to read from any thread):
+//    mSpeakers, mDBap, mNumSpeakers, mSubwooferChannels, mLayoutRadius,
+//    mInitialized, mRemap (pointer value; pointed-to object is also const)
+//
+//  AUDIO-THREAD-OWNED (must not be read/written from any other thread while
+//  audio is streaming):
+//    mRenderIO, mSourceBuffer
+//
+// ─────────────────────────────────────────────────────────────────────────────
 //
 // PROVENANCE:
 // - Speaker construction: adapted from SpatialRenderer constructor (lines 66-73)
@@ -44,6 +81,7 @@
 // - renderBlock() is called on the audio thread. No allocation, no locks,
 //   no I/O. All buffers are pre-allocated at init time.
 // - al::Dbap::renderBuffer() is real-time safe (fixed-size arrays, no alloc).
+// - computeFocusCompensation() is NOT real-time safe. Main thread only.
 
 #pragma once
 
@@ -363,8 +401,16 @@ public:
     void setRemap(const OutputRemap* remap) { mRemap = remap; }
 
     // ── Phase 6: Focus auto-compensation ─────────────────────────────────
-    // Called on the control/main thread (NOT audio thread) whenever the
-    // DBAP focus setting changes and focusAutoCompensation is enabled.
+    // THREADING: MAIN THREAD ONLY. Must NOT be called while the audio stream
+    // is running. Reason: this method temporarily modifies mRenderIO (the
+    // audio-thread-owned render buffer) to run a simulated render pass. It
+    // also allocates a temp AudioIOData object. Neither is RT-safe.
+    //
+    // Correct usage:
+    //   (a) Call before backend.start() to set initial compensation, OR
+    //   (b) Call after backend.stop() if focus is changed post-start.
+    //   (c) Never call during playback — use the atomic loudspeakerMix
+    //       directly if you want to adjust gain while playing.
     //
     // Strategy: render a unit impulse at a canonical front reference position
     // (0, radius, 0) with the current focus, sum the power across all main
@@ -483,6 +529,8 @@ private:
     EngineState&    mState;
 
     // ── DBAP state ───────────────────────────────────────────────────────
+    // READ-ONLY after init(). Safe to inspect from any thread (no mutation
+    // during playback).
     al::Speakers                mSpeakers;          // AlloLib speaker objects (0-based channels)
     std::unique_ptr<al::Dbap>   mDBap;              // DBAP panner instance
     int                         mNumSpeakers = 0;   // Number of main speakers
@@ -491,14 +539,18 @@ private:
     bool                        mInitialized = false;
 
     // ── Internal render buffer (sized for layout-derived outputChannels) ──
-    // DBAP and LFE both render into this buffer. The copy step in
-    // renderBlock() applies the OutputRemap (Phase 7) then writes to AudioIO.
+    // AUDIO-THREAD-OWNED: only accessed inside renderBlock() and
+    // computeFocusCompensation(). The latter must only be called from the
+    // main thread when audio is NOT running (see threading model above).
     al::AudioIOData             mRenderIO;
 
     // ── Pre-allocated audio buffer (one source at a time) ────────────────
+    // AUDIO-THREAD-OWNED: filled from Streaming::getBlock() inside renderBlock().
     std::vector<float>          mSourceBuffer;
 
     // ── Phase 7: Output remap table ──────────────────────────────────────
     // Non-owning pointer. nullptr → identity fast-path.
+    // Set once before start() (main thread), then read-only on audio thread.
+    // The pointed-to OutputRemap object is also immutable after load().
     const OutputRemap*          mRemap = nullptr;
 };

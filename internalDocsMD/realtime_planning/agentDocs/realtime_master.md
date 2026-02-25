@@ -106,7 +106,7 @@ Based on the architecture's data-flow dependencies, the planned order is:
 | 6     | **Compensation and Gain** | Loudspeaker/sub mix sliders + focus auto-compensation | ✅ Complete |
 | 7     | **Output Remap**          | Final channel shuffle before hardware                 | ✅ Complete |
 | —     | **Audio Scan Toggle**     | `scan_audio=False` default in `runRealtime.py`        | ✅ Complete |
-| 8     | **Threading and Safety**  | Harden all inter-thread communication                 | Not started |
+| 8     | **Threading and Safety**  | Harden all inter-thread communication                 | ✅ Complete |
 | 9     | **GUI Agent**             | Qt integration, last because engine must work first   | Not started |
 
 > **Note:** Phases 1-4 together form the minimum audible prototype (sound
@@ -549,10 +549,10 @@ of startup latency before the engine could launch.
 
 **What changed (`runRealtime.py`):**
 
-| Step | What it does                              | Default |
-| ---- | ----------------------------------------- | ------- |
-| 2a   | `exportAudioActivity()` — write JSON      | **skipped** |
-| 2b   | `channelHasAudio()` — scan full WAV       | **skipped** |
+| Step | What it does                               | Default     |
+| ---- | ------------------------------------------ | ----------- |
+| 2a   | `exportAudioActivity()` — write JSON       | **skipped** |
+| 2b   | `channelHasAudio()` — scan full WAV        | **skipped** |
 | 2c   | Synthetic all-active dict passed to parser | **used**    |
 
 - `run_realtime_from_ADM()` gains a `scan_audio=False` keyword argument.
@@ -566,6 +566,7 @@ of startup latency before the engine could launch.
 - The LUSID path (`run_realtime_from_LUSID`) has no scan — unaffected.
 
 **Synthetic fallback dict format** (matches `channelHasAudio()` return schema):
+
 ```python
 {
     "sample_rate": <int>,
@@ -577,6 +578,63 @@ of startup latency before the engine could launch.
     ]
 }
 ```
+
+---
+
+### Phase 8 Completion Log — Threading and Safety (✅ Complete)
+
+**Approach:** Full threading audit of all five agents. The engine was already
+largely correct. Phase 8 replaced ambiguous comments with precise threading
+contracts, added a hardened null-pointer guard, and produced the canonical
+threading model documentation that future phases (GUI) must respect.
+
+**No new runtime mechanisms were needed.** All synchronization was already in
+place (atomics with correct memory orders, happens-before from `start()`,
+double-buffer acquire/release pairs). Phase 8's contribution is the explicit,
+auditable specification of what each thread owns and what the rules are.
+
+#### Threading Model Reference Table
+
+| Thread     | Owns (exclusive write)                                                                            | Read-only access                                                         | Sync mechanism                                               |
+| ---------- | ------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------ | ------------------------------------------------------------ |
+| **MAIN**   | Agent lifetimes; `mLoaderRunning` (→ false); startup setup                                        | `EngineState` atomics (for display)                                      | `memory_order_relaxed` on reads                              |
+| **AUDIO**  | `mPoses`, `mLastGoodDir` (Pose); `mRenderIO`, `mSourceBuffer` (Spatializer); `EngineState` writes | `mConfig` atomics; `mStreams` (read-only); agent pointers                | `memory_order_relaxed` (sole writer for EngineState)         |
+| **LOADER** | Inactive buffer slot of `SourceStream::bufferA/B`                                                 | `EngineState::frameCounter` (relaxed); `stateA/B` (acquire) to pick slot | acquire/release on `stateA/B`, `chunkStart*`, `validFrames*` |
+
+#### Invariants Documented (now in RealtimeTypes.hpp)
+
+1. Agent pointers in `RealtimeBackend` set **once** before `start()`, **never** changed during playback — no sync needed (happens-before from `start()`).
+2. All agent data structures fully populated before `start()`, read-only during playback (audio thread reads only).
+3. `Streaming::shutdown()` **must** be called only **after** `Backend::stop()` returns — see shutdown ordering contract in `Streaming.hpp`.
+4. `Pose::computePositions()` is **audio-thread-only** — `mPoses` and `mLastGoodDir` are exclusively owned by the audio thread.
+5. `Spatializer::computeFocusCompensation()` is **main-thread-only, not RT-safe** — must not be called while audio is streaming.
+6. Loader thread only writes to EMPTY buffers; audio thread only reads PLAYING buffers — the `LOADING → READY` state transition with `memory_order_release` ensures data visibility before the state flip.
+
+#### Memory Order Audit Results
+
+| Atomic                                                      | Order used                       | Verdict                                                                    |
+| ----------------------------------------------------------- | -------------------------------- | -------------------------------------------------------------------------- |
+| `RealtimeConfig::masterGain` / `loudspeakerMix` / `subMix`  | relaxed (both r/w)               | ✅ Correct — gain staleness of one buffer is inaudible and not a data race |
+| `RealtimeConfig::playing` / `shouldExit`                    | relaxed                          | ✅ Correct — polling only, no dependent memory                             |
+| `EngineState::frameCounter` / `playbackTimeSec` / `cpuLoad` | relaxed                          | ✅ Correct — single writer (audio); display lag of one buffer is fine      |
+| `SourceStream::stateA/B`                                    | release (write) / acquire (read) | ✅ Correct — synchronizes buffer data visibility                           |
+| `SourceStream::chunkStartA/B` / `validFramesA/B`            | release / acquire                | ✅ Correct — same acquire/release pair                                     |
+| `SourceStream::activeBuffer`                                | release / acquire                | ✅ Correct — buffer switch is visible atomically                           |
+| `Streaming::mLoaderRunning`                                 | release (false) / acquire (poll) | ✅ Correct — loader sees the stop signal                                   |
+
+#### Files Modified
+
+| File                                                    | Change summary                                                                                                                                                                                                                                                                                                             |
+| ------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `spatial_engine/realtimeEngine/src/RealtimeTypes.hpp`   | Added 60-line threading model doc block (thread table, memory order table, 6 invariants). Updated gain-atomics comment to remove stale "Phase 6 adds" note.                                                                                                                                                                |
+| `spatial_engine/realtimeEngine/src/RealtimeBackend.hpp` | Updated `processBlock()` comment to reflect all phases done (removed "Future phases" stubs). Added threading annotations to agent pointer and cached-data member sections. Added `memory_order_relaxed` justification comment on EngineState writes.                                                                       |
+| `spatial_engine/realtimeEngine/src/Streaming.hpp`       | Added 50-line threading model block to file header (three-thread table, memory ordering protocol, **shutdown ordering contract**). Rewrote `shutdown()` comment to explicitly state the caller precondition and explain why `mStreams.clear()` is safe.                                                                    |
+| `spatial_engine/realtimeEngine/src/Pose.hpp`            | Added threading model block (main/audio/loader roles, read-only vs. audio-thread-owned data, note on `mLastGoodDir` first-block allocation). Updated `computePositions()` doc to add `THREADING: AUDIO THREAD ONLY` warning.                                                                                               |
+| `spatial_engine/realtimeEngine/src/Spatializer.hpp`     | Added threading model block (main/audio/loader roles, read-only vs. audio-thread-owned data). Updated `computeFocusCompensation()` header to replace vague "control/main thread" with explicit `THREADING: MAIN THREAD ONLY` + reason + correct usage guide. Updated member data comments with per-field thread ownership. |
+
+**Build result:** `cmake --build . -j4` — zero errors, zero warnings (all changes are comments and doc strings only; no compiled code changed).
+
+---
 
 ### Exact File Paths for Key Artifacts
 
