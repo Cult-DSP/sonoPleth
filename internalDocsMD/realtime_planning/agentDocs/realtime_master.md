@@ -106,10 +106,9 @@ Based on the architecture's data-flow dependencies, the planned order is:
 | 6     | **Compensation and Gain** | Loudspeaker/sub mix sliders + focus auto-compensation | ✅ Complete |
 | 7     | **Output Remap**          | Final channel shuffle before hardware                 | ✅ Complete |
 
-insert - audio driver compatibility - check if this will be an issue
+INSERT - potential remove scan audio from pipeline and just read in empty files to save up front compute time. perhaps add a toggle for this?
 | 8 | **Threading and Safety** | Harden all inter-thread communication | Not started |
 
-INSERT - potential remove scan audio from pipeline and just read in empty files to save up front compute time. perhaps add a toggle for this?
 | 9 | **GUI Agent** | Qt integration, last because engine must work first | Not started |
 
 > **Note:** Phases 1-4 together form the minimum audible prototype (sound
@@ -362,11 +361,11 @@ priority / experimental.
 
 **Files created/modified:**
 
-| File                                                        | Action      | Purpose                                                                                                                                                                                                                                                                              |
-| ----------------------------------------------------------- | ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `spatial_engine/realtimeEngine/src/OutputRemap.hpp`         | **Created** | CSV-based channel remap table. Parses a `layout,device` CSV once at startup. Stores a compact `std::vector<RemapEntry>` for the audio thread to iterate. Detects identity maps and sets the `identity=true` fast-path flag. All out-of-range rows are dropped and logged once (never per-frame). |
-| `spatial_engine/realtimeEngine/src/Spatializer.hpp`         | **Modified** | Added `#include "OutputRemap.hpp"`. Added `mRemap` (const pointer, default nullptr). Added `setRemap()` method. Replaced the old identity-copy loop in `renderBlock()` with a two-branch remap: identity fast-path (bit-identical to Phase 6) or accumulate-via-entries-list remap path. |
-| `spatial_engine/realtimeEngine/src/main.cpp`                | **Modified** | Added `#include "OutputRemap.hpp"`. Added `--remap <path>` CLI flag + help text. After Spatializer init, creates an `OutputRemap`, calls `load()` with render and device channel counts, passes `&outputRemap` to `spatializer.setRemap()`. Updated banner to Phase 7 and comment block. |
+| File                                                | Action       | Purpose                                                                                                                                                                                                                                                                                          |
+| --------------------------------------------------- | ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `spatial_engine/realtimeEngine/src/OutputRemap.hpp` | **Created**  | CSV-based channel remap table. Parses a `layout,device` CSV once at startup. Stores a compact `std::vector<RemapEntry>` for the audio thread to iterate. Detects identity maps and sets the `identity=true` fast-path flag. All out-of-range rows are dropped and logged once (never per-frame). |
+| `spatial_engine/realtimeEngine/src/Spatializer.hpp` | **Modified** | Added `#include "OutputRemap.hpp"`. Added `mRemap` (const pointer, default nullptr). Added `setRemap()` method. Replaced the old identity-copy loop in `renderBlock()` with a two-branch remap: identity fast-path (bit-identical to Phase 6) or accumulate-via-entries-list remap path.         |
+| `spatial_engine/realtimeEngine/src/main.cpp`        | **Modified** | Added `#include "OutputRemap.hpp"`. Added `--remap <path>` CLI flag + help text. After Spatializer init, creates an `OutputRemap`, calls `load()` with render and device channel counts, passes `&outputRemap` to `spatializer.setRemap()`. Updated banner to Phase 7 and comment block.         |
 
 **Design decisions:**
 
@@ -398,6 +397,16 @@ priority / experimental.
 
 > Items below are not planned for the v1 prototype. They are listed in
 > priority order for future consideration.
+
+### X. Audio driver and OS compatibility
+
+Add a tiny “device sanity toolkit” (non-RT):
+
+Print: device name, host API, output channel count
+
+“Channel ID” test mode (pulse each layout channel)
+
+explore potential issues with ASIO (and WASAPI/DirectSound)
 
 ### 1. Single-Keyframe Pose Optimization (Medium Priority)
 
