@@ -3,7 +3,7 @@
 # This script handles:
 # 1. Python virtual environment creation
 # 2. Python dependencies installation
-# 3. C++ tools setup (allolib submodules, embedded ADM extractor, VBAP renderer build)
+# 3. C++ tools setup (allolib submodules, embedded ADM extractor, spatial renderers build)
 
 set -e  # Exit on any error
 
@@ -45,7 +45,7 @@ echo ""
 # AlloLib full history is ~511 MB; shallow reduces it to a few MB.
 # To deepen later: git -C thirdparty/allolib fetch --unshallow
 # To apply opt-in sparse checkout (trims working tree): ./scripts/sparse-allolib.sh
-echo "Step 3: Setting up C++ tools (allolib, embedded ADM extractor, VBAP renderer)..."
+echo "Step 3: Setting up C++ tools (allolib, embedded ADM extractor, spatial renderers)..."
 if sonoPleth/bin/python -c "from src.config.configCPP import setupCppTools; exit(0 if setupCppTools() else 1)"; then
     echo "✓ C++ tools setup complete"
 else
@@ -75,7 +75,8 @@ source activate.sh
 echo ""
 echo "You can now run:"
 echo "  python utils/getExamples.py          # Download example files"
-echo "  python runPipeline.py <file.wav>     # Run the pipeline"
+echo "  python runPipeline.py <file.wav>     # Run the offline pipeline"
+echo "  python runRealtime.py <file.wav>     # Run the realtime engine"
 echo ""
 echo "To reactivate the environment later, run:"
 echo "  source activate.sh"

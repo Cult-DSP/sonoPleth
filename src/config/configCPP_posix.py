@@ -43,6 +43,11 @@ def setupCppTools():
         print("\n✗ Error: Failed to build Spatial renderer")
         return False
 
+    # Step 5: Build Realtime engine if needed
+    if not buildRealtimeEngine():
+        print("\n✗ Error: Failed to build Realtime engine")
+        return False
+
     print("\n" + "="*60)
     print("✓ C++ tools setup complete!")
     print("="*60 + "\n")
@@ -143,6 +148,39 @@ def buildVBAPRenderer(build_dir="spatial_engine/spatialRender/build", source_dir
     """
     print("Note: buildVBAPRenderer() is deprecated, use buildSpatialRenderer()")
     return buildSpatialRenderer(build_dir, source_dir)
+
+
+def buildRealtimeEngine(build_dir="spatial_engine/realtimeEngine/build", source_dir="spatial_engine/realtimeEngine"):
+    """
+    Build the Realtime engine using CMake.
+    Only builds if executable doesn't exist (idempotent).
+    
+    Supports real-time spatial audio rendering with DBAP.
+    
+    Parameters:
+    -----------
+    build_dir : str
+        Build directory path (relative to project root)
+    source_dir : str
+        Source directory containing CMakeLists.txt (relative to project root)
+    
+    Returns:
+    --------
+    bool
+        True if build succeeded or executable already exists, False otherwise
+    """
+    project_root = get_repo_root()
+    build_path = project_root / build_dir
+    executable = project_root / build_dir / "sonoPleth_realtime"
+    
+    # Check if executable already exists
+    if executable.exists():
+        print(f"✓ Realtime engine already built at: {executable}")
+        return True
+    
+    # Executable doesn't exist, proceed with build
+    print("Building Realtime engine...")
+    return runCmake(build_dir, source_dir)
 
 
 def runCmake(build_dir="spatialRender/build", source_dir="spatialRender"):

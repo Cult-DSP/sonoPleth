@@ -32,6 +32,10 @@ def setupCppTools() -> bool:
         print("\n✗ Error: Failed to build Spatial renderer")
         return False
 
+    if not buildRealtimeEngine():
+        print("\n✗ Error: Failed to build Realtime engine")
+        return False
+
     print("\n" + "=" * 60)
     print("✓ C++ tools setup complete!")
     print("=" * 60 + "\n")
@@ -88,6 +92,22 @@ def buildSpatialRenderer(
         return True
 
     print("Building Spatial renderer.")
+    return runCmake(build_dir, source_dir)
+
+
+def buildRealtimeEngine(
+    build_dir="spatial_engine/realtimeEngine/build",
+    source_dir="spatial_engine/realtimeEngine",
+) -> bool:
+    project_root = get_repo_root()
+    build_path = project_root / build_dir
+    executable = build_path / exe("sonoPleth_realtime")
+
+    if executable.exists():
+        print(f"✓ Realtime engine already built at: {executable}")
+        return True
+
+    print("Building Realtime engine.")
     return runCmake(build_dir, source_dir)
 
 

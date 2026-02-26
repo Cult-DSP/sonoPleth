@@ -81,7 +81,7 @@ try {
 }
 Write-Host ""
 
-Write-Host "Step 3: Setting up C++ tools (allolib, embedded ADM extractor, VBAP renderer)..."
+Write-Host "Step 3: Setting up C++ tools (allolib, embedded ADM extractor, spatial renderers)..."
 Write-Host "  Project root: $ProjectRoot"
 Write-Host "  Venv Python: $venvPython"
 Write-Host "  Venv exists: $(Test-Path $venvPython)"

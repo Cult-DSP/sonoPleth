@@ -96,9 +96,11 @@ The project supports three spatializers from AlloLib:
 
 See [`internalDocsMD/RENDERING.md`](internalDocsMD/RENDERING.md) for full documentation.
 
-### Rebuilding the Renderer
+### Rebuilding the Renderers
 
 If you need to rebuild after code changes:
+
+#### Spatial Renderer (Offline Pipeline)
 
 ```bash
 rm -rf spatial_engine/spatialRender/build
@@ -109,6 +111,22 @@ Or manually:
 
 ```bash
 cd spatial_engine/spatialRender
+mkdir -p build && cd build
+cmake ..
+make -j$(nproc)
+```
+
+#### Realtime Engine
+
+```bash
+rm -rf spatial_engine/realtimeEngine/build
+python -c "from src.config.configCPP import buildRealtimeEngine; buildRealtimeEngine()"
+```
+
+Or manually:
+
+```bash
+cd spatial_engine/realtimeEngine
 mkdir -p build && cd build
 cmake ..
 make -j$(nproc)
@@ -154,23 +172,33 @@ rm .init_complete
 source init.sh
 ```
 
-### Rebuilding the VBAP Renderer
+### Rebuilding the Renderers
 
-After making changes to C++ source files (`spatial_engine/src/`), rebuild the VBAP renderer:
+After making changes to C++ source files (`spatial_engine/src/` or `spatial_engine/realtimeEngine/src/`), rebuild the renderers:
 
 **Option 1: Force rebuild (recommended)**
 
 ```bash
-# Remove existing build and rebuild from scratch
+# Rebuild spatial renderer
 rm -rf spatial_engine/spatialRender/build/
-python -c "from src.config.configCPP import buildVBAPRenderer; buildVBAPRenderer()"
+python -c "from src.config.configCPP import buildSpatialRenderer; buildSpatialRenderer()"
+
+# Rebuild realtime engine
+rm -rf spatial_engine/realtimeEngine/build/
+python -c "from src.config.configCPP import buildRealtimeEngine; buildRealtimeEngine()"
 ```
 
 **Option 2: Clean and rebuild**
 
 ```bash
-# Clean existing build artifacts and rebuild
+# Clean and rebuild spatial renderer
 cd spatial_engine/spatialRender/build/
+make clean
+make -j$(sysctl -n hw.ncpu)
+cd ../../../
+
+# Clean and rebuild realtime engine
+cd spatial_engine/realtimeEngine/build/
 make clean
 make -j$(sysctl -n hw.ncpu)
 cd ../../../
@@ -179,15 +207,25 @@ cd ../../../
 **Option 3: Manual CMake build**
 
 ```bash
-# Full manual rebuild
+# Full manual rebuild of spatial renderer
 cd spatial_engine/spatialRender/
+rm -rf build/
+mkdir build && cd build/
+cmake ..
+make -j$(sysctl -n hw.ncpu)
+
+# Full manual rebuild of realtime engine
+cd spatial_engine/realtimeEngine/
 rm -rf build/
 mkdir build && cd build/
 cmake ..
 make -j$(sysctl -n hw.ncpu)
 ```
 
-The built executable will be at: `spatial_engine/vbapRender/build/sonoPleth_vbap_render`
+The built executables will be at:
+
+- `spatial_engine/spatialRender/build/sonoPleth_spatial_render`
+- `spatial_engine/realtimeEngine/build/sonoPleth_realtime`
 
 ## Manual Setup
 
@@ -210,7 +248,7 @@ sonoPleth/bin/python -c "from src.config.configCPP import setupCppTools; setupCp
 - `activate.sh` - Reactivates the virtual environment in new terminal sessions (use: `source activate.sh`)
 - `utils/getExamples.py` - Downloads example ADM files
 - `utils/deleteData.py` - Cleans processed data directory
-- `src/config/configCPP.py` - C++ build utilities (use `buildVBAPRenderer()` to rebuild VBAP renderer)
+- `src/config/configCPP.py` - C++ build utilities (use `buildSpatialRenderer()` and `buildRealtimeEngine()` to rebuild renderers)
 
 ## Pipeline Overview
 
@@ -223,9 +261,9 @@ sonoPleth/bin/python -c "from src.config.configCPP import setupCppTools; setupCp
 7. **Spatial Render** - Generate multichannel spatial audio (renderer reads LUSID scene directly)
 8. **Analyze Render** - Create PDF with dB analysis of each output channel
 
-## VBAP Renderer Options
+## Spatial Renderer Options
 
-The VBAP renderer supports multiple render resolution modes:
+The spatial renderer supports multiple spatializers (DBAP, VBAP, LBAP) and render resolution modes:
 
 | Mode     | Description                                              | Recommended       |
 | -------- | -------------------------------------------------------- | ----------------- |
@@ -236,11 +274,12 @@ The VBAP renderer supports multiple render resolution modes:
 ### Command Line Usage
 
 ```bash
-./sonoPleth_vbap_render <input.json> <layout.json> <output.wav> [options]
+./sonoPleth_spatial_render <input.json> <layout.json> <output.wav> [options]
 
 Options:
   --render_resolution <mode>  Set render mode: block (recommended), sample, smooth
   --block_size <n>            Set block size for block mode (default: 64)
+  --spatializer <type>        Set spatializer: dbap (default), vbap, lbap
 ```
 
 ### JSON Time Units
@@ -259,8 +298,8 @@ Valid values: `"seconds"` (default), `"samples"`, `"milliseconds"`
 
 For detailed documentation, see:
 
-- [RENDERING.md](spatial_engine/vbapRender/RENDERING.md) - Full rendering documentation
-- [json_schema_info.md](spatial_engine/vbapRender/json_schema_info.md) - JSON schema reference
+- [RENDERING.md](internalDocsMD/RENDERING.md) - Full rendering documentation
+- [json_schema_info.md](internalDocsMD/json_schema_info.md) - JSON schema reference
 
 ## Testing Files
 
