@@ -1,3 +1,4 @@
+### NEEDS TO BE UPDATED BASED ON INIT.SH WITH REALTIME ENGINE CHANGES
 # init.ps1 - Native Windows setup for sonoPleth (PowerShell)
 # Mirrors init.sh steps:
 # 1) Create Python venv

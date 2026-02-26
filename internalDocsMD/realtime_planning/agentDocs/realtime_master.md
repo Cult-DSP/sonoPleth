@@ -108,7 +108,7 @@ Based on the architecture's data-flow dependencies, the planned order is:
 | —     | **Audio Scan Toggle**     | `scan_audio=False` default in `runRealtime.py`        | ✅ Complete |
 | 8     | **Threading and Safety**  | Harden all inter-thread communication                 | ✅ Complete |
 
-9 - update init.sh and files in src/config to handle the updated realtime engine and tooling.
+9 - update init.sh and files in src/config to handle the updated realtime engine and tooling. ✅ Complete
 | 10 | **GUI Agent** | Qt integration, last because engine must work first | Not started |
 
 11 - update main project read me and relevant documentation 
