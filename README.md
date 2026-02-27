@@ -1,11 +1,9 @@
 Cult DSP — Open Spatial Audio Infrastructure  
 Lead Developer: Lucian Parisi
 
-# ADM Decoder Prototype
+# sonoPleth
 
-This repository contains a Python prototype for exploring and decoding
-Audio Definition Model Broadcast WAV (ADM BWF) files — atmos masters —
-with mapping to speaker arrays using multiple spatializers (DBAP, VBAP, LBAP).
+This repository contains a comprehensive spatial audio infrastructure for decoding Audio Definition Model Broadcast WAV (ADM BWF) files — Atmos masters — with mapping to speaker arrays using multiple spatializers (DBAP, VBAP, LBAP). Includes both offline rendering pipeline and real-time spatial audio engine with GUI interfaces.
 
 ## Quick Start
 
@@ -84,6 +82,42 @@ python runPipeline.py <adm_wav_file> <speaker_layout.json> <true|false>
 - `speaker_layout.json` - Speaker layout JSON (default: `spatialRender/allosphere_layout.json`)
 - `true|false` - Create PDF analysis of render (default: `true`)
 
+### Run the Realtime Engine
+
+For live spatial audio playback:
+
+```bash
+# With LUSID scene and mono stems
+python realtimeMain.py --scene processedData/stageForRender/scene.lusid.json --sources processedData/stageForRender/ --layout spatialRender/allosphere_layout.json
+
+# With ADM file (direct streaming, no stem splitting)
+python realtimeMain.py --adm sourceData/driveExampleSpruce.wav --scene processedData/scene.lusid.json --layout spatialRender/allosphere_layout.json
+
+# With GUI
+python realtimeMain.py --scene processedData/stageForRender/scene.lusid.json --sources processedData/stageForRender/ --layout spatialRender/allosphere_layout.json --gui
+```
+
+**Realtime options:**
+
+- `--scene` - LUSID scene JSON file
+- `--sources` - Directory with mono WAV stems (for LUSID packages)
+- `--adm` - Multichannel ADM WAV file (direct streaming)
+- `--layout` - Speaker layout JSON
+- `--gui` - Launch realtime GUI for parameter control
+- `--osc_port` - OSC port for external control (default: 12345)
+
+See [`internalDocsMD/realtime_planning/realtimeEngine_designDoc.md`](internalDocsMD/realtime_planning/realtimeEngine_designDoc.md) for full documentation.
+
+### Run the Desktop GUI
+
+For a graphical interface to configure and run the offline pipeline:
+
+```bash
+python gui/main.py
+```
+
+The GUI provides file pickers, render settings, progress tracking, and log viewing.
+
 ---
 
 ## Spatial Rendering
@@ -131,6 +165,35 @@ mkdir -p build && cd build
 cmake ..
 make -j$(nproc)
 ```
+
+---
+
+## Realtime Spatial Audio
+
+The realtime engine performs live spatial audio rendering using the same LUSID scenes and spatializers as the offline pipeline. It streams audio through your system's audio device for real-time playback.
+
+**Key Features:**
+
+- **Live Playback**: Real-time spatial audio with OSC control
+- **Multiple Input Modes**: LUSID packages (mono stems) or direct ADM streaming
+- **Spatializers**: DBAP, VBAP, LBAP with configurable parameters
+- **OSC Integration**: External control via Open Sound Control
+- **GUI Control**: Optional PySide6 interface for parameter adjustment
+
+**Architecture:**
+
+The engine uses a sequential agent model with double-buffered streaming, pose interpolation, and DBAP spatialization. All agents share thread-safe configuration via atomics.
+
+**Supported Spatializers:**
+
+| Feature          | DBAP (default)            | VBAP                  | LBAP                        |
+| ---------------- | ------------------------- | --------------------- | --------------------------- |
+| **Coverage**     | No gaps (works anywhere)  | Can have gaps         | No gaps                     |
+| **Layout Req**   | Any layout                | Good 3D triangulation | Multi-ring layers           |
+| **Localization** | Moderate                  | Precise               | Moderate                    |
+| **Best For**     | Unknown/irregular layouts | Dense 3D arrays       | Allosphere, TransLAB        |
+
+See [`internalDocsMD/realtime_planning/realtimeEngine_designDoc.md`](internalDocsMD/realtime_planning/realtimeEngine_designDoc.md) for detailed architecture documentation.
 
 ---
 
@@ -249,8 +312,10 @@ sonoPleth/bin/python -c "from src.config.configCPP import setupCppTools; setupCp
 - `utils/getExamples.py` - Downloads example ADM files
 - `utils/deleteData.py` - Cleans processed data directory
 - `src/config/configCPP.py` - C++ build utilities (use `buildSpatialRenderer()` and `buildRealtimeEngine()` to rebuild renderers)
+- `gui/main.py` - Desktop GUI for offline pipeline configuration and execution
+- `realtimeMain.py` - Command-line interface for realtime spatial audio engine
 
-## Pipeline Overview
+## Offline Pipeline Overview
 
 1. **Check Initialization** - Verify all dependencies are installed
 2. **Setup C++ Tools** - Initialize AlloLib, libbw64, libadm submodules; build embedded ADM extractor and spatial renderer
@@ -260,6 +325,17 @@ sonoPleth/bin/python -c "from src.config.configCPP import setupCppTools; setupCp
 6. **Package for Render** - Split audio stems (X.1.wav naming) and build LUSID scene (scene.lusid.json)
 7. **Spatial Render** - Generate multichannel spatial audio (renderer reads LUSID scene directly)
 8. **Analyze Render** - Create PDF with dB analysis of each output channel
+
+## Realtime Engine Overview
+
+1. **Load Scene** - Parse LUSID JSON scene file
+2. **Load Layout** - Read speaker layout and compute output channels
+3. **Initialize Streaming** - Set up double-buffered audio streaming (mono stems or ADM direct)
+4. **Initialize Pose** - Load keyframes and prepare interpolation
+5. **Initialize Spatializer** - Build speakers and DBAP spatializer
+6. **Start Audio I/O** - Open AlloLib audio device and begin real-time processing
+7. **OSC Server** - Start parameter server for external control
+8. **Process Blocks** - Real-time audio processing with spatialization
 
 ## Spatial Renderer Options
 
