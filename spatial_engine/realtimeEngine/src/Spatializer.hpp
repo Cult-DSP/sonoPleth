@@ -267,6 +267,12 @@ public:
         const float masterGain = mConfig.masterGain.load(std::memory_order_relaxed);
         const unsigned int renderChannels = mRenderIO.channelsOut();
 
+        // ── Apply live focus update to DBAP panner ───────────────────────
+        // mConfig.dbapFocus is written by RealtimeBackend::processBlock()
+        // (the smoothed value) before renderBlock() is called each block.
+        // setFocus() just assigns mFocus — no allocation, RT-safe.
+        mDBap->setFocus(mConfig.dbapFocus);
+
         // Zero the internal render buffer (DBAP accumulates into it)
         mRenderIO.zeroOut();
 
