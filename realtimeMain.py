@@ -14,6 +14,7 @@ Phase 10 — GUI Agent.
 import sys
 from pathlib import Path
 
+from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication
 
 from gui.realtimeGUI.realtimeGUI import RealtimeWindow
@@ -24,6 +25,13 @@ def main() -> None:
     app.setApplicationName("sonoPleth Real-Time")
 
     here = Path(__file__).resolve().parent
+
+    # Set application icon
+    icon_path = here / "gui" / "miniLogo.png"
+    if icon_path.exists():
+        app.setWindowIcon(QIcon(str(icon_path)))
+    else:
+        print(f"[realtimeMain] Warning: icon not found at {icon_path}")
 
     # Load shared stylesheet
     qss_path = here / "gui" / "styles.qss"
