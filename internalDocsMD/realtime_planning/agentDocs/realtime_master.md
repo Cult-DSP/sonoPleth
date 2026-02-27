@@ -1,6 +1,6 @@
 # Real-Time Spatial Audio Engine – Agent Overview
 
-## Implementation Decisions (Updated 2026-02-24)
+## Implementation Decisions (Updated 2026-02-26)
 
 > These decisions were made during initial planning and override any conflicting
 > assumptions in the agent sub-documents. Sub-documents remain useful for
@@ -40,14 +40,19 @@ Continue using **AlloLib's AudioIO** (already a dependency via
   comments for provenance but do not `#include` it.
 - Goal: the offline renderer continues to compile and work exactly as before.
 
-### GUI – Integrate into Existing Qt GUI
+### GUI – Dedicated Realtime GUI Entry (PySide6)
 
-- The real-time engine will be exposed as a **new mode / app** inside the
-  existing PySide6 Qt GUI (`gui/`).
-- This means adding a new panel or tab (alongside the current offline render
-  panel) that launches and controls the real-time engine process.
-- **Not** using ImGui. The AlloLib prototype's ImGui code
-  (`mainplayer.hpp`) is reference only.
+- Keep PySide6 (Qt) and **do not switch to ImGui** (ImGui remains reference-only).
+- Do **not** bloat the existing offline GUI. Create a parallel realtime entry:
+  - `gui/realtimeGUI/realtimeGUI.py` (new)
+  - optional `gui/realtimeGUI/` folder with panels + `realtime_runner.py`
+- The realtime GUI launches `runRealtime.py` via `QProcess` (same pattern as `pipeline_runner.py`).
+
+### Runtime Control Plane (stability priority)
+
+- Prefer AlloLib **`al::Parameter` / `ParameterBundle` + `ParameterServer` (OSC)** for live runtime controls.
+- GUI sends OSC updates; engine reads parameters in a RT-safe way (audio thread reads, heavy work on main/control thread).
+- This control-plane contract is intended to **survive the later pipeline refactor**.
 
 ### Python Entry Point – `runRealtime.py`
 
@@ -109,13 +114,73 @@ Based on the architecture's data-flow dependencies, the planned order is:
 | 8     | **Threading and Safety**  | Harden all inter-thread communication                 | ✅ Complete |
 
 9 - update init.sh and files in src/config to handle the updated realtime engine and tooling. ✅ Complete
-| 10 | **GUI Agent** | Qt integration, last because engine must work first | Not started |
+| 10 | **GUI Agent** | PySide6 realtimeGUI (separate entry), QProcess→runRealtime.py, ParameterServer control plane | 🚧 In Progress |
 
-11 - update main project read me and relevant documentation 
+11 - update main project read me and relevant documentation
 
 > **Note:** Phases 1-4 together form the minimum audible prototype (sound
 > comes out of speakers). Phases 5-7 add correctness. Phase 8 hardens
 > reliability. Phase 9 adds the user interface.
+
+### Next Major Task (after Phase 10 prototype): Pipeline Refactor (C++-first realtime)
+
+- Promote the C++ realtime executable to the canonical entrypoint (Python becomes optional wrapper/tooling).
+- Keep Python for LUSID transcoding + batch prep initially; evaluate rewrite of runtime-prep into C/C++ once the GUI prototype is stable.
+- Preserve the control plane contract (parameter names + ranges) so UI work is not thrown away.
+
+### Phase 10 Planning Log (GUI Agent) — 🚧 In Progress
+
+**Design doc:** `internalDocsMD/realtime_planning/agentDocs/agent_gui_UPDATED_v3.md`
+**AlloLib IPC reference:** `internalDocsMD/realtime_planning/agentDocs/allolib_parameters_reference.md`
+
+#### Decisions locked
+
+| Decision                 | Detail                                                                                          |
+| ------------------------ | ----------------------------------------------------------------------------------------------- |
+| Framework                | PySide6 (no ImGui)                                                                              |
+| Entry point              | `realtimeMain.py` at project root — standalone window, NOT a tab in `gui/main.py`               |
+| Process launch           | `runRealtime.py` via `QProcess` (mirrors PipelineRunner pattern)                                |
+| IPC / runtime controls   | AlloLib `al::Parameter` + `al::ParameterServer` (OSC, port 9009). GUI sends via `python-osc`    |
+| Pause/Play               | C++ changes in-scope: `config.paused` atomic + callback silence branch + ParameterServer wiring |
+| `--remap` passthrough    | Add to `runRealtime.py` and `_launch_realtime_engine()`                                         |
+| `--osc_port` passthrough | Add to `runRealtime.py` and `_launch_realtime_engine()`                                         |
+| Stylesheet               | Reuse `gui/styles.qss`                                                                          |
+| Visualization            | Deferred                                                                                        |
+
+#### Files to create (GUI)
+
+| File                                                        | Purpose                                                                               |
+| ----------------------------------------------------------- | ------------------------------------------------------------------------------------- |
+| `realtimeMain.py`                                           | Project-root launcher — loads styles.qss, creates `RealtimeWindow`, runs QApplication |
+| `gui/realtimeGUI/__init__.py`                               | Package marker                                                                        |
+| `gui/realtimeGUI/realtimeGUI.py`                            | `RealtimeWindow` — main QWidget, assembles panels                                     |
+| `gui/realtimeGUI/realtime_runner.py`                        | `RealtimeRunner` + `RealtimeConfig` — QProcess wrapper, OSC sender, state machine     |
+| `gui/realtimeGUI/realtime_panels/__init__.py`               | Package marker                                                                        |
+| `gui/realtimeGUI/realtime_panels/RealtimeInputPanel.py`     | Source/layout/remap/buffer/scan inputs                                                |
+| `gui/realtimeGUI/realtime_panels/RealtimeControlsPanel.py`  | Live sliders + auto comp toggle                                                       |
+| `gui/realtimeGUI/realtime_panels/RealtimeLogPanel.py`       | Stdout/stderr console, 2000-line cap                                                  |
+| `gui/realtimeGUI/realtime_panels/RealtimeTransportPanel.py` | Start/Stop/Kill/Restart/Pause/Play + status pill                                      |
+
+#### Files to modify (C++ engine + Python)
+
+| File                                                    | Change                                                                                                                              |
+| ------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| `spatial_engine/realtimeEngine/src/RealtimeTypes.hpp`   | Add `std::atomic<bool> paused{false}` + doc comment                                                                                 |
+| `spatial_engine/realtimeEngine/src/main.cpp`            | Add ParameterServer, 6 al::Parameter objects, registerChangeCallbacks, `--osc_port` CLI flag, `pendingAutoComp` flag, shutdown call |
+| `spatial_engine/realtimeEngine/src/RealtimeBackend.hpp` | Add pause guard at top of `processBlock()`                                                                                          |
+| `runRealtime.py`                                        | Add `remap_csv` + `osc_port` args to `_launch_realtime_engine()`; update CLI parsing                                                |
+| `requirements.txt`                                      | Add `python-osc`                                                                                                                    |
+
+#### Implementation order (within Phase 10)
+
+1. **C++ engine changes first** — `RealtimeTypes.hpp` + `RealtimeBackend.hpp` + `main.cpp` (ParameterServer + pause). Build and verify OSC control works from CLI (`oscsend` or python-osc test script).
+2. **`runRealtime.py` updates** — add `--remap` and `--osc_port` passthrough. Test CLI.
+3. **`RealtimeRunner` + `RealtimeConfig`** — QProcess wrapper, OSC sender, state machine. Test independently.
+4. **Panels** — InputPanel, TransportPanel, ControlsPanel, LogPanel (in that order — each adds on top of the previous).
+5. **`RealtimeWindow` + `realtimeMain.py`** — assemble panels, wire signals, launch.
+6. **End-to-end test** against testing checklist in `agent_gui_UPDATED_v3.md §9`.
+
+---
 
 ### Phase 1 Completion Log (Backend Adapter)
 
@@ -768,3 +833,7 @@ This master document and the individual agent documents are living plans for the
 - **Parallel Development Coordination:** Given that agents are being implemented in parallel, schedule regular sync-ups to discuss integration points. Use this document as a guide to verify that all assumptions (data formats, call sequences, thread responsibilities) match across agents.
 
 By following this plan and keeping documentation up-to-date, the team can build a robust real-time spatial audio engine. This overview will serve as a roadmap, and each agent’s detailed document will provide the specific guidance needed for individual implementation and eventual integration into a cohesive system.
+
+**OSC port policy:** use a **fixed localhost port (9009)** for the engine `ParameterServer`.
+This is simplest for the prototype, but may conflict if multiple instances run or the port is occupied.
+GUI must surface clear errors; future refactor can add configurable/auto-pick ports.

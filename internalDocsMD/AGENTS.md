@@ -1,6 +1,6 @@
 # sonoPleth — Comprehensive Agent Context
 
-**Last Updated:** February 24, 2026  
+**Last Updated:** February 26, 2026  
 **Project:** sonoPleth - Open Spatial Audio Infrastructure  
 **Lead Developer:** Lucian Parisi
 
@@ -929,6 +929,38 @@ Output channels are derived from the speaker layout automatically (e.g., 56 for 
 
 ---
 
+
+
+### CURRENT TASK (2026-02-26): Phase 10 — Realtime GUI Prototype (PySide6)
+
+**Goal:** ship a minimal-but-real realtime controller UI without bloating the existing offline GUI.
+
+**Implementation decisions (authoritative):**
+- Keep existing offline GUI untouched; create a **new entry point**: `gui/realtimeGUI/realtimeGUI.py` (and optionally a `gui/realtimeGUI/` folder tree).
+- Launch realtime playback via `QProcess` calling `runRealtime.py` (same pattern as offline `pipeline_runner.py`).
+- Add Transport: **Play / Pause / Stop / Restart** (Pause requires engine support).
+- Expose runtime controls:
+  - `masterGain` (0..1)
+  - `dbapFocus` (0.2..5)
+  - `loudspeakerMix_db` (-10..+10)
+  - `subMix_db` (-10..+10)
+  - `auto_compensation` toggle
+- Expose launch-time controls:
+  - source (ADM WAV or LUSID package dir), layout JSON, buffer size, optional remap CSV, optional `scan_audio`.
+
+**Runtime control plane (do NOT invent a one-off protocol):**
+- Prefer AlloLib **`al::Parameter` + `ParameterBundle` + `ParameterServer` (OSC)** for all runtime controls.
+- GUI sends OSC parameter updates to the engine; engine reads params RT-safely (audio thread reads; heavy work in main/control thread).
+
+**Reference spec:** `agent_gui_UPDATED_v2.md` (Phase 10 GUI requirements and testing checklist).  
+
+### CRUCIAL NEXT MILESTONE (post-prototype): Pipeline Refactor Plan (C++-first realtime)
+
+After the realtime GUI prototype is working:
+- Make the **C++ realtime executable** the canonical launcher (Python becomes optional wrapper / tooling).
+- Keep Python only for **offline/prep utilities** (LUSID transcoding, batch tooling) until a C/C++ rewrite is justified.
+- Maintain a stable “control plane contract” (parameter names + ranges) so GUIs (Python now, possible C++/Qt later) don’t get rewritten.
+
 ## File Structure & Organization
 
 ### Project Root
@@ -942,6 +974,10 @@ sonoPleth/
 ├── runGUI.py                        # Jupyter notebook GUI (DEPRECATED)
 ├── README.md                        # User documentation
 ├── gui/                             # PySide6 desktop GUI (primary UI)
+│   ├── realtimeGUI/                # NEW: dedicated realtime UI (Phase 10)
+│   │   ├── realtimeGUI.py           # NEW entry point (parallel to gui/main.py)
+│   │   ├── realtime_runner.py       # QProcess wrapper for runRealtime.py + OSC/Parameter control
+│   │   └── realtime_panels/         # Optional: modular panels (Input/Controls/Transport/Logs)
 │   ├── main.py                      # App entry: MainWindow, QSS loader
 │   ├── styles.qss                   # Qt stylesheet (light mode)
 │   ├── background.py                # Radial geometry + lens focal point
@@ -1362,6 +1398,17 @@ python LUSID/tests/benchmark_xml_parsers.py
 
 ### High Priority
 
+#### Realtime GUI Prototype (Phase 10 — current)
+- Build `gui/realtimeGUI/realtimeGUI.py` + `RealtimeRunner` (QProcess → `runRealtime.py`).
+- Implement **Play/Pause/Restart** controls (Pause requires engine support).
+- Implement runtime control plane using **AlloLib Parameters + ParameterServer (OSC)**.
+
+#### Pipeline Refactor (next major task after prototype)
+- Promote C++ realtime executable to the canonical entrypoint.
+- Keep Python in the short term for LUSID transcoding + file prep; consider C/C++ rewrite later.
+- Preserve parameter/control contract so UI doesn’t get thrown away.
+
+
 #### LUSID Integration Tasks
 
 - [ ] **Wire `xml_etree_parser` into main pipeline**
@@ -1664,3 +1711,8 @@ For questions or contributions, open an issue or PR on GitHub.
 ---
 
 **End of Agent Context Document**
+
+
+**OSC port policy:** use a **fixed localhost port (9009)** for the engine `ParameterServer`.
+This is simplest for the prototype, but may conflict if multiple instances run or the port is occupied.
+GUI must surface clear errors; future refactor can add configurable/auto-pick ports.
