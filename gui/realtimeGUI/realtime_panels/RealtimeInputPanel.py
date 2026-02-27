@@ -62,6 +62,9 @@ class RealtimeInputPanel(QWidget):
         return self._layout_edit.text().strip()
 
     def get_remap_csv(self) -> Optional[str]:
+        selected = self._remap_combo.currentData()
+        if selected is not None:
+            return selected
         v = self._remap_edit.text().strip()
         return v if v else None
 
@@ -75,7 +78,7 @@ class RealtimeInputPanel(QWidget):
         """Disable all inputs while the engine is running."""
         for w in (self._source_edit, self._source_btn,
                   self._layout_combo, self._layout_edit, self._layout_btn,
-                  self._remap_edit, self._remap_btn,
+                  self._remap_combo, self._remap_edit, self._remap_btn,
                   self._buffer_combo, self._scan_check):
             w.setEnabled(not running)
 
@@ -132,6 +135,12 @@ class RealtimeInputPanel(QWidget):
         # Remap CSV row
         layout.addWidget(self._make_row_label("Remap CSV  (optional)"))
         remap_row = QHBoxLayout()
+        self._remap_combo = QComboBox()
+        self._remap_combo.addItem("None", None)
+        self._remap_combo.addItem("Allosphere Example", "spatial_engine/remaping/exampleRemap.csv")
+        self._remap_combo.setCurrentIndex(0)  # Default to None
+        self._remap_combo.setFixedWidth(150)
+        remap_row.addWidget(self._remap_combo)
         self._remap_edit = QLineEdit()
         self._remap_edit.setPlaceholderText("channel_remap.csv (leave blank for identity)…")
         self._remap_btn = QPushButton("Browse")
@@ -169,6 +178,7 @@ class RealtimeInputPanel(QWidget):
         self._source_btn.clicked.connect(self._browse_source)
         self._layout_combo.currentIndexChanged.connect(self._on_layout_combo_changed)
         self._layout_btn.clicked.connect(self._browse_layout)
+        self._remap_combo.currentIndexChanged.connect(self._on_remap_combo_changed)
         self._remap_btn.clicked.connect(self._browse_remap)
         self._source_edit.textChanged.connect(self._on_source_changed)
         self._layout_edit.textChanged.connect(lambda _: self.config_changed.emit())
@@ -181,6 +191,14 @@ class RealtimeInputPanel(QWidget):
     def _on_layout_combo_changed(self) -> None:
         selected_path = self._layout_combo.currentData()
         self._layout_edit.setText(selected_path)
+        self.config_changed.emit()
+
+    def _on_remap_combo_changed(self) -> None:
+        selected_path = self._remap_combo.currentData()
+        if selected_path is not None:
+            self._remap_edit.setText(selected_path)
+        else:
+            self._remap_edit.clear()
         self.config_changed.emit()
 
     def _browse_source(self) -> None:
@@ -204,7 +222,7 @@ class RealtimeInputPanel(QWidget):
 
     def _browse_remap(self) -> None:
         path, _ = QFileDialog.getOpenFileName(
-            self, "Select Remap CSV", "", "CSV Files (*.csv);;All Files (*)"
+            self, "Select Remap CSV", "spatial_engine/remaping", "CSV Files (*.csv);;All Files (*)"
         )
         if path:
             self._remap_edit.setText(path)

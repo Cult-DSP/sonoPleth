@@ -107,12 +107,14 @@ Pause/Play are process-independent — toggle audio via OSC without stopping the
 ```
 [Source]     [Browse WAV / Dir]  [text field]        "Detected: ADM / LUSID package"
 [Layout]     [AlloSphere ▼]      [Browse JSON]       [text field]  (dropdown + browse)
-[Remap CSV]  [Browse CSV]        [text field]         (optional)
+[Remap CSV]  [None ▼]            [Browse CSV]        [text field]  (dropdown + browse, optional)
 [Buffer]     [64|128|256|512|1024 dropdown]
 [Scan Audio] [checkbox, default OFF — greyed when LUSID detected]
 ```
 
 Layout dropdown defaults: `AlloSphere` → `spatial_engine/speaker_layouts/allosphere_layout.json`, `Translab` → `spatial_engine/speaker_layouts/translab-sono-layout.json`. Browse button allows custom layouts.
+
+Remap dropdown defaults: `None` (no remapping), `Allosphere Example` → `spatial_engine/remaping/exampleRemap.csv`. Browse button allows custom remap CSVs.
 
 ### 2.2 Transport Panel (`RealtimeTransportPanel`)
 

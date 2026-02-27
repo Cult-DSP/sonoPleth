@@ -121,6 +121,7 @@ Based on the architecture's data-flow dependencies, the planned order is:
 
 - default folder for audio - sourceData ✅ Complete
 - default speaker layout drop down selections. -- translab and allosphere - based on offline gui implementaiton. ✅ Complete
+- default remap CSV dropdown with Allosphere example ✅ Complete
 
 > **Note:** Phases 1-4 together form the minimum audible prototype (sound
 > comes out of speakers). Phases 5-7 add correctness. Phase 8 hardens
