@@ -116,7 +116,11 @@ Based on the architecture's data-flow dependencies, the planned order is:
 9 - update init.sh and files in src/config to handle the updated realtime engine and tooling. ✅ Complete
 | 10 | **GUI Agent** | PySide6 realtimeGUI (separate entry), QProcess→runRealtime.py, ParameterServer control plane | ✅ Complete |
 
-11 - update main project read me and relevant documentation
+11 - update main project read me and relevant documentation - in progress
+12 - polish tasks:
+
+- default folder for audio - sourceData
+- default speaker layout drop down selections. -- translab and allosphere - based on offline gui implementaiton.
 
 > **Note:** Phases 1-4 together form the minimum audible prototype (sound
 > comes out of speakers). Phases 5-7 add correctness. Phase 8 hardens
@@ -212,6 +216,48 @@ Based on the architecture's data-flow dependencies, the planned order is:
 | `gui/realtimeGUI/realtime_panels/RealtimeLogPanel.py`       | `QPlainTextEdit` (monospace, read-only); 2000-line cap; auto-scroll; Clear button                                                                                                        |
 
 **Build result:** `make -j4` → zero errors. `--help` output confirms `--focus` and `--osc_port` flags. All Python imports verified clean.
+
+---
+
+### Phase 10 Bug-Fix — OSC Runtime Controls (Feb 26 2026)
+
+**Symptom:** "sliders move but values are not updated" + Pause/Play had no
+effect on a freshly launched engine.
+
+**Root cause:** `_on_started` (fired by `QProcess::started`) promoted the
+runner to `RUNNING` the moment `runRealtime.py` spawned as a Python process.
+`runRealtime.py` does scene loading, WAV opening, and C++ binary exec before
+`al::ParameterServer` calls `bind()` on port 9009. OSC messages sent in that
+window were silently dropped (UDP, no ACK, no error).
+
+**Fix — 3 files:**
+
+| File                                                       | Change                                                                                                                                       |
+| ---------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| `gui/realtimeGUI/realtime_runner.py`                       | `_on_started` stays in `LAUNCHING`; `_on_stdout` probes for `"ParameterServer listening"`; on match → `RUNNING` + emit `engine_ready` Signal |
+| `gui/realtimeGUI/realtime_panels/RealtimeControlsPanel.py` | Added `flush_to_osc()` — sends all 5 current control values as immediate OSC                                                                 |
+| `gui/realtimeGUI/realtimeGUI.py`                           | `runner.engine_ready.connect(controls_panel.flush_to_osc)`                                                                                   |
+
+**Sentinel string** (printed by `main.cpp` after `paramServer.serverRunning()` succeeds):
+
+```
+[Main] ParameterServer listening on 127.0.0.1:<port>
+```
+
+**State machine change:**
+
+```
+IDLE → LAUNCHING  (on Start button)
+LAUNCHING → RUNNING  (on stdout sentinel — NOT on QProcess::started)
+RUNNING → PAUSED  (on Pause click)
+PAUSED → RUNNING  (on Play click)
+RUNNING/PAUSED → EXITED/ERROR  (on process finish)
+```
+
+**New invariant (Invariant 7):** The GUI runner must not send any OSC message
+while in `LAUNCHING` state. `send_osc()` and `schedule_osc()` enforce this
+via the existing state guard. See `agent_threading_and_safety.md §OSC Runtime
+Parameter Delivery` for the full threading analysis.
 
 ---
 

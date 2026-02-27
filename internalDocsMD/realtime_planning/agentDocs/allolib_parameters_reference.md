@@ -333,8 +333,67 @@ class DebouncedOSCSender:
 ### Failure handling
 
 If the engine is not running (port not bound), `SimpleUDPClient.send_message`
-silently drops the packet — UDP has no ACK. The GUI should:
+silently drops the packet — UDP has no ACK.
 
-1. Only enable runtime sliders when `RealtimeRunner.state == RUNNING`.
-2. Not attempt to detect "IPC alive" — if the engine crashed, the process
-   state (exit code) already captures that.
+#### Critical: `LAUNCHING` ≠ `RUNNING` — wait for the ParameterServer sentinel
+
+`runRealtime.py` spawns a Python process that does significant preprocessing
+(scene load, WAV open, binary exec) **before** the C++ engine binds port 9009.
+The QProcess `started` signal fires when the Python subprocess starts — not
+when the `al::ParameterServer` is listening. Any OSC message sent between
+`started` and the server being ready is **silently dropped**.
+
+**The fix:** keep the runner in `LAUNCHING` state (which blocks all OSC sends)
+and watch the engine's stdout for the sentinel line printed by `main.cpp`
+immediately after `paramServer.serverRunning()` succeeds:
+
+```
+[Main] ParameterServer listening on 127.0.0.1:<port>
+```
+
+When this line is detected, transition to `RUNNING` and emit `engine_ready`.
+
+```python
+# In RealtimeRunner._on_stdout():
+_ENGINE_READY_SENTINEL = "ParameterServer listening"
+
+for line in data.splitlines():
+    self.output.emit(line)
+    if (self._state == RealtimeRunnerState.LAUNCHING
+            and self._ENGINE_READY_SENTINEL in line):
+        self._set_state(RealtimeRunnerState.RUNNING)
+        self.engine_ready.emit()        # ← new Signal()
+```
+
+#### Flush current GUI values when engine becomes ready
+
+Connect `engine_ready` to `controls_panel.flush_to_osc()` so whatever the
+user set during loading is immediately applied to the engine:
+
+```python
+# In realtimeGUI.py:
+runner.engine_ready.connect(controls_panel.flush_to_osc)
+```
+
+```python
+# In RealtimeControlsPanel.flush_to_osc():
+def flush_to_osc(self) -> None:
+    """Push all current control values to the engine immediately."""
+    self.osc_immediate.emit("/realtime/gain",           self._gain_row.value())
+    self.osc_immediate.emit("/realtime/focus",          self._focus_row.value())
+    self.osc_immediate.emit("/realtime/speaker_mix_db", self._spk_row.value())
+    self.osc_immediate.emit("/realtime/sub_mix_db",     self._sub_row.value())
+    v = 1.0 if self._auto_comp_check.isChecked() else 0.0
+    self.osc_immediate.emit("/realtime/auto_comp", v)
+```
+
+#### State guard summary
+
+| Runner state | OSC sends allowed? | Notes                                         |
+| ------------ | ------------------ | --------------------------------------------- |
+| `IDLE`       | ✗                  | No process running                            |
+| `LAUNCHING`  | ✗                  | Process running but ParameterServer not bound |
+| `RUNNING`    | ✓                  | ParameterServer confirmed listening           |
+| `PAUSED`     | ✓                  | Engine muted; server still listening          |
+| `EXITED`     | ✗                  | Process gone                                  |
+| `ERROR`      | ✗                  | Process gone                                  |

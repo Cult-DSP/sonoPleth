@@ -4,7 +4,11 @@
 > No new runtime mechanisms were needed — the engine was already correct.
 > Phase 8 was a full cross-agent threading audit + documentation pass.
 >
-> **What was implemented:**
+> **Phase 10 addendum (Feb 26 2026): OSC timing fix + runtime parameter flush**
+> GUI Agent fix for "sliders move but values not updated" — see §OSC Runtime
+> Parameter Delivery at the bottom of this file.
+>
+> **What was implemented (Phase 8):**
 >
 > - Canonical threading model documented in `RealtimeTypes.hpp` (3-thread table,
 >   memory order table, 6 invariants that must never be violated)
@@ -94,3 +98,118 @@ This agent is essentially the enforcer of constraints:
       const T* getReadBuffer() const { return &buffer[currentIndex.load()]; }
   };
   ```
+
+---
+
+## OSC Runtime Parameter Delivery — Phase 10 Addendum (Feb 26 2026)
+
+> **Bug fixed:** "sliders move but values are not updated" — reported after
+> Phase 10 GUI implementation. Root cause: premature `RUNNING` state in the
+> Python runner, leading to UDP packets dropped by the OS before the C++
+> `al::ParameterServer` had bound its socket.
+
+### The timing problem
+
+The four-thread model at runtime:
+
+| Thread                       | Owner            | What it does                                    |
+| ---------------------------- | ---------------- | ----------------------------------------------- |
+| Qt main thread               | Python / PySide6 | GUI event loop, OSC sends via `SimpleUDPClient` |
+| QProcess subprocess (Python) | `runRealtime.py` | Scene load, WAV open, C++ binary exec           |
+| C++ main thread              | `main.cpp`       | Engine init, monitoring loop, auto-comp         |
+| C++ ParameterServer listener | AlloLib          | UDP recv → `registerChangeCallback` dispatch    |
+
+The `QProcess::started` signal fires when `runRealtime.py` **spawns** as a
+Python process — not when the C++ binary launches, and not when
+`al::ParameterServer` binds its UDP socket. The time between `started` and
+the server being ready can be **several seconds** (scene JSON parse, WAV file
+open, binary load, AlloLib audio device init).
+
+Any `SimpleUDPClient.send_message()` call during that window succeeds at the
+socket level (UDP is connectionless) but the packet is **silently discarded**
+by the OS because nothing has called `bind()` on port 9009 yet.
+
+### The fix: stdout sentinel + deferred state transition
+
+`main.cpp` already prints this line immediately after
+`paramServer.serverRunning()` succeeds:
+
+```
+[Main] ParameterServer listening on 127.0.0.1:<port>
+```
+
+`RealtimeRunner._on_stdout()` scans every incoming stdout line for this
+sentinel. Until it appears, the runner stays in `LAUNCHING` state, and both
+`send_osc()` and `schedule_osc()` return early (state guard):
+
+```python
+# realtime_runner.py
+_ENGINE_READY_SENTINEL = "ParameterServer listening"
+
+def _on_started(self) -> None:
+    # Stay LAUNCHING — do NOT set RUNNING here
+    self.output.emit("[Runner] Process started — waiting for ParameterServer…")
+
+def _on_stdout(self) -> None:
+    for line in data.splitlines():
+        self.output.emit(line)
+        if (self._state == RealtimeRunnerState.LAUNCHING
+                and self._ENGINE_READY_SENTINEL in line):
+            self._set_state(RealtimeRunnerState.RUNNING)
+            self.engine_ready.emit()   # ← new Signal()
+```
+
+### Flush on ready: applying queued GUI values
+
+When the GUI transitions from `LAUNCHING` → `RUNNING`, the `engine_ready`
+signal triggers `RealtimeControlsPanel.flush_to_osc()`, which immediately
+sends all current control panel values as OSC messages:
+
+```python
+# realtimeGUI.py
+runner.engine_ready.connect(controls_panel.flush_to_osc)
+```
+
+```python
+# RealtimeControlsPanel.flush_to_osc()
+def flush_to_osc(self) -> None:
+    self.osc_immediate.emit("/realtime/gain",           self._gain_row.value())
+    self.osc_immediate.emit("/realtime/focus",          self._focus_row.value())
+    self.osc_immediate.emit("/realtime/speaker_mix_db", self._spk_row.value())
+    self.osc_immediate.emit("/realtime/sub_mix_db",     self._sub_row.value())
+    v = 1.0 if self._auto_comp_check.isChecked() else 0.0
+    self.osc_immediate.emit("/realtime/auto_comp", v)
+```
+
+This guarantees the engine always starts with the values the user has
+configured in the GUI, regardless of how long loading took.
+
+### Threading implications
+
+The `engine_ready` signal is emitted from `_on_stdout`, which runs on the
+**Qt main thread** (QProcess stdout callbacks are dispatched there). The
+`flush_to_osc()` call and the subsequent `SimpleUDPClient.send_message()`
+calls are therefore also on the main thread — correct, and consistent with
+all other OSC sends from the GUI.
+
+The sentinel string is printed by `main.cpp` from the **C++ main thread**,
+which is also where `paramServer.serverRunning()` is called. There is no
+race: if `serverRunning()` returns true, the socket is already bound and
+the listener thread is already running before the sentinel line reaches
+Python's stdout reader.
+
+### Invariant added (Phase 10)
+
+> **Invariant 7:** The Python GUI runner **must not** send OSC messages until
+> the C++ ParameterServer has confirmed it is listening (stdout sentinel
+> received). `RealtimeRunnerState.LAUNCHING` enforces this via the state guard
+> in `send_osc()` / `schedule_osc()`. Bypassing the state guard (e.g., calling
+> `_debouncer.send_now()` directly) during `LAUNCHING` is **prohibited**.
+
+### Files changed (Phase 10 OSC fix)
+
+| File                                                       | Change                                                                              |
+| ---------------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| `gui/realtimeGUI/realtime_runner.py`                       | `_on_started` stays `LAUNCHING`; `_on_stdout` sentinel probe; `engine_ready` Signal |
+| `gui/realtimeGUI/realtime_panels/RealtimeControlsPanel.py` | Added `flush_to_osc()` method                                                       |
+| `gui/realtimeGUI/realtimeGUI.py`                           | `runner.engine_ready.connect(controls_panel.flush_to_osc)`                          |
