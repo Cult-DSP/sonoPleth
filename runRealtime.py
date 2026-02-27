@@ -139,8 +139,8 @@ def _launch_realtime_engine(
     if not layout_path.exists():
         print(f"✗ Error: Speaker layout not found: {layout_path}")
         return False
-    if not (0.0 <= gain <= 1.0):
-        print(f"✗ Error: Invalid gain '{gain}'. Must be in range [0.0, 1.0].")
+    if not (0.1 <= gain <= 3.0):
+        print(f"✗ Error: Invalid gain '{gain}'. Must be in range [0.1, 3.0].")
         return False
     if not (0.2 <= dbap_focus <= 5.0):
         print(f"✗ Error: Invalid dbap_focus '{dbap_focus}'. Must be in range [0.2, 5.0].")
@@ -562,7 +562,7 @@ if __name__ == "__main__":
         print("\nArguments:")
         print("  <source>              ADM WAV file (.wav) or LUSID package directory")
         print("  [speaker_layout]      Speaker layout JSON (default: allosphere_layout.json)")
-        print("  [master_gain]         Master gain 0.0–1.0 (default: 0.5)")
+        print("  [master_gain]         Master gain 0.1–3.0 (default: 0.5)")
         print("  [dbap_focus]          DBAP focus/rolloff 0.2–5.0 (default: 1.5)")
         print("  [buffersize]          Audio buffer size in frames (default: 512)")
         print("  [--scan_audio]        Run full per-channel audio activity scan before")

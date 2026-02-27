@@ -324,23 +324,29 @@ private:
         }
 
         // ── Step 3: Spatialize all sources via DBAP ───────────────────────────
-        // Push smoothed gain parameters into config atomics so Spatializer reads
-        // them consistently. We write back here rather than threading smoothed
-        // values as separate parameters through the Spatializer API, keeping the
-        // API surface small.
-        // RT-safe: relaxed stores on the same atomics we snapshotted above.
+        // Build a ControlsSnapshot from the smoothed values and pass it directly
+        // into renderBlock(). The spatializer reads ONLY from this snapshot —
+        // it never touches mConfig for these parameters.
+        //
+        // CRITICAL: we do NOT write smoothed values back into mConfig here.
+        // Writing back would corrupt the target atomics (turning the smoother's
+        // output into the next block's target), causing the "smoother eats its
+        // own output" feedback loop where parameters appear stuck or barely move.
+        //
+        // mConfig atomics are WRITE-ONLY from the audio thread's perspective:
+        //   - Written by: OSC listener thread (the true source of truth)
+        //   - Read  by:   audio thread Step A snapshot only
+        //   - Never written by: audio thread (no write-back ever)
         if (mSpatializer && mStreamer && mPose) {
-            // Write smoothed values back to config so Spatializer reads them
-            // consistently via mConfig (keeps Spatializer API unchanged).
-            // RT-safe: relaxed stores on atomics; direct write for plain float.
-            mConfig.masterGain.store(mSmooth.smoothed.masterGain,         std::memory_order_relaxed);
-            mConfig.loudspeakerMix.store(mSmooth.smoothed.loudspeakerMix, std::memory_order_relaxed);
-            mConfig.subMix.store(mSmooth.smoothed.subMix,                 std::memory_order_relaxed);
-            mConfig.dbapFocus = mSmooth.smoothed.focus;  // plain float write-back
+            ControlsSnapshot ctrl;
+            ctrl.masterGain     = mSmooth.smoothed.masterGain;
+            ctrl.focus          = mSmooth.smoothed.focus;
+            ctrl.loudspeakerMix = mSmooth.smoothed.loudspeakerMix;
+            ctrl.subMix         = mSmooth.smoothed.subMix;
 
             const uint64_t currentFrame = mState.frameCounter.load(std::memory_order_relaxed);
             mSpatializer->renderBlock(io, *mStreamer, mPose->getPoses(),
-                                      currentFrame, numFrames);
+                                      currentFrame, numFrames, ctrl);
         }
 
         // ── Step 4: Apply pause fade per-sample ──────────────────────────────
@@ -414,9 +420,10 @@ private:
     // very top of processBlock(). Nothing inside the block reads config atomics
     // again. Avoids repeated atomic traffic inside Spatializer inner loops.
     //
-    // SmoothedState tracks exponentially-smoothed control values that are
-    // written back to mConfig before calling Spatializer::renderBlock(), so
-    // the spatializer sees smoothed values without a change to its API.
+    // SmoothedState::smoothed is the audio thread's ONLY representation of
+    // runtime control values. It is passed to renderBlock() via ControlsSnapshot.
+    // It is NEVER written back into mConfig atomics — those remain the exclusive
+    // domain of the OSC/GUI writer threads.
     //
     // tau = 50 ms → α ≈ 0.52 at 512/48k (10.7 ms block) → ~4 blocks to 95%.
     // Audibly this means a slider move smooths over ~200 ms — imperceptible

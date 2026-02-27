@@ -360,7 +360,7 @@ int main(int argc, char* argv[]) {
     // or set the pendingAutoComp flag; no heap allocation, no I/O.
 
     al::Parameter     gainParam     {"gain",           "realtime",
-                                     config.masterGain.load(),  0.0f,  1.0f};
+                                     config.masterGain.load(),  0.1f,  3.0f};
     al::Parameter     focusParam    {"focus",          "realtime",
                                      config.dbapFocus,          0.2f,  5.0f};
     al::Parameter     spkMixDbParam {"speaker_mix_db", "realtime",

@@ -265,7 +265,7 @@ s.focus          += alpha * (t.focus          - s.focus);
 s.autoComp        = t.autoComp;   // boolean — instant, no smoothing
 ```
 
-The smoothed values are written back into `mConfig` before `Spatializer::renderBlock()` is called, so the spatializer always sees temporally-coherent parameters.
+The smoothed values are passed to `Spatializer::renderBlock()` via a stack-allocated `ControlsSnapshot ctrl` built from `mSmooth.smoothed`. They are **never written back into `mConfig`** — see Invariant 12 below.
 
 ### Solution C — Pause/resume fade (8 ms linear ramp)
 
@@ -304,6 +304,27 @@ When `mPauseFade == 0.0f` and `paused == true`, the block returns after zeroing 
 **Invariant 11 — No heap allocation in processBlock:**  
 `mPrevChannelGains` and `mNextChannelGains` are resized (and thus heap-allocated) only when `io.channelsOut()` changes — a configuration event, not a per-block event. Per-block execution path is allocation-free.
 
+**Invariant 12 — Audio thread never writes back to `mConfig` target atomics:**  
+`mConfig.masterGain`, `mConfig.loudspeakerMix`, `mConfig.subMix`, and `mConfig.dbapFocus` are written **exclusively** by the OSC listener thread (via `registerChangeCallback`). The audio thread reads them once per block (Step A snapshot) and then operates only on `mSmooth.smoothed`. Writing smoothed intermediates back into these fields would corrupt the target, causing the smoother to converge toward a moving point that always trails just behind itself — the "smoother eats its own output" feedback loop, which manifests as parameters appearing stuck or barely responsive. The fix: `Spatializer::renderBlock()` accepts a `const ControlsSnapshot& ctrl` built from `mSmooth.smoothed`; no write-back to `mConfig` occurs anywhere in the audio callback.
+
+**Invariant 13 — `Spatializer::renderBlock()` reads zero config atomics for live params:**  
+`masterGain`, `focus`, `loudspeakerMix`, and `subMix` inside `renderBlock()` are read exclusively from the `ControlsSnapshot ctrl` argument. `mDBap->setFocus(ctrl.focus)` is called once per block at the top of `renderBlock()` — this was also a bug fix: previously `al::Dbap::mFocus` was baked at `init()` time and never updated, making focus changes appear to have no effect at runtime.
+
+---
+
+### `ControlsSnapshot` struct (defined in `Spatializer.hpp`)
+
+```cpp
+struct ControlsSnapshot {
+    float masterGain     = 1.0f;
+    float focus          = 1.0f;
+    float loudspeakerMix = 1.0f;
+    float subMix         = 1.0f;
+};
+```
+
+Stack-allocated in `processBlock()`, passed by `const&` to `renderBlock()`. Lifetime: one audio block.
+
 ---
 
 ### Private members summary
@@ -323,7 +344,10 @@ When `mPauseFade == 0.0f` and `paused == true`, the block returns after zeroing 
 
 ### Files changed
 
-| File                                                                  | Change                                                                                                        |
-| --------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
-| `spatial_engine/realtimeEngine/src/RealtimeBackend.hpp`               | Full `processBlock` rewrite; new private member section; `#include <cmath>` added                             |
-| `internalDocsMD/realtime_planning/agentDocs/agent_backend_adapter.md` | Full Phase 10 polish section added (problems, solutions A–D, member table, call-order table, threading notes) |
+| File                                                                  | Change                                                                                                                                                      |
+| --------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `spatial_engine/realtimeEngine/src/RealtimeBackend.hpp`               | Full `processBlock` rewrite; `ControlsSnapshot` passed to `renderBlock()`; smoothed values never written back to `mConfig`; `#include <cmath>` added        |
+| `spatial_engine/realtimeEngine/src/Spatializer.hpp`                   | Added `ControlsSnapshot` struct (file-scope); `renderBlock()` takes `const ControlsSnapshot& ctrl`; removed all `mConfig` atomic reads for live params; `mDBap->setFocus(ctrl.focus)` per-block |
+| `spatial_engine/realtimeEngine/src/main.cpp`                          | `gainParam` range `0.0–1.0` → `0.1–3.0`                                                                                                                    |
+| `runRealtime.py`                                                       | Gain validation guard updated to `[0.1, 3.0]`                                                                                                              |
+| `gui/realtimeGUI/realtime_panels/RealtimeControlsPanel.py`            | Master Gain slider range and step updated                                                                                                                   |

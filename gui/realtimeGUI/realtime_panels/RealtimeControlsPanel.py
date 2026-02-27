@@ -2,7 +2,7 @@
 RealtimeControlsPanel.py — Live runtime parameter sliders.
 
 Five controls, all sent via OSC to al::ParameterServer (port 9009):
-  - Master Gain      /realtime/gain           0.0 – 1.0    default 0.5
+  - Master Gain      /realtime/gain           0.1 – 3.0    default 0.5
   - DBAP Focus       /realtime/focus          0.2 – 5.0    default 1.5
   - Speaker Mix dB   /realtime/speaker_mix_db -10 – +10    default 0.0
   - Sub Mix dB       /realtime/sub_mix_db     -10 – +10    default 0.0
@@ -223,7 +223,7 @@ class RealtimeControlsPanel(QWidget):
         title.setObjectName("SectionTitle")
         layout.addWidget(title)
 
-        self._gain_row  = _ParamRow("Master Gain",       0.0, 1.0,   DEFAULTS["gain"],           decimals=2, step=0.01)
+        self._gain_row  = _ParamRow("Master Gain",       0.1, 3.0,   DEFAULTS["gain"],           decimals=2, step=0.05)
         self._focus_row = _ParamRow("DBAP Focus",        0.2, 5.0,   DEFAULTS["focus"],          decimals=2, step=0.05)
         self._spk_row   = _ParamRow("Speaker Mix  (dB)", -10.0, 10.0, DEFAULTS["speaker_mix_db"], decimals=1, step=0.5)
         self._sub_row   = _ParamRow("Sub Mix  (dB)",     -10.0, 10.0, DEFAULTS["sub_mix_db"],     decimals=1, step=0.5)

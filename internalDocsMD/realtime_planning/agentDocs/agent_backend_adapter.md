@@ -100,7 +100,7 @@ alpha = 1 − exp(−dt / τ)    where τ = 50 ms (default)
 smoothed = smoothed + alpha × (target − smoothed)
 ```
 
-One `std::exp` call per block (negligible cost). Smoothed values are written back to `mConfig` before `Spatializer::renderBlock()` so the Spatializer API is unchanged.
+One `std::exp` call per block (negligible cost). Smoothed values are passed into `Spatializer::renderBlock()` via a stack-allocated `ControlsSnapshot` struct — they are **never written back into `mConfig`** (see feedback-loop fix below).
 
 At 512 frames / 48 kHz (10.7 ms block): α ≈ 0.19 → 95% settling in ~4 blocks (~43 ms). Slider moves produce a short ramp rather than a step.
 
@@ -138,10 +138,35 @@ The ramp is applied per-sample after all rendering in Step 4. When fully paused 
 4. Resize/shift per-channel gain anchors (identity placeholder)
 5. Zero output channels
 6. Pose::computePositions(blockCenter)
-7. Write smoothed values back to mConfig, call Spatializer::renderBlock()
+7. Build ControlsSnapshot from mSmooth.smoothed; call Spatializer::renderBlock(..., ctrl)
+   ↳ mConfig atomics are NOT written — they remain the OSC thread's exclusive domain
 8. Apply pause fade per-sample (scale output, freeze frameCounter if fully paused)
 9. Update frameCounter, playbackTimeSec, cpuLoad
 ```
+
+#### Feedback-loop bug fix (Feb 27 2026) — "smoother eats its own output"
+
+An earlier implementation wrote `mSmooth.smoothed.*` back into the `mConfig` atomics before calling `renderBlock()`. This caused the smoother to converge toward a moving target: each block's Step A re-read the partially-smoothed value as the new target, meaning the true OSC-set destination was overwritten immediately. Parameters appeared stuck or barely responsive.
+
+**Fix:** introduced `ControlsSnapshot` (a plain struct defined in `Spatializer.hpp`) and changed `renderBlock()` to accept `const ControlsSnapshot& ctrl`. The audio thread now has a strict ownership model:
+
+| Role                    | `mConfig` atomics                              | `mSmooth.smoothed`                             |
+| ----------------------- | ---------------------------------------------- | ---------------------------------------------- |
+| **Written by**          | OSC listener thread only                       | Audio thread only                              |
+| **Read by**             | Audio thread (Step A snapshot, once per block) | Audio thread (Step 7, into `ControlsSnapshot`) |
+| **Never written by**    | Audio thread                                   | OSC thread                                     |
+
+`Spatializer::renderBlock()` reads **only** from `ctrl` for `masterGain`, `focus`, `loudspeakerMix`, and `subMix`. It calls `mDBap->setFocus(ctrl.focus)` at the top of each block — also fixed here (previously `mDBap->mFocus` was baked at `init()` and never updated at runtime).
+
+#### Master gain range expanded (Feb 27 2026)
+
+Gain range changed from `[0.0, 1.0]` to `[0.1, 3.0]`, default remains `0.5`.
+
+| Location                              | Before           | After            |
+| ------------------------------------- | ---------------- | ---------------- |
+| `main.cpp` `gainParam` min/max        | `0.0f – 1.0f`   | `0.1f – 3.0f`   |
+| `runRealtime.py` validation guard     | `0.0 ≤ gain ≤ 1.0` | `0.1 ≤ gain ≤ 3.0` |
+| `RealtimeControlsPanel.py` row range  | `0.0–1.0, step 0.01` | `0.1–3.0, step 0.05` |
 
 #### Threading notes
 

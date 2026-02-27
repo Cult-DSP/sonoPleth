@@ -47,8 +47,11 @@
 //  AUDIO thread:
 //    - Calls renderBlock() once per audio block.
 //    - EXCLUSIVELY owns mRenderIO and mSourceBuffer during playback.
-//    - Reads mConfig.{loudspeakerMix, subMix, masterGain, focusAutoCompensation}
-//      with memory_order_relaxed — these are atomics, stale-by-one-block is fine.
+//    - Receives all live runtime controls via ControlsSnapshot (passed by
+//      const-ref from RealtimeBackend::processBlock). Does NOT read mConfig
+//      for masterGain / loudspeakerMix / subMix / focus — those values come
+//      only from the snapshot to prevent the "smoother eats its own output"
+//      feedback loop.
 //    - Reads mRemap via the non-owning pointer (set once before start(),
 //      then read-only). mRemap->entries() and mRemap->identity() are const.
 //
@@ -101,6 +104,25 @@
 #include "OutputRemap.hpp"
 #include "Streaming.hpp"
 #include "Pose.hpp"
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ControlsSnapshot — per-block copy of smoothed runtime control values
+//
+// Passed from RealtimeBackend::processBlock() into Spatializer::renderBlock()
+// so the spatializer NEVER reads mConfig for these parameters. This breaks the
+// "smoother eats its own output" feedback loop: the audio thread has one
+// canonical representation of each runtime value (mSmooth.smoothed) that is
+// never written back into the target atomics.
+//
+// Ownership: created on the stack in processBlock(), passed by const-ref.
+// ─────────────────────────────────────────────────────────────────────────────
+
+struct ControlsSnapshot {
+    float masterGain     = 1.0f;
+    float focus          = 1.0f;
+    float loudspeakerMix = 1.0f;
+    float subMix         = 1.0f;
+};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Spatializer — DBAP panning engine for the real-time pipeline
@@ -260,18 +282,18 @@ public:
                      Streaming& streaming,
                      const std::vector<SourcePose>& poses,
                      uint64_t currentFrame,
-                     unsigned int numFrames) {
+                     unsigned int numFrames,
+                     const ControlsSnapshot& ctrl) {
 
         if (!mInitialized) return;
 
-        const float masterGain = mConfig.masterGain.load(std::memory_order_relaxed);
+        const float masterGain = ctrl.masterGain;
         const unsigned int renderChannels = mRenderIO.channelsOut();
 
         // ── Apply live focus update to DBAP panner ───────────────────────
-        // mConfig.dbapFocus is written by RealtimeBackend::processBlock()
-        // (the smoothed value) before renderBlock() is called each block.
+        // ctrl.focus is the smoothed value from RealtimeBackend::processBlock().
         // setFocus() just assigns mFocus — no allocation, RT-safe.
-        mDBap->setFocus(mConfig.dbapFocus);
+        mDBap->setFocus(ctrl.focus);
 
         // Zero the internal render buffer (DBAP accumulates into it)
         mRenderIO.zeroOut();
@@ -330,10 +352,10 @@ public:
         // AudioIO output. This matches the design doc specification:
         //   - loudspeakerMix → all non-subwoofer channels (main speakers)
         //   - subMix         → subwoofer channels only
-        // Both are atomic relaxed loads (one per block — negligible cost).
+        // Values come from the ControlsSnapshot (smoothed, never from atomics).
         // Unity-guard (== 1.0f) makes the no-op case zero cost.
-        const float spkMix = mConfig.loudspeakerMix.load(std::memory_order_relaxed);
-        const float lfeMix = mConfig.subMix.load(std::memory_order_relaxed);
+        const float spkMix = ctrl.loudspeakerMix;
+        const float lfeMix = ctrl.subMix;
 
         if (spkMix != 1.0f) {
             for (unsigned int ch = 0; ch < renderChannels; ++ch) {
