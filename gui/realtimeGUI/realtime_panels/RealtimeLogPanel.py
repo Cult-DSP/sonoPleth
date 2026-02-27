@@ -39,8 +39,10 @@ def _card() -> QFrame:
 class RealtimeLogPanel(QWidget):
     """Scrolling log console. Call append_line(text) to add output."""
 
-    def __init__(self, parent: Optional[QWidget] = None) -> None:
+    def __init__(self, theme: dict = None, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
+        from .theme import DARK
+        self._theme = theme or DARK
         self._build_ui()
 
     # ── Public API ───────────────────────────────────────────────────────
@@ -50,9 +52,29 @@ class RealtimeLogPanel(QWidget):
         sb = self._log.verticalScrollBar()
         at_bottom = sb.value() >= sb.maximum() - 4
 
-        self._log.appendPlainText(text)
+        # Colour-code by prefix (mirrors HTML log-line classes)
+        colour = self._theme["muted"]        # default: .info
+        if text.startswith("[GUI]"):
+            colour = self._theme["muted2"]   # .gui
+        elif "[stderr] Warning" in text or "[stderr] warning" in text:
+            colour = self._theme["yellow"]   # .warn
+        elif ("ParameterServer listening" in text
+              or "DBAP renderer running"  in text
+              or "Engine exited cleanly"  in text):
+            colour = self._theme["green"]    # .ok
+        elif "ERROR" in text or "error" in text.lower():
+            colour = self._theme["red"]      # .error
 
-        # Trim if over limit
+        # Use HTML insertion for colour (QPlainTextEdit supports appendHtml)
+        escaped = (text.replace("&", "&amp;")
+                       .replace("<", "&lt;")
+                       .replace(">", "&gt;"))
+        self._log.appendHtml(
+            f'<span style="color:{colour}; font-family:\'Space Mono\',monospace;">'
+            f'{escaped}</span>'
+        )
+
+        # Trim excess (existing logic unchanged)
         doc = self._log.document()
         while doc.blockCount() > MAX_LINES:
             cursor = QTextCursor(doc.begin())
@@ -82,12 +104,20 @@ class RealtimeLogPanel(QWidget):
         layout.setSpacing(8)
 
         header = QHBoxLayout()
-        title = QLabel("Engine Log")
+        title = QLabel("ENGINE LOG")
         title.setObjectName("SectionTitle")
+        title.setFont(QFont("Space Mono", 7))
         header.addWidget(title)
+        # Phase tag
+        phase_tag = QLabel("PHASE 10")
+        phase_tag.setObjectName("PhaseTag")
+        phase_tag.setFont(QFont("Space Mono", 6))
+        header.addWidget(phase_tag)
+        header.addSpacing(8)
         header.addStretch()
         clear_btn = QPushButton("Clear")
-        clear_btn.setObjectName("SecondaryButton")
+        clear_btn.setObjectName("ClearButton")
+        clear_btn.setFont(QFont("Space Mono", 7))
         clear_btn.setFixedWidth(60)
         clear_btn.clicked.connect(self.clear)
         header.addWidget(clear_btn)
@@ -96,9 +126,9 @@ class RealtimeLogPanel(QWidget):
         self._log = QPlainTextEdit()
         self._log.setReadOnly(True)
         self._log.setMaximumBlockCount(MAX_LINES)
-        mono = QFont("Menlo, Monaco, Courier New, monospace")
+        mono = QFont("Space Mono")
+        mono.setPointSize(9)
         mono.setStyleHint(QFont.StyleHint.Monospace)
-        mono.setPointSize(11)
         self._log.setFont(mono)
         self._log.setStyleSheet(
             "QPlainTextEdit { background: rgba(0,0,0,0.03); "

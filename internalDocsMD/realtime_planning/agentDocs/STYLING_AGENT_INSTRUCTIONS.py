@@ -23,7 +23,7 @@
 # 2. All colour values must be sourced from the THEME TOKENS section below.
 #    Never hardcode colours outside the theme dicts.
 # 3. Support both DARK and LIGHT modes via a single THEME dict passed at
-#    construction time. Default to DARK.
+#    construction time. Default to LIGHT.
 # 4. The HTML mockups are the visual specification. When in doubt, match them.
 #
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1216,7 +1216,7 @@ class SacredGeometryBackground(QWidget):
 #
 #   def main():
 #       parser = argparse.ArgumentParser()
-#       parser.add_argument("--theme", choices=["dark","light"], default="dark")
+#       parser.add_argument("--theme", choices=["dark","light"], default="light")
 #       parser.add_argument("--repo-root", default=".")
 #       args = parser.parse_args()
 #

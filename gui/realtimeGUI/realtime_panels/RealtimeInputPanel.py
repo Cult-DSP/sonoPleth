@@ -17,7 +17,8 @@ import os
 from pathlib import Path
 from typing import Optional
 
-from PySide6.QtCore import Signal, Qt
+from PySide6.QtCore import Signal, Qt, QTimer
+from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -48,8 +49,10 @@ class RealtimeInputPanel(QWidget):
 
     config_changed = Signal()
 
-    def __init__(self, parent: Optional[QWidget] = None) -> None:
+    def __init__(self, theme: dict = None, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
+        from .theme import DARK
+        self._theme = theme or DARK
         self._build_ui()
         self._connect_signals()
 
@@ -92,11 +95,19 @@ class RealtimeInputPanel(QWidget):
         card = _card()
         layout = QVBoxLayout(card)
         layout.setContentsMargins(20, 16, 20, 16)
-        layout.setSpacing(10)
+        layout.setSpacing(8)
 
-        title = QLabel("Input Configuration")
+        title = QLabel("INPUT CONFIGURATION")
         title.setObjectName("SectionTitle")
+        from PySide6.QtGui import QFont
+        title.setFont(QFont("Space Mono", 7))
+        # Add a horizontal line after it (mimics section-label::after in HTML):
+        # Use a QFrame as a separator — add to layout immediately after title.
+        sep = QFrame()
+        sep.setFrameShape(QFrame.Shape.HLine)
+        sep.setStyleSheet(f"color: {self._theme['border_light']}; margin-bottom: 6px;")
         layout.addWidget(title)
+        layout.addWidget(sep)
 
         # Source row
         layout.addWidget(self._make_row_label("Source"))
@@ -105,6 +116,7 @@ class RealtimeInputPanel(QWidget):
         self._source_edit.setPlaceholderText("ADM WAV file or LUSID package directory…")
         self._source_btn = QPushButton("Browse")
         self._source_btn.setObjectName("FileButton")
+        self._source_btn.setFont(QFont("Space Mono", 7))
         self._source_btn.setFixedWidth(80)
         src_row.addWidget(self._source_edit)
         src_row.addWidget(self._source_btn)
@@ -121,12 +133,14 @@ class RealtimeInputPanel(QWidget):
         self._layout_combo.addItem("AlloSphere", "spatial_engine/speaker_layouts/allosphere_layout.json")
         self._layout_combo.addItem("Translab", "spatial_engine/speaker_layouts/translab-sono-layout.json")
         self._layout_combo.setCurrentIndex(0)  # Default to AlloSphere
+        self._layout_combo.setFont(QFont("Space Mono", 8))
         self._layout_combo.setFixedWidth(100)
         lay_row.addWidget(self._layout_combo)
         self._layout_edit = QLineEdit()
         self._layout_edit.setText("spatial_engine/speaker_layouts/allosphere_layout.json")
         self._layout_btn = QPushButton("Browse")
         self._layout_btn.setObjectName("FileButton")
+        self._layout_btn.setFont(QFont("Space Mono", 7))
         self._layout_btn.setFixedWidth(80)
         lay_row.addWidget(self._layout_edit)
         lay_row.addWidget(self._layout_btn)
@@ -139,12 +153,14 @@ class RealtimeInputPanel(QWidget):
         self._remap_combo.addItem("None", None)
         self._remap_combo.addItem("Allosphere Example", "spatial_engine/remaping/exampleRemap.csv")
         self._remap_combo.setCurrentIndex(0)  # Default to None
+        self._remap_combo.setFont(QFont("Space Mono", 8))
         self._remap_combo.setFixedWidth(150)
         remap_row.addWidget(self._remap_combo)
         self._remap_edit = QLineEdit()
         self._remap_edit.setPlaceholderText("channel_remap.csv (leave blank for identity)…")
         self._remap_btn = QPushButton("Browse")
         self._remap_btn.setObjectName("FileButton")
+        self._remap_btn.setFont(QFont("Space Mono", 7))
         self._remap_btn.setFixedWidth(80)
         remap_row.addWidget(self._remap_edit)
         remap_row.addWidget(self._remap_btn)
@@ -157,19 +173,29 @@ class RealtimeInputPanel(QWidget):
         for v in ("64", "128", "256", "512", "1024"):
             self._buffer_combo.addItem(v)
         self._buffer_combo.setCurrentText("512")
+        self._buffer_combo.setFont(QFont("Space Mono", 8))
         self._buffer_combo.setFixedWidth(100)
         opts_row.addWidget(self._buffer_combo)
         opts_row.addSpacing(20)
         self._scan_check = QCheckBox("Scan Audio  (ADM only, +~14s startup)")
+        self._scan_check.setFont(QFont("Space Mono", 7))
         opts_row.addWidget(self._scan_check)
         opts_row.addStretch()
         layout.addLayout(opts_row)
 
         root_layout.addWidget(card)
 
+        from .brand_widgets import CornerMarksWidget
+        # At end of _build_ui(), after root_layout.addWidget(card):
+        marks = CornerMarksWidget(color=self._theme["muted2"], parent=card)
+        # Delay geometry assignment until card is shown:
+        QTimer.singleShot(0, lambda: marks.setGeometry(card.rect()))
+
     def _make_row_label(self, text: str) -> QLabel:
-        lbl = QLabel(text)
+        lbl = QLabel(text.upper())
         lbl.setObjectName("Muted")
+        lbl.setFont(QFont("Space Mono", 7))
+        lbl.setFixedWidth(110)
         return lbl
 
     # ── Signal wiring ──────────────────────────────────────────────────
@@ -233,7 +259,11 @@ class RealtimeInputPanel(QWidget):
         text = text.strip()
         hint, is_adm, is_lusid = self._detect_source(text)
         self._source_hint.setText(hint)
-        # Grey scan checkbox for LUSID sources
+        self._source_hint.setFont(QFont("Space Mono", 7))
+        if is_adm or is_lusid:
+            self._source_hint.setStyleSheet(f"color: {self._theme['green']};")
+        else:
+            self._source_hint.setStyleSheet(f"color: {self._theme['red']};")
         self._scan_check.setEnabled(is_adm or text == "")
         self.config_changed.emit()
 

@@ -19,9 +19,10 @@ from pathlib import Path
 from typing import Optional
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QClipboard, QGuiApplication
+from PySide6.QtGui import QClipboard, QGuiApplication, QFont, QFontDatabase
 from PySide6.QtWidgets import (
     QFrame,
+    QHBoxLayout,
     QLabel,
     QMainWindow,
     QScrollArea,
@@ -30,6 +31,8 @@ from PySide6.QtWidgets import (
 )
 
 from .realtime_runner import RealtimeConfig, RealtimeRunner, RealtimeRunnerState
+from .realtime_panels.theme import DARK, LIGHT, make_qss
+from .realtime_panels.brand_widgets import SacredGeometryBackground
 from .realtime_panels.RealtimeInputPanel import RealtimeInputPanel
 from .realtime_panels.RealtimeTransportPanel import RealtimeTransportPanel
 from .realtime_panels.RealtimeControlsPanel import RealtimeControlsPanel
@@ -50,15 +53,31 @@ class RealtimeWindow(QMainWindow):
     def __init__(
         self,
         repo_root: str = ".",
+        theme: str = "light",         # "dark" | "light"
         parent: Optional[QWidget] = None,
     ) -> None:
         super().__init__(parent)
+        self._theme = DARK if theme == "dark" else LIGHT
         self._repo_root = repo_root
         self._runner = RealtimeRunner(repo_root=repo_root, parent=self)
+        self._load_fonts()
         self._build_ui()
         self._connect_runner()
-        self.setWindowTitle("sonoPleth — Real-Time Engine")
+        # Apply master QSS AFTER _build_ui so objectNames are set
+        from PySide6.QtWidgets import QApplication
+        QApplication.instance().setStyleSheet(make_qss(self._theme))
+        self.setWindowTitle("Spatial Root — Real-Time Engine")
         self.resize(820, 900)
+
+    def _load_fonts(self) -> None:
+        """
+        Register Space Mono + Cormorant Garamond if shipped in a fonts/ dir.
+        Falls back silently to system monospace if not found.
+        """
+        fonts_dir = Path(__file__).parent / "fonts"
+        if fonts_dir.exists():
+            for ttf in fonts_dir.glob("*.ttf"):
+                QFontDatabase.addApplicationFont(str(ttf))
 
     # ── UI construction ──────────────────────────────────────────────────
 
@@ -75,14 +94,53 @@ class RealtimeWindow(QMainWindow):
         # ── Header bar ────────────────────────────────────────────────
         header = QFrame()
         header.setObjectName("HeaderBar")
-        header.setFixedHeight(56)
-        header_layout = QVBoxLayout(header)
-        header_layout.setContentsMargins(24, 10, 24, 10)
-        title_lbl = QLabel("sonoPleth  Real-Time Engine")
-        title_lbl.setObjectName("Title")
-        subtitle_lbl = QLabel("Phase 10 — GUI Agent")
-        subtitle_lbl.setObjectName("Subtitle")
-        header_layout.addWidget(title_lbl)
+        header.setFixedHeight(48)
+        header_layout = QHBoxLayout(header)
+        header_layout.setContentsMargins(20, 0, 20, 0)
+        header_layout.setSpacing(0)
+
+        # Logo glyph (SVG rendered by LogoGlyphWidget — see brand_widgets)
+        from .realtime_panels.brand_widgets import LogoGlyphWidget
+        logo_glyph = LogoGlyphWidget(
+            stroke_color=self._theme["text"], parent=header
+        )
+        logo_glyph.setFixedSize(24, 24)
+        header_layout.addWidget(logo_glyph)
+        header_layout.addSpacing(10)
+
+        # Wordmark: "Spatial Root  Real-Time Engine"
+        wordmark = QLabel("Spatial Root")
+        wordmark.setObjectName("Title")
+        wordmark.setFont(QFont("Cormorant Garamond", 15))
+        header_layout.addWidget(wordmark)
+        header_layout.addSpacing(6)
+        sub = QLabel("Real-Time Engine")
+        sub.setObjectName("Subtitle")
+        sub.setFont(QFont("Cormorant Garamond", 11))
+        header_layout.addWidget(sub)
+
+        header_layout.addStretch()
+
+        # Pipeline label (centred absolutely — use a fixed-width spacer trick)
+        pipeline_lbl = QLabel("ADM  →  LUSID  ⇒  Spatial Render")
+        pipeline_lbl.setObjectName("Muted2")
+        pipeline_lbl.setFont(QFont("Space Mono", 7))
+        pipeline_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        header_layout.addWidget(pipeline_lbl)
+
+        header_layout.addStretch()
+
+        # Running status dot + label
+        self._header_dot = QLabel("●")
+        self._header_dot.setObjectName("Muted")
+        self._header_dot.setFont(QFont("Space Mono", 8))
+        header_layout.addWidget(self._header_dot)
+        header_layout.addSpacing(5)
+        self._header_state_lbl = QLabel("IDLE")
+        self._header_state_lbl.setObjectName("Muted")
+        self._header_state_lbl.setFont(QFont("Space Mono", 7))
+        header_layout.addWidget(self._header_state_lbl)
+
         root_layout.addWidget(header)
 
         # ── Scrollable content area ───────────────────────────────────
@@ -94,13 +152,13 @@ class RealtimeWindow(QMainWindow):
         content = QWidget()
         content_layout = QVBoxLayout(content)
         content_layout.setContentsMargins(20, 16, 20, 20)
-        content_layout.setSpacing(12)
+        content_layout.setSpacing(10)
 
         # Panels
-        self._input_panel     = RealtimeInputPanel(parent=content)
-        self._transport_panel = RealtimeTransportPanel(parent=content)
-        self._controls_panel  = RealtimeControlsPanel(parent=content)
-        self._log_panel       = RealtimeLogPanel(parent=content)
+        self._input_panel     = RealtimeInputPanel(theme=self._theme, parent=content)
+        self._transport_panel = RealtimeTransportPanel(theme=self._theme, parent=content)
+        self._controls_panel  = RealtimeControlsPanel(theme=self._theme, parent=content)
+        self._log_panel       = RealtimeLogPanel(theme=self._theme, parent=content)
 
         content_layout.addWidget(self._input_panel)
         content_layout.addWidget(self._transport_panel)
@@ -111,6 +169,15 @@ class RealtimeWindow(QMainWindow):
         scroll.setWidget(content)
         root_layout.addWidget(scroll)
 
+        # Sacred geometry background
+        self._bg_geo = SacredGeometryBackground(
+            stroke_color=self._theme["text"],
+            opacity=0.05 if self._theme is DARK else 0.07,
+            parent=root_widget,
+        )
+        self._bg_geo.move(root_widget.width() - 350, -100)
+        self._bg_geo.lower()
+
     # ── Runner signal wiring ─────────────────────────────────────────────
 
     def _connect_runner(self) -> None:
@@ -118,6 +185,7 @@ class RealtimeWindow(QMainWindow):
 
         r.output.connect(self._log_panel.append_line)
         r.state_changed.connect(self._on_state_changed)
+        r.state_changed.connect(self._update_header_state)
         r.finished.connect(self._on_engine_finished)
         # When the C++ ParameterServer is confirmed listening, flush the current
         # GUI control values so the engine starts with whatever the user has set.
@@ -192,3 +260,23 @@ class RealtimeWindow(QMainWindow):
             self._log_panel.append_line(f"[GUI] Copied to clipboard: {cmd}")
         else:
             self._log_panel.append_line("[GUI] No command to copy — start the engine first.")
+
+    def _update_header_state(self, state_name: str) -> None:
+        self._header_state_lbl.setText(state_name.upper())
+        colours = {
+            "Idle":      self._theme["muted2"],
+            "Launching": self._theme["yellow"],
+            "Running":   self._theme["green"],
+            "Paused":    self._theme["orange"],
+            "Exited":    self._theme["muted2"],
+            "Error":     self._theme["red"],
+        }
+        c = colours.get(state_name, self._theme["muted2"])
+        self._header_dot.setStyleSheet(f"color: {c};")
+        self._header_state_lbl.setStyleSheet(f"color: {c};")
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        if hasattr(self, "_bg_geo"):
+            cw = self.centralWidget()
+            self._bg_geo.move(cw.width() - 350, -100)

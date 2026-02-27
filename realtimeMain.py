@@ -13,6 +13,7 @@ Phase 10 — GUI Agent.
 
 import sys
 from pathlib import Path
+import argparse
 
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication
@@ -21,8 +22,13 @@ from gui.realtimeGUI.realtimeGUI import RealtimeWindow
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--theme", choices=["dark","light"], default="light")
+    parser.add_argument("--repo-root", default=".")
+    args = parser.parse_args()
+
     app = QApplication(sys.argv)
-    app.setApplicationName("sonoPleth Real-Time")
+    app.setApplicationName("sonoPleth")
 
     here = Path(__file__).resolve().parent
 
@@ -33,14 +39,7 @@ def main() -> None:
     else:
         print(f"[realtimeMain] Warning: icon not found at {icon_path}")
 
-    # Load shared stylesheet
-    qss_path = here / "gui" / "styles.qss"
-    if qss_path.exists():
-        app.setStyleSheet(qss_path.read_text(encoding="utf-8"))
-    else:
-        print(f"[realtimeMain] Warning: stylesheet not found at {qss_path}")
-
-    win = RealtimeWindow(repo_root=str(here))
+    win = RealtimeWindow(repo_root=str(here), theme=args.theme)
     win.show()
     win.activateWindow()
 

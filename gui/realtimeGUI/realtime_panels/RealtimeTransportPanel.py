@@ -9,8 +9,8 @@ from __future__ import annotations
 
 from typing import Optional
 
-from PySide6.QtCore import Signal, Qt
-from PySide6.QtGui import QClipboard, QGuiApplication
+from PySide6.QtCore import Signal, Qt, QTimer
+from PySide6.QtGui import QClipboard, QGuiApplication, QFont
 from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
@@ -72,8 +72,10 @@ class RealtimeTransportPanel(QWidget):
     play_requested         = Signal()
     copy_command_requested = Signal()
 
-    def __init__(self, parent: Optional[QWidget] = None) -> None:
+    def __init__(self, theme: dict = None, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
+        from .theme import DARK
+        self._theme = theme or DARK
         self._current_state = RealtimeRunnerState.IDLE
         self._build_ui()
 
@@ -105,19 +107,33 @@ class RealtimeTransportPanel(QWidget):
         card = _card()
         layout = QVBoxLayout(card)
         layout.setContentsMargins(20, 16, 20, 16)
-        layout.setSpacing(10)
+        layout.setSpacing(8)
 
-        title = QLabel("Transport")
+        title = QLabel("TRANSPORT")
         title.setObjectName("SectionTitle")
+        title.setFont(QFont("Space Mono", 7))
         layout.addWidget(title)
+
+        from .brand_widgets import EyeOrnamentWidget
+        self._eye = EyeOrnamentWidget(
+            stroke_color=self._theme["text"],
+            opacity=0.06 if self._theme.get("bg") == "#0f0f0f" else 0.04,
+            parent=card,
+        )
+        # Position bottom-right; update on resize via resizeEvent override.
+        # Use a QTimer to defer until card has been laid out:
+        QTimer.singleShot(0, lambda: self._eye.move(
+            card.width() - self._eye.width() - 8,
+            card.height() - self._eye.height() - 4,
+        ))
 
         # Row 1: main transport buttons + status pill
         row1 = QHBoxLayout()
-        row1.setSpacing(8)
+        row1.setSpacing(6)
 
         self._start_btn   = self._btn("Start",   "PrimaryButton")
         self._stop_btn    = self._btn("Stop",     "SecondaryButton")
-        self._kill_btn    = self._btn("Kill",     "SecondaryButton")
+        self._kill_btn    = self._btn("Kill",     "KillButton")
         self._restart_btn = self._btn("Restart",  "SecondaryButton")
 
         for b in (self._start_btn, self._stop_btn,
@@ -140,7 +156,7 @@ class RealtimeTransportPanel(QWidget):
 
         # Row 2: pause / play + osc port label + copy command
         row2 = QHBoxLayout()
-        row2.setSpacing(8)
+        row2.setSpacing(6)
 
         self._pause_btn = self._btn("Pause", "SecondaryButton")
         self._play_btn  = self._btn("Play",  "SecondaryButton")
@@ -150,7 +166,8 @@ class RealtimeTransportPanel(QWidget):
         row2.addStretch()
 
         self._osc_label = QLabel("OSC port: 9009")
-        self._osc_label.setObjectName("Muted")
+        self._osc_label.setFont(QFont("Space Mono", 7))
+        self._osc_label.setObjectName("Muted2")
         row2.addWidget(self._osc_label)
 
         row2.addSpacing(12)
@@ -175,6 +192,7 @@ class RealtimeTransportPanel(QWidget):
     def _btn(label: str, obj_name: str) -> QPushButton:
         b = QPushButton(label)
         b.setObjectName(obj_name)
+        b.setFont(QFont("Space Mono", 7))
         return b
 
     # ── State-driven enable / disable ───────────────────────────────────
@@ -202,12 +220,25 @@ class RealtimeTransportPanel(QWidget):
         self._copy_btn.setEnabled(True)  # always available
 
         # Pill text + colour
-        label = s.value
-        self._pill_label.setText(f"● {label}")
-        bg   = _PILL_COLORS.get(s.value, "rgba(110,110,115,0.15)")
-        dot  = _PILL_DOT.get(s.value, "#8E8E93")
-        self._pill_label.setStyleSheet(f"color: {dot};")
-        self._pill_label.parentWidget().setStyleSheet(
-            f"QFrame#Pill {{ background: {bg}; border: 1px solid rgba(0,0,0,0.06); "
+        label = s.value.upper()
+        self._pill_label.setText(f"●  {label}")
+        self._pill_label.setFont(QFont("Space Mono", 7))
+
+        # Map state → colours
+        from .theme import PILL_STYLE
+        bg, dot = PILL_STYLE.get(s.value, ("rgba(110,110,115,0.15)", "#8E8E93"))
+        # Override Running and Error with theme-adaptive colours:
+        if s.value == "Running":
+            bg  = self._theme["green_bg"]
+            dot = self._theme["green"]
+        elif s.value == "Error":
+            bg  = self._theme["red_bg"]
+            dot = self._theme["red"]
+
+        self._pill_label.setStyleSheet(f"color: {dot}; background: transparent;")
+        pill_frame = self._pill_label.parentWidget()
+        pill_frame.setStyleSheet(
+            f"QFrame#Pill {{ background: {bg}; "
+            f"border: 1px solid rgba(128,128,128,0.2); "
             f"border-radius: 10px; }}"
         )

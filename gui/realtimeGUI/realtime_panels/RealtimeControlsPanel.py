@@ -23,6 +23,7 @@ from __future__ import annotations
 from typing import Callable, Optional
 
 from PySide6.QtCore import Qt, Signal
+from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -82,9 +83,13 @@ class _ParamRow(QWidget):
         default: float,
         decimals: int = 2,
         step: float = 0.01,
+        osc_label: str = "",
+        theme: dict = None,
         parent: Optional[QWidget] = None,
     ) -> None:
         super().__init__(parent)
+        from .theme import DARK
+        self._theme = theme or DARK
         self._min = minimum
         self._max = maximum
         self._decimals = decimals
@@ -94,9 +99,10 @@ class _ParamRow(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(10)
 
-        lbl = QLabel(label)
+        lbl = QLabel(label.upper())
         lbl.setFixedWidth(150)
         lbl.setObjectName("Muted")
+        lbl.setFont(QFont("Space Mono", 7))
         layout.addWidget(lbl)
 
         self._slider = QSlider(Qt.Orientation.Horizontal)
@@ -111,7 +117,17 @@ class _ParamRow(QWidget):
         self._spin.setDecimals(decimals)
         self._spin.setSingleStep(step)
         self._spin.setFixedWidth(80)
+        self._spin.setFont(QFont("Space Mono", 8))
         layout.addWidget(self._spin)
+
+        # OSC address micro-label
+        if osc_label:
+            self._osc_lbl = QLabel(osc_label)
+            self._osc_lbl.setObjectName("Muted2")
+            self._osc_lbl.setFont(QFont("Space Mono", 6))
+            self._osc_lbl.setFixedWidth(52)
+            self._osc_lbl.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            layout.addWidget(self._osc_lbl)
 
         # Wire slider ↔ spinbox without feedback loops
         self._updating = False
@@ -174,8 +190,10 @@ class RealtimeControlsPanel(QWidget):
     # Emitted as (osc_address, value) — immediate (spinbox, checkbox)
     osc_immediate = Signal(str, float)
 
-    def __init__(self, parent: Optional[QWidget] = None) -> None:
+    def __init__(self, theme: dict = None, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
+        from .theme import DARK
+        self._theme = theme or DARK
         self._build_ui()
         self._set_all_enabled(False)
 
@@ -236,21 +254,32 @@ class RealtimeControlsPanel(QWidget):
         layout.setContentsMargins(20, 16, 20, 16)
         layout.setSpacing(8)
 
-        title = QLabel("Runtime Controls  (live OSC)")
+        title = QLabel("RUNTIME CONTROLS")
         title.setObjectName("SectionTitle")
-        layout.addWidget(title)
+        title.setFont(QFont("Space Mono", 7))
+        # Add OSC address hint inline (maps to the HTML subtitle span):
+        osc_hint = QLabel("live osc → 127.0.0.1:9009")
+        osc_hint.setObjectName("Muted2")
+        osc_hint.setFont(QFont("Space Mono", 6))
+        # Place in the same HBoxLayout row as the title, or add right-aligned.
+        title_row = QHBoxLayout()
+        title_row.addWidget(title)
+        title_row.addStretch()
+        title_row.addWidget(osc_hint)
+        layout.addLayout(title_row)
 
-        self._gain_row  = _ParamRow("Master Gain",       0.1, 3.0,   DEFAULTS["gain"],           decimals=2, step=0.05)
-        self._focus_row = _ParamRow("DBAP Focus",        0.2, 5.0,   DEFAULTS["focus"],          decimals=2, step=0.05)
-        self._spk_row   = _ParamRow("Speaker Mix  (dB)", -10.0, 10.0, DEFAULTS["speaker_mix_db"], decimals=1, step=0.5)
-        self._sub_row   = _ParamRow("Sub Mix  (dB)",     -10.0, 10.0, DEFAULTS["sub_mix_db"],     decimals=1, step=0.5)
+        self._gain_row  = _ParamRow("Master Gain",      0.1, 3.0,   DEFAULTS["gain"],           decimals=2, step=0.05, osc_label="/gain", theme=self._theme)
+        self._focus_row = _ParamRow("DBAP Focus",       0.2, 5.0,   DEFAULTS["focus"],          decimals=2, step=0.05, osc_label="/focus", theme=self._theme)
+        self._spk_row   = _ParamRow("Speaker Mix (dB)", -10.0, 10.0, DEFAULTS["speaker_mix_db"], decimals=1, step=0.5, osc_label="/spk_mix", theme=self._theme)
+        self._sub_row   = _ParamRow("Sub Mix (dB)",     -10.0, 10.0, DEFAULTS["sub_mix_db"],     decimals=1, step=0.5, osc_label="/sub_mix", theme=self._theme)
 
         for row in (self._gain_row, self._focus_row, self._spk_row, self._sub_row):
             layout.addWidget(row)
 
         # Auto-compensation checkbox
-        self._auto_comp_check = QCheckBox("Focus Auto-Compensation")
+        self._auto_comp_check = QCheckBox("FOCUS AUTO-COMPENSATION")
         self._auto_comp_check.setChecked(DEFAULTS["auto_comp"])
+        self._auto_comp_check.setFont(QFont("Space Mono", 7))
         layout.addWidget(self._auto_comp_check)
 
         # Vertical rescaling mode selector
@@ -258,15 +287,24 @@ class RealtimeControlsPanel(QWidget):
         elev_layout = QHBoxLayout(elev_row)
         elev_layout.setContentsMargins(0, 0, 0, 0)
         elev_layout.setSpacing(10)
-        elev_lbl = QLabel("Elevation Mode")
+        elev_lbl = QLabel("ELEVATION MODE")
         elev_lbl.setFixedWidth(150)
         elev_lbl.setObjectName("Muted")
+        elev_lbl.setFont(QFont("Space Mono", 7))
         elev_layout.addWidget(elev_lbl)
         self._elev_mode_combo = QComboBox()
         for name in ELEVATION_MODE_NAMES:
             self._elev_mode_combo.addItem(name)
         self._elev_mode_combo.setCurrentIndex(DEFAULTS["elevation_mode"])
+        self._elev_mode_combo.setFont(QFont("Space Mono", 8))
         elev_layout.addWidget(self._elev_mode_combo, stretch=1)
+        # OSC address micro-label
+        elev_osc_lbl = QLabel("/elevation_mode")
+        elev_osc_lbl.setObjectName("Muted2")
+        elev_osc_lbl.setFont(QFont("Space Mono", 6))
+        elev_osc_lbl.setFixedWidth(52)
+        elev_osc_lbl.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        elev_layout.addWidget(elev_osc_lbl)
         layout.addWidget(elev_row)
 
         root.addWidget(card)
