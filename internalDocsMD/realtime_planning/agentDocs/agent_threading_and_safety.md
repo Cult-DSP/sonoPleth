@@ -375,12 +375,12 @@ Stack-allocated in `processBlock()`, passed by `const&` to `renderBlock()`. Life
 
 **Fix:** `dbapFocus` is now `std::atomic<float>`. All read sites use `.load(std::memory_order_relaxed)`. All write sites use `.store(v, std::memory_order_relaxed)`. The relaxed ordering is correct for the same reason as all other live-control atomics: a one-block stale read of a gain/focus value is inaudible and does not constitute a logical data dependency.
 
-| File | Change |
-|---|---|
-| `RealtimeTypes.hpp` | `float dbapFocus` → `std::atomic<float> dbapFocus{1.0f}`; added to memory-ordering table |
-| `main.cpp` | Init: `.store()`; 2× prints: `.load()`; `focusParam` seed: `.load()`; OSC callback: `.store()` |
-| `RealtimeBackend.hpp` | Step A snapshot: `.load(relaxed)`; removed stale "plain float" comment |
-| `Spatializer.hpp` | `init()` and `computeFocusCompensation()` print: `.load()` |
+| File                  | Change                                                                                         |
+| --------------------- | ---------------------------------------------------------------------------------------------- |
+| `RealtimeTypes.hpp`   | `float dbapFocus` → `std::atomic<float> dbapFocus{1.0f}`; added to memory-ordering table       |
+| `main.cpp`            | Init: `.store()`; 2× prints: `.load()`; `focusParam` seed: `.load()`; OSC callback: `.store()` |
+| `RealtimeBackend.hpp` | Step A snapshot: `.load(relaxed)`; removed stale "plain float" comment                         |
+| `Spatializer.hpp`     | `init()` and `computeFocusCompensation()` print: `.load()`                                     |
 
 ### `elevationMode` — new runtime-switchable atomic
 
@@ -388,20 +388,20 @@ Stack-allocated in `processBlock()`, passed by `const&` to `renderBlock()`. Life
 
 **Type:** `std::atomic<int>` storing `static_cast<int>(ElevationMode::*)`.
 
-| Value | `ElevationMode` | Meaning |
-|---|---|---|
-| `0` | `RescaleAtmosUp` | Maps Atmos-style `[0°, +90°]` content into the layout's elevation range. **Default.** |
-| `1` | `RescaleFullSphere` | Maps the full `[-90°, +90°]` sphere into the layout's elevation range. |
-| `2` | `Clamp` | Hard-clips elevation to the layout's min/max bounds. |
+| Value | `ElevationMode`     | Meaning                                                                               |
+| ----- | ------------------- | ------------------------------------------------------------------------------------- |
+| `0`   | `RescaleAtmosUp`    | Maps Atmos-style `[0°, +90°]` content into the layout's elevation range. **Default.** |
+| `1`   | `RescaleFullSphere` | Maps the full `[-90°, +90°]` sphere into the layout's elevation range.                |
+| `2`   | `Clamp`             | Hard-clips elevation to the layout's min/max bounds.                                  |
 
 These modes are identical to the offline renderer's `SpatialRenderer::sanitizeDirForLayout()`. The realtime engine's `Pose::sanitizeDirForLayout()` uses the same math, ported in `Pose.hpp`.
 
 #### Threading model for `elevationMode`
 
-| Thread | Operation | Ordering |
-|---|---|---|
-| OSC listener (ParameterServer) | `.store(mode, relaxed)` on `/realtime/elevation_mode` change | `relaxed` — no dependent data |
-| Audio thread (`Pose::computePositions`) | `.load(relaxed)` once at top of per-block loop | `relaxed` — stale-by-one-block is acceptable |
+| Thread                                  | Operation                                                    | Ordering                                     |
+| --------------------------------------- | ------------------------------------------------------------ | -------------------------------------------- |
+| OSC listener (ParameterServer)          | `.store(mode, relaxed)` on `/realtime/elevation_mode` change | `relaxed` — no dependent data                |
+| Audio thread (`Pose::computePositions`) | `.load(relaxed)` once at top of per-block loop               | `relaxed` — stale-by-one-block is acceptable |
 
 **Why relaxed is correct:** An elevation mode switch is not sample-accurate. The audio consequence of applying the switch one block (10–11 ms at 512/48k) later than the OSC message arrived is indistinguishable from applying it at the exact block boundary. No dependent data follows the atomic — the loaded value is used to select a branch in `sanitizeDirForLayout()`, not to order other memory operations.
 
@@ -410,15 +410,15 @@ These modes are identical to the offline renderer's `SpatialRenderer::sanitizeDi
 
 #### OSC address and GUI
 
-| Layer | Detail |
-|---|---|
-| OSC address | `/realtime/elevation_mode` |
-| Value type | `float` carrying integer `0.0`, `1.0`, or `2.0` (standard AlloLib practice — no `al::ParameterInt`) |
-| C++ callback | `elevModeParam.registerChangeCallback([&](float v) { int mode = clamp(round(v), 0, 2); config.elevationMode.store(mode, relaxed); })` |
-| CLI flag | `--elevation_mode <0\|1\|2>` (default `0`) |
-| GUI control | `QComboBox` in `RealtimeControlsPanel`; items: *Rescale Atmos Up (0°–90°)*, *Rescale Full Sphere (±90°)*, *Clamp to Layout* |
-| Flush on ready | Included in `flush_to_osc()` — value pushed to engine when `engine_ready` fires |
-| Disabled when idle | `_elev_mode_combo.setEnabled(enabled)` in `_set_all_enabled()` |
+| Layer              | Detail                                                                                                                                |
+| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------- |
+| OSC address        | `/realtime/elevation_mode`                                                                                                            |
+| Value type         | `float` carrying integer `0.0`, `1.0`, or `2.0` (standard AlloLib practice — no `al::ParameterInt`)                                   |
+| C++ callback       | `elevModeParam.registerChangeCallback([&](float v) { int mode = clamp(round(v), 0, 2); config.elevationMode.store(mode, relaxed); })` |
+| CLI flag           | `--elevation_mode <0\|1\|2>` (default `0`)                                                                                            |
+| GUI control        | `QComboBox` in `RealtimeControlsPanel`; items: _Rescale Atmos Up (0°–90°)_, _Rescale Full Sphere (±90°)_, _Clamp to Layout_           |
+| Flush on ready     | Included in `flush_to_osc()` — value pushed to engine when `engine_ready` fires                                                       |
+| Disabled when idle | `_elev_mode_combo.setEnabled(enabled)` in `_set_all_enabled()`                                                                        |
 
 #### Updated `RealtimeTypes.hpp` memory-ordering table entry
 
@@ -453,11 +453,11 @@ The exponential smoother in `RealtimeBackend` operates only on continuous float 
 
 ### Files changed
 
-| File | Change |
-|---|---|
-| `RealtimeTypes.hpp` | `dbapFocus`: `float` → `std::atomic<float>`; `elevationMode`: new `std::atomic<int>{RescaleAtmosUp}`; memory-ordering table updated; struct-level comment updated |
-| `Pose.hpp` | Threading comment: `mConfig` removed from "read-only" list; new "LIVE ATOMIC" section for `elevationMode`; `computePositions()` loads atomic with `relaxed` |
-| `RealtimeBackend.hpp` | Step A snapshot: `dbapFocus` `.load(relaxed)`; `SmoothedState` comment documents why `elevationMode` is excluded |
-| `Spatializer.hpp` | `dbapFocus` reads in `init()` and `computeFocusCompensation()` → `.load()` |
-| `main.cpp` | All `dbapFocus` sites → atomic; `--elevation_mode` CLI flag parsed; `elevModeParam` registered with OSC callback; startup summary prints mode name; `--help` updated |
-| `RealtimeControlsPanel.py` | `QComboBox` with 3 mode labels; `currentIndexChanged` → `/realtime/elevation_mode`; added to `flush_to_osc()`, `reset_to_defaults()`, `_set_all_enabled()` |
+| File                       | Change                                                                                                                                                               |
+| -------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `RealtimeTypes.hpp`        | `dbapFocus`: `float` → `std::atomic<float>`; `elevationMode`: new `std::atomic<int>{RescaleAtmosUp}`; memory-ordering table updated; struct-level comment updated    |
+| `Pose.hpp`                 | Threading comment: `mConfig` removed from "read-only" list; new "LIVE ATOMIC" section for `elevationMode`; `computePositions()` loads atomic with `relaxed`          |
+| `RealtimeBackend.hpp`      | Step A snapshot: `dbapFocus` `.load(relaxed)`; `SmoothedState` comment documents why `elevationMode` is excluded                                                     |
+| `Spatializer.hpp`          | `dbapFocus` reads in `init()` and `computeFocusCompensation()` → `.load()`                                                                                           |
+| `main.cpp`                 | All `dbapFocus` sites → atomic; `--elevation_mode` CLI flag parsed; `elevModeParam` registered with OSC callback; startup summary prints mode name; `--help` updated |
+| `RealtimeControlsPanel.py` | `QComboBox` with 3 mode labels; `currentIndexChanged` → `/realtime/elevation_mode`; added to `flush_to_osc()`, `reset_to_defaults()`, `_set_all_enabled()`           |
