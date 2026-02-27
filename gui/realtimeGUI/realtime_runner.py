@@ -137,6 +137,9 @@ class RealtimeRunner(QObject):
     output        = Signal(str)
     state_changed = Signal(str)
     finished      = Signal(int)
+    # Emitted once the C++ ParameterServer is confirmed listening (stdout probe).
+    # Connect this to flush current GUI control values to the engine.
+    engine_ready  = Signal()
 
     def __init__(self, repo_root: str = ".", parent: Optional[QObject] = None) -> None:
         super().__init__(parent)
@@ -278,8 +281,12 @@ class RealtimeRunner(QObject):
             self.state_changed.emit(new_state.value)
 
     def _on_started(self) -> None:
-        self._set_state(RealtimeRunnerState.RUNNING)
-        self.output.emit("[Runner] Process started.")
+        # Stay in LAUNCHING — we advance to RUNNING only when the C++ engine
+        # confirms its ParameterServer is up (see _on_stdout probe below).
+        self.output.emit("[Runner] Process started — waiting for ParameterServer…")
+
+    # Sentinel printed by main.cpp right after paramServer.serverRunning() check
+    _ENGINE_READY_SENTINEL = "ParameterServer listening"
 
     def _on_stdout(self) -> None:
         if self._proc is None:
@@ -287,6 +294,13 @@ class RealtimeRunner(QObject):
         data = bytes(self._proc.readAllStandardOutput()).decode("utf-8", errors="replace")
         for line in data.splitlines():
             self.output.emit(line)
+            # Advance from LAUNCHING → RUNNING the moment the C++ ParameterServer
+            # confirms it is bound and listening.  This ensures the OSC client
+            # only starts sending once the UDP port is actually open.
+            if (self._state == RealtimeRunnerState.LAUNCHING
+                    and self._ENGINE_READY_SENTINEL in line):
+                self._set_state(RealtimeRunnerState.RUNNING)
+                self.engine_ready.emit()
 
     def _on_stderr(self) -> None:
         if self._proc is None:

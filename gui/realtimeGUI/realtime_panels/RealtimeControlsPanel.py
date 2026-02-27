@@ -181,6 +181,23 @@ class RealtimeControlsPanel(QWidget):
         self._auto_comp_check.setChecked(DEFAULTS["auto_comp"])
         self._auto_comp_check.blockSignals(False)
 
+    def flush_to_osc(self) -> None:
+        """
+        Emit current control values as immediate OSC sends.
+
+        Call this once the engine's ParameterServer is confirmed listening so
+        any values the user set during LAUNCHING are applied immediately.
+        Non-default values (or simply all values) are pushed unconditionally.
+        """
+        self.osc_immediate.emit("/realtime/gain",           self._gain_row.value())
+        self.osc_immediate.emit("/realtime/focus",          self._focus_row.value())
+        self.osc_immediate.emit("/realtime/speaker_mix_db", self._spk_row.value())
+        self.osc_immediate.emit("/realtime/sub_mix_db",     self._sub_row.value())
+        self.osc_immediate.emit(
+            "/realtime/auto_comp",
+            1.0 if self._auto_comp_check.isChecked() else 0.0,
+        )
+
     def update_state(self, state_name: str) -> None:
         """Enable/disable controls based on engine state."""
         try:

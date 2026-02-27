@@ -119,6 +119,9 @@ class RealtimeWindow(QMainWindow):
         r.output.connect(self._log_panel.append_line)
         r.state_changed.connect(self._on_state_changed)
         r.finished.connect(self._on_engine_finished)
+        # When the C++ ParameterServer is confirmed listening, flush the current
+        # GUI control values so the engine starts with whatever the user has set.
+        r.engine_ready.connect(self._controls_panel.flush_to_osc)
 
         # Transport panel → runner
         t = self._transport_panel
