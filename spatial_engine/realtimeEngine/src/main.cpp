@@ -9,14 +9,21 @@
 //   6. Initializes the Backend Adapter (AlloLib AudioIO)
 //   7. Wires Streaming + Pose into the audio callback
 //   8. Starts audio streaming
-//   9. Runs a monitoring loop until interrupted (Ctrl+C or scene end)
-//  10. Shuts down cleanly (streaming agent → backend)
+//   9. Runs a monitoring loop until interrupted (Ctrl+C, scene end, or GUI)
+//  10. Shuts down cleanly (paramServer → streaming agent → backend)
 //
-// PHASE 7: Output Remap Agent — adds --remap <csv> flag. Loads a CSV that maps
-//   internal render-buffer channel indices to physical device output channel
-//   indices. Applied in Spatializer::renderBlock() at the copy-to-output step.
-//   Identity fast-path (no CSV) is bit-identical to Phase 6.
-//   Phase 6 (Compensation and Gain) features are unchanged.
+// PHASE 10: GUI Agent — adds al::ParameterServer for live OSC control from
+//   the Python GUI (gui/realtimeGUI/). Registers 6 al::Parameter objects:
+//     /realtime/gain           — master gain 0–1
+//     /realtime/focus          — DBAP rolloff exponent 0.2–5.0
+//     /realtime/speaker_mix_db — loudspeaker mix trim in dB (±10)
+//     /realtime/sub_mix_db     — subwoofer mix trim in dB (±10)
+//     /realtime/auto_comp      — focus auto-compensation toggle (bool)
+//     /realtime/paused         — pause/play toggle (bool)
+//   New flags: --osc_port <int> (default 9009), --focus <float> (default 1.5)
+//   Shutdown order: paramServer.stopServer() BEFORE streaming.shutdown()
+//
+// PHASE 7: Output Remap Agent — adds --remap <csv> flag.
 //
 // Usage:
 //   ./sonoPleth_realtime_engine \
@@ -25,8 +32,9 @@
 //       --sources ../../sourceData/lusid_package \
 //       [--samplerate 48000] \
 //       [--buffersize 512] \
-//       [--channels 60] \
-//       [--gain 0.5]
+//       [--gain 0.5] \
+//       [--focus 1.5] \
+//       [--osc_port 9009]
 
 #include <csignal>
 #include <cstdlib>
@@ -44,6 +52,10 @@
 #include "OutputRemap.hpp"     // OutputRemap — CSV-based channel remap table
 #include "JSONLoader.hpp"      // SpatialData, JSONLoader::loadLusidScene()
 #include "LayoutLoader.hpp"    // SpeakerLayoutData, LayoutLoader::loadLayout()
+
+// Phase 10 — GUI Agent: OSC parameter server
+#include "al/ui/al_Parameter.hpp"
+#include "al/ui/al_ParameterServer.hpp"
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Signal handling for clean shutdown on Ctrl+C
@@ -105,8 +117,8 @@ static bool hasArg(int argc, char* argv[], const std::string& flag) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 static void printUsage(const char* progName) {
-    std::cout << "\nsonoPleth Real-Time Spatial Audio Engine (Phase 7 — Output Remap)\n"
-              << "───────────────────────────────────────────────────────────────────\n"
+    std::cout << "\nsonoPleth Real-Time Spatial Audio Engine (Phase 10 — GUI Agent)\n"
+              << "─────────────────────────────────────────────────────────────────\n"
               << "Usage: " << progName << " [options]\n\n"
               << "Required:\n"
               << "  --layout <path>     Speaker layout JSON file\n"
@@ -119,12 +131,15 @@ static void printUsage(const char* progName) {
               << "  --samplerate <int>  Audio sample rate in Hz (default: 48000)\n"
               << "  --buffersize <int>  Frames per audio callback (default: 512)\n"
               << "  --gain <float>      Master gain 0.0–1.0 (default: 0.5)\n"
+              << "  --focus <float>     DBAP rolloff exponent 0.2–5.0 (default: 1.5)\n"
               << "  --speaker_mix <dB>  Loudspeaker mix trim in dB (±10, default: 0)\n"
               << "  --sub_mix <dB>      Subwoofer mix trim in dB (±10, default: 0)\n"
               << "  --auto_compensation Enable focus auto-compensation (default: off)\n"
               << "  --remap <path>      CSV file mapping internal layout channels to device\n"
               << "                      output channels (default: identity, no remapping)\n"
               << "                      CSV format: 'layout,device' (0-based, headers required)\n"
+              << "  --osc_port <int>    UDP port for al::ParameterServer OSC control\n"
+              << "                      (default: 9009). GUI sends to this port.\n"
               << "  --help              Show this message\n"
               << "\nNote: Output channel count is derived automatically from the speaker\n"
               << "layout (speakers + subwoofers). No manual channel count needed.\n"
@@ -144,7 +159,7 @@ int main(int argc, char* argv[]) {
     }
 
     std::cout << "\n╔══════════════════════════════════════════════════════════╗" << std::endl;
-    std::cout << "║  sonoPleth Real-Time Spatial Audio Engine  (Phase 7)    ║" << std::endl;
+    std::cout << "║  sonoPleth Real-Time Spatial Audio Engine  (Phase 10)   ║" << std::endl;
     std::cout << "╚══════════════════════════════════════════════════════════╝\n" << std::endl;
 
     // ── Parse arguments ──────────────────────────────────────────────────
@@ -167,6 +182,15 @@ int main(int argc, char* argv[]) {
     config.focusAutoCompensation.store(hasArg(argc, argv, "--auto_compensation"));
     // NOTE: outputChannels is computed from the speaker layout (see Spatializer::init).
     //       No --channels flag needed.
+
+    // Phase 10: focus exponent + OSC port
+    config.dbapFocus = getArgFloat(argc, argv, "--focus", 1.5f);
+    int oscPort = getArgInt(argc, argv, "--osc_port", 9009);
+
+    // pendingAutoComp: set by ParameterServer callback (listener thread) when
+    // /realtime/auto_comp changes; consumed on the main thread in the monitoring
+    // loop so that computeFocusCompensation() is always called from MAIN.
+    std::atomic<bool> pendingAutoComp{false};
 
     // Determine input mode
     bool useADM = !config.admFile.empty();
@@ -209,6 +233,8 @@ int main(int argc, char* argv[]) {
     std::cout << "  Speaker mix:  " << config.loudspeakerMix.load() << " (" << speakerMixDb << " dB)" << std::endl;
     std::cout << "  Sub mix:      " << config.subMix.load() << " (" << subMixDb << " dB)" << std::endl;
     std::cout << "  Auto-comp:    " << (config.focusAutoCompensation.load() ? "enabled" : "disabled") << std::endl;
+    std::cout << "  Focus:        " << config.dbapFocus << std::endl;
+    std::cout << "  OSC port:     " << oscPort << std::endl;
     std::cout << "  (Output channels will be derived from speaker layout)" << std::endl;
     std::cout << std::endl;
 
@@ -326,6 +352,81 @@ int main(int argc, char* argv[]) {
         std::cout << "[Main] No --remap provided — using identity channel mapping." << std::endl;
     }
 
+    // ── Phase 10: ParameterServer (OSC / live GUI control) ───────────────
+    // Declare 6 al::Parameter objects seeded from CLI values.
+    // The ParameterServer listens on 127.0.0.1:oscPort and dispatches
+    // incoming OSC messages to the registered callbacks. Callbacks run on
+    // the ParameterServer listener thread — they MUST only write atomics
+    // or set the pendingAutoComp flag; no heap allocation, no I/O.
+
+    al::Parameter     gainParam     {"gain",           "realtime",
+                                     config.masterGain.load(),  0.0f,  1.0f};
+    al::Parameter     focusParam    {"focus",          "realtime",
+                                     config.dbapFocus,          0.2f,  5.0f};
+    al::Parameter     spkMixDbParam {"speaker_mix_db", "realtime",
+                                     speakerMixDb,             -10.0f, 10.0f};
+    al::Parameter     subMixDbParam {"sub_mix_db",     "realtime",
+                                     subMixDb,                 -10.0f, 10.0f};
+    al::ParameterBool autoCompParam {"auto_comp",      "realtime",
+                                     config.focusAutoCompensation.load() ? 1.0f : 0.0f};
+    al::ParameterBool pausedParam   {"paused",         "realtime", 0.0f};
+
+    // Register change callbacks ─────────────────────────────────────────
+    // THREADING: All callbacks fire on the ParameterServer listener thread.
+    // Only relaxed atomic stores and flag sets are performed here.
+
+    gainParam.registerChangeCallback([&](float v) {
+        config.masterGain.store(v, std::memory_order_relaxed);
+        std::cout << "\n[OSC] gain → " << v << std::flush;
+    });
+
+    focusParam.registerChangeCallback([&](float v) {
+        config.dbapFocus = v;          // float — non-atomic, written by listener thread
+        // Queue recomputation; main thread will call computeFocusCompensation().
+        if (config.focusAutoCompensation.load(std::memory_order_relaxed)) {
+            pendingAutoComp.store(true, std::memory_order_relaxed);
+        }
+        std::cout << "\n[OSC] focus → " << v << std::flush;
+    });
+
+    spkMixDbParam.registerChangeCallback([&](float dB) {
+        config.loudspeakerMix.store(powf(10.0f, dB / 20.0f),
+                                    std::memory_order_relaxed);
+        std::cout << "\n[OSC] speaker_mix_db → " << dB << " dB" << std::flush;
+    });
+
+    subMixDbParam.registerChangeCallback([&](float dB) {
+        config.subMix.store(powf(10.0f, dB / 20.0f),
+                            std::memory_order_relaxed);
+        std::cout << "\n[OSC] sub_mix_db → " << dB << " dB" << std::flush;
+    });
+
+    autoCompParam.registerChangeCallback([&](float v) {
+        bool enable = (v >= 0.5f);
+        config.focusAutoCompensation.store(enable, std::memory_order_relaxed);
+        if (enable) pendingAutoComp.store(true, std::memory_order_relaxed);
+        std::cout << "\n[OSC] auto_comp → " << (enable ? "on" : "off") << std::flush;
+    });
+
+    pausedParam.registerChangeCallback([&](float v) {
+        bool p = (v >= 0.5f);
+        config.paused.store(p, std::memory_order_relaxed);
+        std::cout << "\n[OSC] paused → " << (p ? "paused" : "playing") << std::flush;
+    });
+
+    // Start the ParameterServer ─────────────────────────────────────────
+    al::ParameterServer paramServer{"127.0.0.1", oscPort};
+    paramServer << gainParam << focusParam << spkMixDbParam
+                << subMixDbParam << autoCompParam << pausedParam;
+
+    if (!paramServer.serverRunning()) {
+        std::cerr << "[Main] FATAL: ParameterServer failed to start on port "
+                  << oscPort << ". Is the port already in use?" << std::endl;
+        return 1;
+    }
+    std::cout << "[Main] ParameterServer listening on 127.0.0.1:" << oscPort << std::endl;
+    paramServer.print();
+
     // ── Initialize the Backend Adapter ───────────────────────────────────
 
     RealtimeBackend backend(config, state);
@@ -361,9 +462,21 @@ int main(int argc, char* argv[]) {
 
     while (!config.shouldExit.load()) {
 
-        // Print status every second
+        // ── Consume pendingAutoComp on the MAIN thread ────────────────────
+        // computeFocusCompensation() allocates internally, so it MUST NOT be
+        // called from the ParameterServer callback (listener thread). The
+        // callback sets pendingAutoComp; we pick it up here.
+        if (pendingAutoComp.load(std::memory_order_relaxed)) {
+            pendingAutoComp.store(false, std::memory_order_relaxed);
+            spatializer.computeFocusCompensation();
+            std::cout << "\n[Main] Focus compensation recomputed: loudspeakerMix="
+                      << config.loudspeakerMix.load() << std::flush;
+        }
+
+        // Print status every ~500 ms
         double timeSec = state.playbackTimeSec.load(std::memory_order_relaxed);
         float  cpu     = state.cpuLoad.load(std::memory_order_relaxed);
+        bool   paused  = config.paused.load(std::memory_order_relaxed);
 
         std::cout << "\r  Time: " << std::fixed;
         std::cout.precision(1);
@@ -373,6 +486,7 @@ int main(int argc, char* argv[]) {
         std::cout << (cpu * 100.0f) << "%"
                   << "  |  Sources: " << state.numSources.load(std::memory_order_relaxed)
                   << "  |  Frames: " << state.frameCounter.load(std::memory_order_relaxed)
+                  << "  |  " << (paused ? "PAUSED " : "PLAYING")
                   << "     " << std::flush;
 
         std::this_thread::sleep_for(std::chrono::milliseconds(500));
@@ -381,10 +495,14 @@ int main(int argc, char* argv[]) {
     std::cout << std::endl;
 
     // ── Clean shutdown ───────────────────────────────────────────────────
-    // Order matters: stop audio first, then streaming agent, so the callback
-    // doesn't try to read from freed buffers.
+    // Order matters:
+    //   1. paramServer.stopServer() — stop OSC listener thread first so no
+    //      more callbacks fire after we start tearing down state.
+    //   2. backend.shutdown()       — stop audio callback; no more processBlock().
+    //   3. streaming.shutdown()     — free source buffers last.
 
     std::cout << "\n[Main] Shutting down..." << std::endl;
+    paramServer.stopServer();
     backend.shutdown();
     streaming.shutdown();
 

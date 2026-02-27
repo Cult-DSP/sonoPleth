@@ -50,7 +50,9 @@ def _launch_realtime_engine(
     samplerate=48000,
     buffersize=512,
     gain=0.5,
-    dbap_focus=1.5
+    dbap_focus=1.5,
+    remap_csv=None,
+    osc_port=9009
 ):
     """
     Launch the C++ real-time engine as a subprocess.
@@ -81,6 +83,13 @@ def _launch_realtime_engine(
         Master gain 0.0–1.0 (default: 0.5).
     dbap_focus : float
         DBAP focus/rolloff exponent (default: 1.5, range: 0.2–5.0).
+    remap_csv : str or Path, optional
+        CSV file mapping internal layout channels to physical device output
+        channels (default: None = identity, no remapping).
+        CSV format: 'layout,device' columns, 0-based indices, header row required.
+    osc_port : int
+        UDP port for al::ParameterServer OSC control from the GUI
+        (default: 9009). Must match the port the GUI sends to.
 
     Returns
     -------
@@ -145,6 +154,8 @@ def _launch_realtime_engine(
         "--samplerate", str(samplerate),
         "--buffersize", str(buffersize),
         "--gain", str(gain),
+        "--focus", str(dbap_focus),
+        "--osc_port", str(osc_port),
     ]
 
     if use_adm:
@@ -162,6 +173,13 @@ def _launch_realtime_engine(
         cmd.extend(["--sources", str(sources_path)])
         source_label = f"Sources: {sources_path} (mono files)"
 
+    if remap_csv is not None:
+        remap_path = Path(remap_csv).resolve()
+        if not remap_path.exists():
+            print(f"✗ Error: Remap CSV not found: {remap_path}")
+            return False
+        cmd.extend(["--remap", str(remap_path)])
+
     # Print launch info
     print("\n╔══════════════════════════════════════════════════════════╗")
     print("║     sonoPleth Real-Time Engine — Launching               ║")
@@ -173,6 +191,9 @@ def _launch_realtime_engine(
     print(f"  Buffer size:    {buffersize} frames")
     print(f"  Master gain:    {gain}")
     print(f"  DBAP focus:     {dbap_focus}")
+    print(f"  OSC port:       {osc_port}")
+    if remap_csv is not None:
+        print(f"  Remap CSV:      {remap_path}")
     print(f"  (Output channels derived from speaker layout)")
     print(f"\n  Command: {' '.join(cmd)}\n")
 
@@ -228,7 +249,9 @@ def run_realtime_from_ADM(
     dbap_focus=1.5,
     samplerate=48000,
     buffersize=512,
-    scan_audio=False
+    scan_audio=False,
+    remap_csv=None,
+    osc_port=9009
 ):
     """
     Run the complete ADM → real-time spatial audio pipeline.
@@ -267,6 +290,10 @@ def run_realtime_from_ADM(
         When True: runs the full scan and writes processedData/containsAudio.json.
         Useful if the LUSID parser needs accurate per-channel silence data
         (e.g., to suppress truly silent channels from the scene graph).
+    remap_csv : str or Path, optional
+        CSV file for output channel remapping (default: None = identity).
+    osc_port : int
+        UDP port for GUI OSC control (default: 9009).
 
     Returns
     -------
@@ -362,7 +389,9 @@ def run_realtime_from_ADM(
         samplerate=samplerate,
         buffersize=buffersize,
         gain=master_gain,
-        dbap_focus=dbap_focus
+        dbap_focus=dbap_focus,
+        remap_csv=remap_csv,
+        osc_port=osc_port
     )
 
 
@@ -372,7 +401,9 @@ def run_realtime_from_LUSID(
     master_gain=0.5,
     dbap_focus=1.5,
     samplerate=48000,
-    buffersize=512
+    buffersize=512,
+    remap_csv=None,
+    osc_port=9009
 ):
     """
     Run real-time engine from an existing LUSID package.
@@ -395,6 +426,10 @@ def run_realtime_from_LUSID(
         Audio sample rate in Hz (default: 48000).
     buffersize : int
         Frames per audio callback (default: 512).
+    remap_csv : str or Path, optional
+        CSV file for output channel remapping (default: None = identity).
+    osc_port : int
+        UDP port for GUI OSC control (default: 9009).
 
     Returns
     -------
@@ -430,7 +465,9 @@ def run_realtime_from_LUSID(
         samplerate=samplerate,
         buffersize=buffersize,
         gain=master_gain,
-        dbap_focus=dbap_focus
+        dbap_focus=dbap_focus,
+        remap_csv=remap_csv,
+        osc_port=osc_port
     )
 
 
@@ -478,19 +515,35 @@ if __name__ == "__main__":
         buffersize = int(sys.argv[5]) if len(sys.argv) >= 6 else 512
         scan_audio = "--scan_audio" in sys.argv  # flag: default OFF
 
+        # Named optional args: --remap and --osc_port
+        remap_csv = None
+        osc_port = 9009
+        args = sys.argv[1:]
+        for i, a in enumerate(args):
+            if a == "--remap" and i + 1 < len(args):
+                remap_csv = args[i + 1]
+            elif a == "--osc_port" and i + 1 < len(args):
+                try:
+                    osc_port = int(args[i + 1])
+                except ValueError:
+                    print(f"✗ Error: --osc_port must be an integer, got '{args[i + 1]}'")
+                    sys.exit(1)
+
         if source_type == "ADM":
             print(f"Detected ADM source: {source_input}")
             success = run_realtime_from_ADM(
                 source_input, source_speaker_layout,
                 master_gain=master_gain, dbap_focus=dbap_focus,
-                buffersize=buffersize, scan_audio=scan_audio
+                buffersize=buffersize, scan_audio=scan_audio,
+                remap_csv=remap_csv, osc_port=osc_port
             )
         elif source_type == "LUSID":
             print(f"Detected LUSID package: {source_input}")
             success = run_realtime_from_LUSID(
                 source_input, source_speaker_layout,
                 master_gain=master_gain, dbap_focus=dbap_focus,
-                buffersize=buffersize
+                buffersize=buffersize,
+                remap_csv=remap_csv, osc_port=osc_port
             )
         elif source_type == "Path does not exist":
             print(f"✗ Error: Path does not exist: {source_input}")
@@ -504,16 +557,20 @@ if __name__ == "__main__":
 
     else:
         print("\nUsage:")
-        print("  python runRealtime.py <source> [speaker_layout] [master_gain] [dbap_focus] [buffersize] [--scan_audio]")
+        print("  python runRealtime.py <source> [speaker_layout] [master_gain] [dbap_focus] [buffersize]")
+        print("                        [--scan_audio] [--remap <csv>] [--osc_port <port>]")
         print("\nArguments:")
-        print("  <source>          ADM WAV file (.wav) or LUSID package directory")
-        print("  [speaker_layout]  Speaker layout JSON (default: allosphere_layout.json)")
-        print("  [master_gain]     Master gain 0.0–1.0 (default: 0.5)")
-        print("  [dbap_focus]      DBAP focus/rolloff 0.2–5.0 (default: 1.5)")
-        print("  [buffersize]      Audio buffer size in frames (default: 512)")
-        print("  [--scan_audio]    Run full per-channel audio activity scan before")
-        print("                    parsing ADM metadata (ADM path only, default: OFF).")
-        print("                    Adds ~14s startup time but filters truly silent channels.")
+        print("  <source>              ADM WAV file (.wav) or LUSID package directory")
+        print("  [speaker_layout]      Speaker layout JSON (default: allosphere_layout.json)")
+        print("  [master_gain]         Master gain 0.0–1.0 (default: 0.5)")
+        print("  [dbap_focus]          DBAP focus/rolloff 0.2–5.0 (default: 1.5)")
+        print("  [buffersize]          Audio buffer size in frames (default: 512)")
+        print("  [--scan_audio]        Run full per-channel audio activity scan before")
+        print("                        parsing ADM metadata (ADM path only, default: OFF).")
+        print("                        Adds ~14s startup time but filters truly silent channels.")
+        print("  [--remap <csv>]       CSV file for output channel remapping (optional).")
+        print("                        Format: 'layout,device' columns, 0-based, header required.")
+        print("  [--osc_port <port>]   UDP port for GUI OSC control (default: 9009).")
         print("\nExamples:")
         print("  # From ADM WAV (runs full preprocessing pipeline, scan skipped):")
         print("  python runRealtime.py sourceData/driveExampleSpruce.wav")
@@ -524,7 +581,7 @@ if __name__ == "__main__":
         print("  # From LUSID package (skips preprocessing entirely):")
         print("  python runRealtime.py sourceData/lusid_package")
         print("")
-        print("  # With custom layout and settings:")
-        print("  python runRealtime.py sourceData/lusid_package spatial_engine/speaker_layouts/allosphere_layout.json 0.3 1.5 256")
+        print("  # With custom layout, remap CSV, and non-default OSC port:")
+        print("  python runRealtime.py sourceData/lusid_package spatial_engine/speaker_layouts/allosphere_layout.json 0.3 1.5 256 --remap myRemap.csv --osc_port 9010")
         print("\nNote: Output channels are derived automatically from the speaker layout.")
         sys.exit(1)

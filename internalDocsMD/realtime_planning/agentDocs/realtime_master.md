@@ -114,7 +114,7 @@ Based on the architecture's data-flow dependencies, the planned order is:
 | 8     | **Threading and Safety**  | Harden all inter-thread communication                 | ✅ Complete |
 
 9 - update init.sh and files in src/config to handle the updated realtime engine and tooling. ✅ Complete
-| 10 | **GUI Agent** | PySide6 realtimeGUI (separate entry), QProcess→runRealtime.py, ParameterServer control plane | 🚧 In Progress |
+| 10 | **GUI Agent** | PySide6 realtimeGUI (separate entry), QProcess→runRealtime.py, ParameterServer control plane | ✅ Complete |
 
 11 - update main project read me and relevant documentation
 
@@ -128,7 +128,7 @@ Based on the architecture's data-flow dependencies, the planned order is:
 - Keep Python for LUSID transcoding + batch prep initially; evaluate rewrite of runtime-prep into C/C++ once the GUI prototype is stable.
 - Preserve the control plane contract (parameter names + ranges) so UI work is not thrown away.
 
-### Phase 10 Planning Log (GUI Agent) — 🚧 In Progress
+### Phase 10 Completion Log (GUI Agent) — ✅ Complete (Feb 26 2026)
 
 **Design doc:** `internalDocsMD/realtime_planning/agentDocs/agent_gui_UPDATED_v3.md`
 **AlloLib IPC reference:** `internalDocsMD/realtime_planning/agentDocs/allolib_parameters_reference.md`
@@ -179,6 +179,39 @@ Based on the architecture's data-flow dependencies, the planned order is:
 4. **Panels** — InputPanel, TransportPanel, ControlsPanel, LogPanel (in that order — each adds on top of the previous).
 5. **`RealtimeWindow` + `realtimeMain.py`** — assemble panels, wire signals, launch.
 6. **End-to-end test** against testing checklist in `agent_gui_UPDATED_v3.md §9`.
+
+#### What was built
+
+**C++ engine changes:**
+
+| File                                                    | Change                                                                                                                                                                                                                                                                                                               |
+| ------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `spatial_engine/realtimeEngine/src/RealtimeTypes.hpp`   | Added `std::atomic<bool> paused{false}` to `RealtimeConfig` with full threading doc comment and memory-ordering table entry                                                                                                                                                                                          |
+| `spatial_engine/realtimeEngine/src/RealtimeBackend.hpp` | Added pause guard at top of `processBlock()` — relaxed load, zero channels + early return, RT-safe                                                                                                                                                                                                                   |
+| `spatial_engine/realtimeEngine/src/main.cpp`            | Phase 10 banner; `al::Parameter` × 4 + `al::ParameterBool` × 2; `al::ParameterServer` on `--osc_port` (default 9009); `registerChangeCallback` for all 6 params; `pendingAutoComp` flag + main-loop consumer; `--focus` CLI flag; `paramServer.stopServer()` first in shutdown; status line now shows PAUSED/PLAYING |
+
+**Python changes:**
+
+| File               | Change                                                                                                                                                                                                                                         |
+| ------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `runRealtime.py`   | `remap_csv=None` + `osc_port=9009` kwargs in `_launch_realtime_engine()`; `--remap` + `--osc_port` appended to `cmd`; threaded through `run_realtime_from_ADM()` + `run_realtime_from_LUSID()`; CLI `--remap` / `--osc_port` named-arg parsing |
+| `requirements.txt` | Added `python-osc`                                                                                                                                                                                                                             |
+
+**GUI files created:**
+
+| File                                                        | Purpose                                                                                                                                                                                  |
+| ----------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `realtimeMain.py`                                           | Project-root launcher — loads `gui/styles.qss`, creates `RealtimeWindow`, runs `QApplication`                                                                                            |
+| `gui/realtimeGUI/__init__.py`                               | Package marker (one line)                                                                                                                                                                |
+| `gui/realtimeGUI/realtimeGUI.py`                            | `RealtimeWindow(QMainWindow)` — header bar, scroll area, assembles all four panels, wires runner signals                                                                                 |
+| `gui/realtimeGUI/realtime_runner.py`                        | `RealtimeConfig` dataclass; `RealtimeRunnerState` enum; `DebouncedOSCSender` (40 ms QTimer); `RealtimeRunner(QObject)` — QProcess + `SimpleUDPClient`, full state machine, graceful stop |
+| `gui/realtimeGUI/realtime_panels/__init__.py`               | Package marker                                                                                                                                                                           |
+| `gui/realtimeGUI/realtime_panels/RealtimeInputPanel.py`     | Source/layout/remap/buffer/scan inputs; inline ADM vs LUSID auto-detection hint; browse dialogs                                                                                          |
+| `gui/realtimeGUI/realtime_panels/RealtimeTransportPanel.py` | Start/Stop/Kill/Restart/Pause/Play; colour-coded status pill; Copy Command; OSC port label                                                                                               |
+| `gui/realtimeGUI/realtime_panels/RealtimeControlsPanel.py`  | `_ParamRow` (slider ↔ spinbox, debounced vs immediate sends); gain/focus/spkMix/subMix rows + auto-comp checkbox; `reset_to_defaults()` on each Start                                    |
+| `gui/realtimeGUI/realtime_panels/RealtimeLogPanel.py`       | `QPlainTextEdit` (monospace, read-only); 2000-line cap; auto-scroll; Clear button                                                                                                        |
+
+**Build result:** `make -j4` → zero errors. `--help` output confirms `--focus` and `--osc_port` flags. All Python imports verified clean.
 
 ---
 

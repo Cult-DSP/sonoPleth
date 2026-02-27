@@ -226,6 +226,21 @@ private:
 
     void processBlock(al::AudioIOData& io) {
 
+        // ── Pause guard (Phase 10 — GUI Agent) ───────────────────────────
+        // THREADING: AUDIO THREAD ONLY.
+        // mConfig.paused is written by the ParameterServer listener thread
+        // (relaxed store in the /realtime/paused OSC callback) and read here
+        // with a relaxed load. One-buffer lag is inaudible and acceptable under
+        // the same contract as masterGain and playing.
+        // RT-safe: no locks, no heap allocation, no I/O.
+        if (mConfig.paused.load(std::memory_order_relaxed)) {
+            const unsigned int nCh = io.channelsOut();
+            const unsigned int nFr = io.framesPerBuffer();
+            for (unsigned int ch = 0; ch < nCh; ++ch)
+                std::memset(io.outBuffer(ch), 0, nFr * sizeof(float));
+            return;
+        }
+
         const unsigned int numFrames   = io.framesPerBuffer();
         const unsigned int numChannels = io.channelsOut();
 

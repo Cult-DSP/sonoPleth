@@ -38,6 +38,9 @@
 //  │                             │ not a data race on non-atomic data)    │
 //  │ ::focusAutoCompensation     │ relaxed (same reasoning)               │
 //  │ ::playing, ::shouldExit     │ relaxed (polling-only, no dep. data)   │
+//  │ ::paused                    │ relaxed (ParameterServer listener       │
+//  │                             │ writes; audio thread polls — one-buffer │
+//  │                             │ lag inaudible, not a data race)         │
 //  ├─────────────────────────────┼────────────────────────────────────────┤
 //  │ EngineState::frameCounter   │ relaxed (single writer: audio thread;  │
 //  │ ::playbackTimeSec           │ readers: main/loader for monitoring —  │
@@ -173,8 +176,16 @@ struct RealtimeConfig {
                                   // sourcesFolder.
 
     // ── Playback control ─────────────────────────────────────────────────
-    std::atomic<bool> playing{false};   // True when audio should be output
+    std::atomic<bool> playing{false};    // True when audio should be output
     std::atomic<bool> shouldExit{false}; // True when engine should shut down
+
+    // ── Pause control (Phase 10 — GUI Agent) ─────────────────────────────
+    // Written by the ParameterServer listener thread (relaxed store) when the
+    // GUI sends /realtime/paused 1.0 or 0.0.
+    // Read by the AUDIO thread (relaxed load) at the top of processBlock().
+    // When true, processBlock() outputs silence and returns immediately.
+    // Stale-by-one-buffer is fine — same contract as playing/masterGain.
+    std::atomic<bool> paused{false};     // True = audio callback outputs silence
 };
 
 
