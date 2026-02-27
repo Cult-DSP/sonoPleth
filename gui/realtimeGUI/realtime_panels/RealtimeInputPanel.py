@@ -74,7 +74,7 @@ class RealtimeInputPanel(QWidget):
     def set_enabled_for_state(self, running: bool) -> None:
         """Disable all inputs while the engine is running."""
         for w in (self._source_edit, self._source_btn,
-                  self._layout_edit, self._layout_btn,
+                  self._layout_combo, self._layout_edit, self._layout_btn,
                   self._remap_edit, self._remap_btn,
                   self._buffer_combo, self._scan_check):
             w.setEnabled(not running)
@@ -114,8 +114,14 @@ class RealtimeInputPanel(QWidget):
         # Layout row
         layout.addWidget(self._make_row_label("Speaker Layout"))
         lay_row = QHBoxLayout()
+        self._layout_combo = QComboBox()
+        self._layout_combo.addItem("AlloSphere", "spatial_engine/speaker_layouts/allosphere_layout.json")
+        self._layout_combo.addItem("Translab", "spatial_engine/speaker_layouts/translab-sono-layout.json")
+        self._layout_combo.setCurrentIndex(0)  # Default to AlloSphere
+        self._layout_combo.setFixedWidth(100)
+        lay_row.addWidget(self._layout_combo)
         self._layout_edit = QLineEdit()
-        self._layout_edit.setPlaceholderText("allosphere_layout.json…")
+        self._layout_edit.setText("spatial_engine/speaker_layouts/allosphere_layout.json")
         self._layout_btn = QPushButton("Browse")
         self._layout_btn.setObjectName("FileButton")
         self._layout_btn.setFixedWidth(80)
@@ -157,10 +163,11 @@ class RealtimeInputPanel(QWidget):
         lbl.setObjectName("Muted")
         return lbl
 
-    # ── Signal wiring ────────────────────────────────────────────────────
+    # ── Signal wiring ──────────────────────────────────────────────────
 
     def _connect_signals(self) -> None:
         self._source_btn.clicked.connect(self._browse_source)
+        self._layout_combo.currentIndexChanged.connect(self._on_layout_combo_changed)
         self._layout_btn.clicked.connect(self._browse_layout)
         self._remap_btn.clicked.connect(self._browse_remap)
         self._source_edit.textChanged.connect(self._on_source_changed)
@@ -171,23 +178,29 @@ class RealtimeInputPanel(QWidget):
 
     # ── Browse handlers ──────────────────────────────────────────────────
 
+    def _on_layout_combo_changed(self) -> None:
+        selected_path = self._layout_combo.currentData()
+        self._layout_edit.setText(selected_path)
+        self.config_changed.emit()
+
     def _browse_source(self) -> None:
         # Try file first
         path, _ = QFileDialog.getOpenFileName(
-            self, "Select ADM WAV File", "", "WAV Files (*.wav);;All Files (*)"
+            self, "Select ADM WAV File", "sourceData", "WAV Files (*.wav);;All Files (*)"
         )
         if not path:
             # Try directory
-            path = QFileDialog.getExistingDirectory(self, "Select LUSID Package Directory")
+            path = QFileDialog.getExistingDirectory(self, "Select LUSID Package Directory", "sourceData")
         if path:
             self._source_edit.setText(path)
 
     def _browse_layout(self) -> None:
         path, _ = QFileDialog.getOpenFileName(
-            self, "Select Speaker Layout JSON", "", "JSON Files (*.json);;All Files (*)"
+            self, "Select Speaker Layout JSON", "spatial_engine/speaker_layouts", "JSON Files (*.json);;All Files (*)"
         )
         if path:
             self._layout_edit.setText(path)
+            # Also update combo to "Custom" or something? For now, just set the text.
 
     def _browse_remap(self) -> None:
         path, _ = QFileDialog.getOpenFileName(

@@ -119,8 +119,8 @@ Based on the architecture's data-flow dependencies, the planned order is:
 11 - update main project read me and relevant documentation - in progress
 12 - polish tasks:
 
-- default folder for audio - sourceData
-- default speaker layout drop down selections. -- translab and allosphere - based on offline gui implementaiton.
+- default folder for audio - sourceData ✅ Complete
+- default speaker layout drop down selections. -- translab and allosphere - based on offline gui implementaiton. ✅ Complete
 
 > **Note:** Phases 1-4 together form the minimum audible prototype (sound
 > comes out of speakers). Phases 5-7 add correctness. Phase 8 hardens

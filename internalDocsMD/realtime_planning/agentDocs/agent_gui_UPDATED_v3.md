@@ -1,27 +1,29 @@
 # GUI Agent — Phase 10 (PySide6, Dedicated Real-Time GUI + Runtime Controls)
 
-> **Implementation Status: 🚧 Phase 10 (Feb 2026)**
+> **Implementation Status: ✅ Phase 10 Complete (Feb 2026)**
 >
 > **Current reality:** real-time C++ engine is complete through **Phase 8** (backend adapter, streaming,
 > pose/control, DBAP spatializer, ADM direct streaming, compensation/gain, output remap,
 > threading/safety audit). Phase 9 covered project init/config updates. **Phase 10 is GUI integration.**
 
+> **Polish Updates (Feb 2026):** Added default speaker layout dropdown (AlloSphere/Translab) and default source folder (sourceData).
+
 ---
 
 ## Authoritative Decisions (locked)
 
-| # | Decision |
-|---|----------|
-| 1 | **Framework**: PySide6 — do **not** switch to ImGui. |
-| 2 | **No bloat of existing GUI**: all realtime GUI code lives under `gui/realtimeGUI/`. |
-| 3 | **Launcher**: `realtimeMain.py` at the project root — standalone script, its own window (NOT a tab in `gui/main.py`). |
-| 4 | **Process launch**: `runRealtime.py` invoked via `QProcess` (mirrors offline pipeline pattern). |
-| 5 | **IPC / runtime controls**: AlloLib `al::Parameter` + `al::ParameterServer` (OSC) on port **9009**. GUI sends via `python-osc`. See `allolib_parameters_reference.md`. |
-| 6 | **Pause/Play**: C++ engine changes **in-scope for this task** (add `config.paused` atomic + callback silence branch + ParameterServer wiring). |
-| 7 | **`--remap` passthrough**: add to `runRealtime.py` so the GUI can pass the remap CSV path to the C++ engine. |
-| 8 | **Stylesheet**: reuse `gui/styles.qss` (same light mode). |
-| 9 | **Scene visualization**: deferred (not in Phase 10). |
-| 10 | **`python-osc` package**: required; add to `requirements.txt`. |
+| #   | Decision                                                                                                                                                               |
+| --- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | **Framework**: PySide6 — do **not** switch to ImGui.                                                                                                                   |
+| 2   | **No bloat of existing GUI**: all realtime GUI code lives under `gui/realtimeGUI/`.                                                                                    |
+| 3   | **Launcher**: `realtimeMain.py` at the project root — standalone script, its own window (NOT a tab in `gui/main.py`).                                                  |
+| 4   | **Process launch**: `runRealtime.py` invoked via `QProcess` (mirrors offline pipeline pattern).                                                                        |
+| 5   | **IPC / runtime controls**: AlloLib `al::Parameter` + `al::ParameterServer` (OSC) on port **9009**. GUI sends via `python-osc`. See `allolib_parameters_reference.md`. |
+| 6   | **Pause/Play**: C++ engine changes **in-scope for this task** (add `config.paused` atomic + callback silence branch + ParameterServer wiring).                         |
+| 7   | **`--remap` passthrough**: add to `runRealtime.py` so the GUI can pass the remap CSV path to the C++ engine.                                                           |
+| 8   | **Stylesheet**: reuse `gui/styles.qss` (same light mode).                                                                                                              |
+| 9   | **Scene visualization**: deferred (not in Phase 10).                                                                                                                   |
+| 10  | **`python-osc` package**: required; add to `requirements.txt`.                                                                                                         |
 
 ---
 
@@ -43,6 +45,7 @@ realtimeMain.py                    ← project-root launcher (new file, separate
 ```
 
 **Existing code that must not be modified:**
+
 - `gui/main.py`, `gui/pipeline_runner.py`, all existing widgets
 - `gui/styles.qss` (read-only reference — both GUIs load it)
 
@@ -53,28 +56,29 @@ realtimeMain.py                    ← project-root launcher (new file, separate
 ## 1. Responsibilities
 
 ### 1.1 Launch-time configuration
+
 Collect inputs and build the `runRealtime.py` command:
 
-| Input | Notes |
-|-------|-------|
-| Source (ADM WAV or LUSID package dir) | Auto-detected by path type — no mode dropdown needed |
-| Speaker layout JSON | Required |
-| Remap CSV | Optional (`--remap`); passed through `runRealtime.py` → C++ engine |
-| Buffer size | Dropdown: 64 / 128 / 256 / **512** / 1024 |
-| Scan audio | Checkbox, default OFF (ADM path only; adds ~14s startup) |
+| Input                                 | Notes                                                              |
+| ------------------------------------- | ------------------------------------------------------------------ |
+| Source (ADM WAV or LUSID package dir) | Auto-detected by path type — no mode dropdown needed               |
+| Speaker layout JSON                   | Required                                                           |
+| Remap CSV                             | Optional (`--remap`); passed through `runRealtime.py` → C++ engine |
+| Buffer size                           | Dropdown: 64 / 128 / 256 / **512** / 1024                          |
+| Scan audio                            | Checkbox, default OFF (ADM path only; adds ~14s startup)           |
 
 ### 1.2 Runtime controls (live via OSC / ParameterServer)
 
 All five live parameters update the running C++ engine via OSC (`al::ParameterServer`, port 9009).
 See `allolib_parameters_reference.md` for the full C++ + Python implementation.
 
-| Control | OSC address | Range | Default |
-|---------|-------------|-------|---------|
-| Master Gain | `/realtime/gain` | 0.0 – 1.0 | 0.5 |
-| DBAP Focus | `/realtime/focus` | 0.2 – 5.0 | 1.5 |
-| Loudspeaker Mix (dB) | `/realtime/speaker_mix_db` | -10 – +10 | 0.0 |
-| Sub Mix (dB) | `/realtime/sub_mix_db` | -10 – +10 | 0.0 |
-| Auto Compensation | `/realtime/auto_comp` | 0 / 1 | 0 |
+| Control              | OSC address                | Range     | Default |
+| -------------------- | -------------------------- | --------- | ------- |
+| Master Gain          | `/realtime/gain`           | 0.0 – 1.0 | 0.5     |
+| DBAP Focus           | `/realtime/focus`          | 0.2 – 5.0 | 1.5     |
+| Loudspeaker Mix (dB) | `/realtime/speaker_mix_db` | -10 – +10 | 0.0     |
+| Sub Mix (dB)         | `/realtime/sub_mix_db`     | -10 – +10 | 0.0     |
+| Auto Compensation    | `/realtime/auto_comp`      | 0 / 1     | 0       |
 
 Controls are **enabled while Running or Paused** (OSC accepted while paused — updates take effect on resume).
 Disabled while Idle / Launching / Exited.
@@ -82,15 +86,15 @@ Debounce: 40 ms quiet period before sending (see `allolib_parameters_reference.m
 
 ### 1.3 Transport controls
 
-| Control | Action |
-|---------|--------|
-| **Start** | Build command from current inputs, launch via `QProcess` |
-| **Stop** | SIGTERM → wait 3s → SIGKILL if needed |
-| **Kill** | Immediate SIGKILL |
-| **Restart** | Stop (graceful) → Start with same config |
-| **Pause** | Send `/realtime/paused 1.0` via OSC |
-| **Play** | Send `/realtime/paused 0.0` via OSC |
-| **Copy Command** | Copy last-launched CLI string to clipboard |
+| Control          | Action                                                   |
+| ---------------- | -------------------------------------------------------- |
+| **Start**        | Build command from current inputs, launch via `QProcess` |
+| **Stop**         | SIGTERM → wait 3s → SIGKILL if needed                    |
+| **Kill**         | Immediate SIGKILL                                        |
+| **Restart**      | Stop (graceful) → Start with same config                 |
+| **Pause**        | Send `/realtime/paused 1.0` via OSC                      |
+| **Play**         | Send `/realtime/paused 0.0` via OSC                      |
+| **Copy Command** | Copy last-launched CLI string to clipboard               |
 
 Pause/Play are process-independent — toggle audio via OSC without stopping the process.
 
@@ -102,11 +106,13 @@ Pause/Play are process-independent — toggle audio via OSC without stopping the
 
 ```
 [Source]     [Browse WAV / Dir]  [text field]        "Detected: ADM / LUSID package"
-[Layout]     [Browse JSON]       [text field]
+[Layout]     [AlloSphere ▼]      [Browse JSON]       [text field]  (dropdown + browse)
 [Remap CSV]  [Browse CSV]        [text field]         (optional)
 [Buffer]     [64|128|256|512|1024 dropdown]
 [Scan Audio] [checkbox, default OFF — greyed when LUSID detected]
 ```
+
+Layout dropdown defaults: `AlloSphere` → `spatial_engine/speaker_layouts/allosphere_layout.json`, `Translab` → `spatial_engine/speaker_layouts/translab-sono-layout.json`. Browse button allows custom layouts.
 
 ### 2.2 Transport Panel (`RealtimeTransportPanel`)
 
@@ -231,6 +237,7 @@ The Scan Audio checkbox is only relevant for ADM sources; grey it out when LUSID
 See `allolib_parameters_reference.md` for the complete C++ and Python implementation.
 
 **Summary:**
+
 - Engine starts `al::ParameterServer` on `127.0.0.1:9009` (default, configurable via `--osc_port`).
 - Engine prints `"[ParameterServer] Listening on 127.0.0.1:9009"` at startup.
 - GUI creates `pythonosc.udp_client.SimpleUDPClient("127.0.0.1", 9009)` in `RealtimeRunner`.
@@ -239,6 +246,7 @@ See `allolib_parameters_reference.md` for the complete C++ and Python implementa
   GUI guards by only sending when state is Running or Paused.
 
 **Port conflict handling:**
+
 - Engine: if `paramServer.serverRunning()` is false after construction → print error + `config.shouldExit = true`.
 - GUI: parse stdout for bind-fail message → show inline error ("Port 9009 in use — check for other running instances").
 
@@ -249,10 +257,12 @@ See `allolib_parameters_reference.md` for the complete C++ and Python implementa
 See `allolib_parameters_reference.md` for code patterns.
 
 ### 6.1 `RealtimeTypes.hpp`
+
 - Add `std::atomic<bool> paused{false}` alongside `playing` and `shouldExit`.
 - Add threading doc comment (same pattern as `playing`).
 
 ### 6.2 `main.cpp`
+
 - Add `#include "al/ui/al_Parameter.hpp"` and `#include "al/ui/al_ParameterServer.hpp"`.
 - Declare six `al::Parameter` / `al::ParameterBool` objects (gain, focus, speakerMixDb, subMixDb, autoComp, paused) with correct ranges and defaults.
 - Create `al::ParameterServer paramServer{"127.0.0.1", osc_port}`.
@@ -267,6 +277,7 @@ See `allolib_parameters_reference.md` for code patterns.
 - Add `pendingAutoComp` flag check in main monitoring loop (calls `spatializer.computeFocusCompensation()` on main thread — never in ParameterServer callback or audio callback).
 
 ### 6.3 `RealtimeBackend.hpp` — `processBlock()`
+
 Add pause guard at the very top of `processBlock()`:
 
 ```cpp
@@ -283,6 +294,7 @@ RT-safe: one atomic load per callback, no locks, no allocation.
 — same contract as `playing` and `masterGain` per the Phase 8 threading model.
 
 ### 6.4 `runRealtime.py`
+
 - Add `remap_csv=None` and `osc_port=9009` keyword args to `_launch_realtime_engine()`.
 - Pass `--remap <path>` to `cmd` when `remap_csv` is set.
 - Pass `--osc_port <port>` to `cmd`.
@@ -292,17 +304,17 @@ RT-safe: one atomic load per callback, no locks, no allocation.
 
 ## 7. Defaults (GUI must match engine startup defaults)
 
-| Parameter | Default |
-|-----------|---------|
-| `masterGain` | **0.5** |
-| `focus` | **1.5** |
-| `buffer_size` | **512** |
+| Parameter           | Default  |
+| ------------------- | -------- |
+| `masterGain`        | **0.5**  |
+| `focus`             | **1.5**  |
+| `buffer_size`       | **512**  |
 | `loudspeakerMix_db` | **0 dB** |
-| `subMix_db` | **0 dB** |
-| `auto_compensation` | **OFF** |
-| `scan_audio` | **OFF** |
-| `remap_csv` | none |
-| `osc_port` | **9009** |
+| `subMix_db`         | **0 dB** |
+| `auto_compensation` | **OFF**  |
+| `scan_audio`        | **OFF**  |
+| `remap_csv`         | none     |
+| `osc_port`          | **9009** |
 
 On every Start, reset all runtime control widgets to these defaults.
 
@@ -338,6 +350,7 @@ if __name__ == "__main__":
 ## 9. Testing Checklist
 
 ### Launch
+
 - [ ] ADM WAV + layout → Start → audio plays
 - [ ] ADM WAV + scan_audio ON → Start → longer startup but succeeds
 - [ ] LUSID package + layout → Start → audio plays
@@ -347,6 +360,7 @@ if __name__ == "__main__":
 - [ ] LUSID detected → Scan Audio checkbox greyed out
 
 ### Runtime controls (IPC)
+
 - [ ] While Running, move gain slider → immediate audible change
 - [ ] While Running, move focus slider → audible spatial change
 - [ ] While Running, move speaker mix → level change on mains
@@ -355,6 +369,7 @@ if __name__ == "__main__":
 - [ ] Controls reset to defaults on next Start
 
 ### Transport
+
 - [ ] Pause → audio goes silent, process stays alive
 - [ ] Play (after Pause) → audio resumes at current buffer position
 - [ ] Stop → process exits cleanly (exit 0), controls disabled
@@ -363,6 +378,7 @@ if __name__ == "__main__":
 - [ ] Copy Command → clipboard contains a valid CLI invocation
 
 ### Failure / edge cases
+
 - [ ] Engine crash → exit code shown in status pill, logs preserved
 - [ ] Port 9009 in use → engine fails to start, error visible in log
 - [ ] Clicking Stop twice → second click is a no-op
