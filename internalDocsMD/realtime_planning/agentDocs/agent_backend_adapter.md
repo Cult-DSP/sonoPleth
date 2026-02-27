@@ -1,7 +1,7 @@
 ````markdown
 # Backend Adapter Agent
 
-> **Implementation Status: ✅ COMPLETE (Phase 1, Feb 24 2026)**
+> **Implementation Status: ✅ COMPLETE (Phase 1, Feb 24 2026 — Phase 10 polish Feb 27 2026)**
 > Implemented in `spatial_engine/realtimeEngine/src/RealtimeBackend.hpp`.
 > See `realtime_master.md` Phase 1 Completion Log for details.
 > Uses AlloLib AudioIO. Static C-style callback dispatches to `processBlock()`.
@@ -72,4 +72,79 @@ The Backend Adapter is partly on the boundary of our real-time system and the OS
       return g_engine->processAudio((float*)output, frames);
   }
   ```
+
+### Block-level control snapshot, smoothing, and pause fade (Phase 10 polish — Feb 27 2026)
+
+**Status: ✅ Implemented and verified (cmake build: zero errors)**
+
+#### Problem
+
+The original `processBlock()` had three correctness/quality issues:
+
+| Issue                                    | Symptom                                                           |
+| ---------------------------------------- | ----------------------------------------------------------------- |
+| Repeated atomic reads inside inner loops | Redundant atomic traffic; inconsistent parameter values mid-block |
+| Hard-mute on pause (`memset` + `return`) | Audible click transient on every Pause/Play                       |
+| No smoothing of OSC slider changes       | Step discontinuity in gain/focus → potential click                |
+
+#### Solution implemented
+
+**A — Atomic snapshot (one read per param per block)**
+
+At the very top of `processBlock()`, all runtime-control atomics (`masterGain`, `loudspeakerMix`, `subMix`, `focusAutoCompensation`, `paused`) and the plain-float `dbapFocus` are read once into a `ControlSnapshot` struct. Nothing below that point in the block reads the config atomics.
+
+**B — Exponential smoothing toward snapshot targets**
+
+```
+alpha = 1 − exp(−dt / τ)    where τ = 50 ms (default)
+smoothed = smoothed + alpha × (target − smoothed)
+```
+
+One `std::exp` call per block (negligible cost). Smoothed values are written back to `mConfig` before `Spatializer::renderBlock()` so the Spatializer API is unchanged.
+
+At 512 frames / 48 kHz (10.7 ms block): α ≈ 0.19 → 95% settling in ~4 blocks (~43 ms). Slider moves produce a short ramp rather than a step.
+
+**C — Pause/resume fade (8 ms linear ramp)**
+
+On a pause edge: arm a fade-OUT → `mPauseFade` ramps 1→0 over `kPauseFadeMs = 8 ms` frames.  
+On a resume edge: arm a fade-IN → `mPauseFade` ramps 0→1 over the same duration.
+
+The ramp is applied per-sample after all rendering in Step 4. When fully paused (fade complete, `mPauseFade == 0`), buffers are cleared and `frameCounter` is **not** advanced (playback position stays frozen).
+
+**D — Per-channel gain anchors (placeholder for block-boundary ramp)**
+
+`mPrevChannelGains[]` / `mNextChannelGains[]` are maintained per block. Currently identity (all 1.0). When implemented with DBAP top-K precomputation, the copy-to-output loop will `lerp(prev, next, t)` per frame to eliminate speaker-switch clicks.
+
+#### Private members added
+
+| Member                  | Type                      | Purpose                                        |
+| ----------------------- | ------------------------- | ---------------------------------------------- |
+| `ControlSnapshot`       | inner struct              | per-block snapshot target + smoothed values    |
+| `SmoothedState mSmooth` | struct                    | holds `smoothed`, `target`, `tauSec`           |
+| `kPauseFadeMs`          | `static constexpr double` | 8 ms fade duration                             |
+| `mPrevPaused`           | `bool`                    | previous block's pause state (edge detection)  |
+| `mPauseFade`            | `float`                   | current fade envelope [0, 1]                   |
+| `mPauseFadeStep`        | `float`                   | per-sample delta (signed)                      |
+| `mPauseFadeFramesLeft`  | `unsigned int`            | samples remaining in ramp                      |
+| `mPrevChannelGains[]`   | `vector<float>`           | block-start per-channel gains                  |
+| `mNextChannelGains[]`   | `vector<float>`           | block-end per-channel gains (identity for now) |
+
+#### processBlock() call order (updated)
+
+```
+1. Snapshot all atomics + dbapFocus into mSmooth.target
+2. Exponential smooth: mSmooth.smoothed → target (alpha = 1-exp(-dt/tau))
+3. Detect pause edge → arm fade ramp if changed
+4. Resize/shift per-channel gain anchors (identity placeholder)
+5. Zero output channels
+6. Pose::computePositions(blockCenter)
+7. Write smoothed values back to mConfig, call Spatializer::renderBlock()
+8. Apply pause fade per-sample (scale output, freeze frameCounter if fully paused)
+9. Update frameCounter, playbackTimeSec, cpuLoad
+```
+
+#### Threading notes
+
+- `dbapFocus` is a plain `float` written by the ParameterServer listener thread. The snapshot in Step 1 reads it with the "one-buffer lag" contract (same as the atomics). No UB because `float` reads/writes are atomic on ARM and x86 at the hardware level, but note this is not formally guaranteed by C++. A future hardening pass could make it `std::atomic<float>`.
+- All other smoothing / fade state is written AND read exclusively on the audio thread — no synchronization needed.
 ````

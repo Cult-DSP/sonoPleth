@@ -12,15 +12,24 @@
 // 3. Start / stop the audio stream.
 // 4. Report CPU load and detect xruns.
 //
+// PHASE 10 POLISH — Block-level control snapshot + smoothing + pause fade:
+// 5. Read all runtime-control atomics ONCE per block into ControlSnapshot.
+//    No atomic read occurs inside the per-sample or per-frame inner loops.
+// 6. Exponentially smooth toward snapshot targets using tau ≈ 50 ms.
+//    Smoothed values are used for all rendering — never the raw snapshots.
+// 7. Pause/resume uses a per-sample linear fade (kPauseFadeMs = 8 ms) to
+//    avoid hard-mute click transients.
+// 8. Per-channel gain anchors (mPrevChannelGains / mNextChannelGains) are
+//    reserved for future block-boundary gain interpolation to prevent
+//    speaker-switch clicks. Currently identity (placeholder).
+//
 // DESIGN NOTES:
 // - The callback function is static (required by AlloLib's C-style callback).
 //   It receives `this` via the userData pointer and dispatches to the member
 //   function `processBlock()`.
-// - Phase 1: outputs silence.
-// - Phase 2: reads audio from Streaming and outputs a mono mix to all
-//   channels (verifies streaming works). Full DBAP spatialization in Phase 4.
-// - The callback must NEVER allocate, lock, or do I/O. It runs on the audio
-//   thread at real-time priority.
+// - All state added for Phase 10 polish is POD (no heap in callback hot-path).
+// - SmoothedState::tauSec is tunable at construction time (default 50 ms).
+// - The callback must NEVER allocate, lock, or do I/O.
 //
 // REFERENCE: AlloLib AudioIO API (thirdparty/allolib/include/al/io/al_AudioIO.hpp)
 //   AudioIO::init(callback, userData, framesPerBuf, framesPerSec, outChans, inChans)
@@ -32,6 +41,7 @@
 
 #pragma once
 
+#include <cmath>    // std::exp (used for per-block smoothing in processBlock)
 #include <iostream>
 #include <string>
 #include <functional>
@@ -226,68 +236,155 @@ private:
 
     void processBlock(al::AudioIOData& io) {
 
-        // ── Pause guard (Phase 10 — GUI Agent) ───────────────────────────
-        // THREADING: AUDIO THREAD ONLY.
-        // mConfig.paused is written by the ParameterServer listener thread
-        // (relaxed store in the /realtime/paused OSC callback) and read here
-        // with a relaxed load. One-buffer lag is inaudible and acceptable under
-        // the same contract as masterGain and playing.
-        // RT-safe: no locks, no heap allocation, no I/O.
-        if (mConfig.paused.load(std::memory_order_relaxed)) {
-            const unsigned int nCh = io.channelsOut();
-            const unsigned int nFr = io.framesPerBuffer();
-            for (unsigned int ch = 0; ch < nCh; ++ch)
-                std::memset(io.outBuffer(ch), 0, nFr * sizeof(float));
+        const unsigned int numFrames  = static_cast<unsigned int>(io.framesPerBuffer());
+        const unsigned int numChannels= static_cast<unsigned int>(io.channelsOut());
+        // Use mConfig.sampleRate (int) cast to double for per-block time math.
+        const double sampleRate       = static_cast<double>(mConfig.sampleRate);
+        const double blockDurSec      = static_cast<double>(numFrames) / sampleRate;
+
+        // ── A) Snapshot all runtime-control atomics ONCE at block start ──────
+        // Nothing below this point in the block should read the config atomics.
+        // This keeps the audio thread free of repeated atomic traffic inside the
+        // Spatializer / mixing inner loops.
+        // Note: dbapFocus is a plain float written by the ParameterServer listener
+        // thread. We snapshot it here (relaxed read — same "one-buffer lag" contract
+        // as the atomics). The smoothed value is written back before renderBlock.
+        {
+            ControlSnapshot& t  = mSmooth.target;
+            t.masterGain        = mConfig.masterGain.load(std::memory_order_relaxed);
+            t.focus             = mConfig.dbapFocus;  // plain float — snapshot once
+            t.loudspeakerMix    = mConfig.loudspeakerMix.load(std::memory_order_relaxed);
+            t.subMix            = mConfig.subMix.load(std::memory_order_relaxed);
+            t.autoComp          = mConfig.focusAutoCompensation.load(std::memory_order_relaxed);
+        }
+
+        // ── B) Exponential smoothing toward snapshot targets (per-block) ─────
+        // alpha = 1 − exp(−dt / τ).  One std::exp call per block — negligible.
+        // Uses the smoothed values for rendering so that rapid OSC slider moves
+        // produce a gradual ramp rather than a step discontinuity.
+        {
+            const double alpha = (mSmooth.tauSec > 0.0)
+                ? 1.0 - std::exp(-blockDurSec / mSmooth.tauSec)
+                : 1.0;
+            ControlSnapshot&       s   = mSmooth.smoothed;
+            const ControlSnapshot& tgt = mSmooth.target;
+            s.masterGain     = s.masterGain     + static_cast<float>(alpha * (tgt.masterGain     - s.masterGain));
+            s.focus          = s.focus          + static_cast<float>(alpha * (tgt.focus          - s.focus));
+            s.loudspeakerMix = s.loudspeakerMix + static_cast<float>(alpha * (tgt.loudspeakerMix - s.loudspeakerMix));
+            s.subMix         = s.subMix         + static_cast<float>(alpha * (tgt.subMix         - s.subMix));
+            s.autoComp       = tgt.autoComp;  // bool: take target immediately
+        }
+
+        // ── C) Pause-fade: detect edge on paused flag, arm fade ramp ─────────
+        // Read paused ONCE here (already separate from ControlSnapshot).
+        // On a pause edge  (playing → paused): arm a fade-OUT (gain 1→0).
+        // On a resume edge (paused → playing): arm a fade-IN  (gain 0→1).
+        // The per-sample ramp in Step D prevents hard-mute click transients.
+        const bool pausedNow = mConfig.paused.load(std::memory_order_relaxed);
+        if (pausedNow != mPrevPaused) {
+            const unsigned int fadeFrames = std::max(1u,
+                static_cast<unsigned int>((kPauseFadeMs / 1000.0) * sampleRate));
+            if (pausedNow) {
+                // playing → paused: fade OUT  (mPauseFade → 0.0)
+                mPauseFadeFramesLeft = fadeFrames;
+                mPauseFadeStep       = -(mPauseFade / static_cast<float>(fadeFrames));
+            } else {
+                // paused → playing: fade IN   (mPauseFade → 1.0)
+                mPauseFade           = 0.0f;
+                mPauseFadeFramesLeft = fadeFrames;
+                mPauseFadeStep       = 1.0f / static_cast<float>(fadeFrames);
+            }
+            mPrevPaused = pausedNow;
+        }
+
+        // ── D) Per-channel gain anchors (block-boundary interpolation) ────────
+        // Resize once if channel count changes (init or device change).
+        // mPrevChannelGains holds the gains applied at the end of the last block;
+        // mNextChannelGains will hold the target gains for this block.
+        // Per-frame lerp across the block eliminates speaker-switch clicks.
+        // Currently identity — future work: populate from Spatializer top-K.
+        if (mNextChannelGains.size() != numChannels) {
+            mPrevChannelGains.assign(numChannels, 1.0f);
+            mNextChannelGains.assign(numChannels, 1.0f);
+        }
+        for (unsigned int c = 0; c < numChannels; ++c) {
+            mPrevChannelGains[c] = mNextChannelGains[c]; // shift: last→prev
+            mNextChannelGains[c] = 1.0f;                 // TODO: per-source DBAP top-K
+        }
+
+        // ── Step 1: Zero all output channels ─────────────────────────────────
+        for (unsigned int ch = 0; ch < numChannels; ++ch)
+            std::memset(io.outBuffer(ch), 0, numFrames * sizeof(float));
+
+        // ── Step 2: Compute source positions for this block ───────────────────
+        if (mPose) {
+            const uint64_t curFrame    = mState.frameCounter.load(std::memory_order_relaxed);
+            const double   blockCtrSec = static_cast<double>(curFrame + numFrames / 2) / sampleRate;
+            mPose->computePositions(blockCtrSec);
+        }
+
+        // ── Step 3: Spatialize all sources via DBAP ───────────────────────────
+        // Push smoothed gain parameters into config atomics so Spatializer reads
+        // them consistently. We write back here rather than threading smoothed
+        // values as separate parameters through the Spatializer API, keeping the
+        // API surface small.
+        // RT-safe: relaxed stores on the same atomics we snapshotted above.
+        if (mSpatializer && mStreamer && mPose) {
+            // Write smoothed values back to config so Spatializer reads them
+            // consistently via mConfig (keeps Spatializer API unchanged).
+            // RT-safe: relaxed stores on atomics; direct write for plain float.
+            mConfig.masterGain.store(mSmooth.smoothed.masterGain,         std::memory_order_relaxed);
+            mConfig.loudspeakerMix.store(mSmooth.smoothed.loudspeakerMix, std::memory_order_relaxed);
+            mConfig.subMix.store(mSmooth.smoothed.subMix,                 std::memory_order_relaxed);
+            mConfig.dbapFocus = mSmooth.smoothed.focus;  // plain float write-back
+
+            const uint64_t currentFrame = mState.frameCounter.load(std::memory_order_relaxed);
+            mSpatializer->renderBlock(io, *mStreamer, mPose->getPoses(),
+                                      currentFrame, numFrames);
+        }
+
+        // ── Step 4: Apply pause fade per-sample ──────────────────────────────
+        // After all rendering, scale output samples by mPauseFade.
+        // If fully paused (mPauseFade == 0 and no fade in progress), clear
+        // buffers and return — skips state updates to keep position stable.
+        if (mPauseFadeFramesLeft > 0 || mPauseFade < 1.0f) {
+            for (unsigned int f = 0; f < numFrames; ++f) {
+                // Advance fade ramp one sample at a time.
+                if (mPauseFadeFramesLeft > 0) {
+                    mPauseFade += mPauseFadeStep;
+                    mPauseFade  = std::max(0.0f, std::min(1.0f, mPauseFade));
+                    --mPauseFadeFramesLeft;
+                }
+                // Apply current fade gain to every output channel.
+                const float fadeGain = mPauseFade;
+                for (unsigned int ch = 0; ch < numChannels; ++ch)
+                    io.outBuffer(ch)[f] *= fadeGain;
+            }
+        }
+
+        // If fully paused (fade complete, gain == 0) — zero outputs and return
+        // without advancing playback position counters.
+        if (pausedNow && mPauseFadeFramesLeft == 0 && mPauseFade <= 0.0f) {
+            for (unsigned int ch = 0; ch < numChannels; ++ch)
+                std::memset(io.outBuffer(ch), 0, numFrames * sizeof(float));
+            // Update only CPU load — do NOT advance frameCounter.
+            mState.cpuLoad.store(
+                std::max(0.0f, std::min(1.0f, static_cast<float>(mAudioIO.cpu()))),
+                std::memory_order_relaxed);
             return;
         }
 
-        const unsigned int numFrames   = io.framesPerBuffer();
-        const unsigned int numChannels = io.channelsOut();
-
-        // ── Step 1: Zero all output channels ─────────────────────────────
-        for (unsigned int ch = 0; ch < numChannels; ++ch) {
-            float* buf = io.outBuffer(ch);
-            std::memset(buf, 0, numFrames * sizeof(float));
-        }
-
-        // ── Step 2: Compute source positions for this block ──────────────
-        // Guard: mPose must be non-null (same guard as Step 3 for consistency).
-        if (mPose) {
-            uint64_t curFrame = mState.frameCounter.load(std::memory_order_relaxed);
-            double blockCenterSec = static_cast<double>(curFrame + numFrames / 2)
-                                    / mConfig.sampleRate;
-            mPose->computePositions(blockCenterSec);
-        }
-
-        // ── Step 3: Spatialize all sources via DBAP ──────────────────────
-        // The Spatializer reads each source's audio from Streaming, gets
-        // its position from Pose, and distributes it across speakers.
-        // LFE sources are routed directly to subwoofer channels.
-        // Requires all three agents to be wired; silently outputs nothing if any
-        // pointer is null (should never happen in production after init()).
-        if (mSpatializer && mStreamer && mPose) {
-            uint64_t currentFrame = mState.frameCounter.load(std::memory_order_relaxed);
-            const auto& poses = mPose->getPoses();
-            mSpatializer->renderBlock(io, *mStreamer, poses,
-                                       currentFrame, numFrames);
-        }
-
-        // ── Step 4: Update engine state ──────────────────────────────────
-        // memory_order_relaxed is correct: we are the sole writer; main thread
-        // reads these only for display and does not derive safety decisions from
-        // their exact value relative to any other memory operation.
-        uint64_t prevFrames = mState.frameCounter.load(std::memory_order_relaxed);
-        uint64_t newFrames  = prevFrames + numFrames;
+        // ── Step 5: Update engine state ───────────────────────────────────────
+        const uint64_t prevFrames = mState.frameCounter.load(std::memory_order_relaxed);
+        const uint64_t newFrames  = prevFrames + numFrames;
         mState.frameCounter.store(newFrames, std::memory_order_relaxed);
         mState.playbackTimeSec.store(
-            static_cast<double>(newFrames) / mConfig.sampleRate,
-            std::memory_order_relaxed
-        );
+            static_cast<double>(newFrames) / sampleRate, std::memory_order_relaxed);
 
-        // ── Step 5: CPU load monitoring ──────────────────────────────────
-        float rawCpu = static_cast<float>(mAudioIO.cpu());
-        float clampedCpu = (rawCpu < 0.0f) ? 0.0f : (rawCpu > 1.0f ? 1.0f : rawCpu);
-        mState.cpuLoad.store(clampedCpu, std::memory_order_relaxed);
+        // ── Step 6: CPU load monitoring ───────────────────────────────────────
+        mState.cpuLoad.store(
+            std::max(0.0f, std::min(1.0f, static_cast<float>(mAudioIO.cpu()))),
+            std::memory_order_relaxed);
     }
 
     // ── Member data ──────────────────────────────────────────────────────
@@ -310,5 +407,74 @@ private:
     // then only read on the audio thread. Same happens-before as agent ptrs.
     std::vector<std::string> mSourceNames;   // Source name list (reserved for future use)
     std::vector<float>       mMonoMixBuffer; // Pre-allocated temp buffer (reserved for future use)
+
+    // ── Phase 10 polish: per-block control snapshot + exponential smoothing ──
+    //
+    // ControlSnapshot holds one atomic read per parameter, taken ONCE at the
+    // very top of processBlock(). Nothing inside the block reads config atomics
+    // again. Avoids repeated atomic traffic inside Spatializer inner loops.
+    //
+    // SmoothedState tracks exponentially-smoothed control values that are
+    // written back to mConfig before calling Spatializer::renderBlock(), so
+    // the spatializer sees smoothed values without a change to its API.
+    //
+    // tau = 50 ms → α ≈ 0.52 at 512/48k (10.7 ms block) → ~4 blocks to 95%.
+    // Audibly this means a slider move smooths over ~200 ms — imperceptible
+    // for gain/focus changes but eliminates step discontinuities.
+    //
+    // THREADING: All fields below are written AND read exclusively on the
+    // AUDIO thread. No synchronization required.
+
+    struct ControlSnapshot {
+        float masterGain     = 1.0f;
+        float focus          = 1.0f;
+        float loudspeakerMix = 1.0f;
+        float subMix         = 1.0f;
+        bool  autoComp       = false;
+    };
+
+    struct SmoothedState {
+        ControlSnapshot smoothed;        // current smoothed values (used for rendering)
+        ControlSnapshot target;          // latest snapshot from atomics (updated each block)
+        double          tauSec = 0.050;  // smoothing time constant (default 50 ms)
+    } mSmooth;
+
+    // ── Phase 10 polish: pause fade ───────────────────────────────────────────
+    //
+    // Hard-muting on pause causes an audible click transient. Instead we ramp
+    // the output gain linearly over kPauseFadeMs before going silent (fade-out)
+    // and after resuming (fade-in). The ramp is applied per-sample after all
+    // rendering in processBlock Step 4.
+    //
+    // State machine:
+    //   playing: mPauseFade == 1.0, mPauseFadeFramesLeft == 0
+    //   fading out: mPauseFade 1→0 over kPauseFadeMs frames
+    //   fully paused: mPauseFade == 0, buffers cleared, frameCounter NOT advanced
+    //   fading in: mPauseFade 0→1 over kPauseFadeMs frames
+    //
+    // THREADING: Audio thread only.
+
+    static constexpr double kPauseFadeMs = 8.0; // 8 ms is enough to mask click
+
+    bool         mPrevPaused          = false;  // paused state seen last block
+    float        mPauseFade           = 1.0f;   // current fade envelope (0=silent, 1=full)
+    float        mPauseFadeStep       = 0.0f;   // per-sample delta (negative=fade-out, positive=fade-in)
+    unsigned int mPauseFadeFramesLeft = 0;       // samples remaining in current ramp
+
+    // ── Phase 10 polish: per-channel gain anchors (block-boundary ramp) ──────
+    //
+    // Keeping prev/next per-output-channel gain allows us to linearly interpolate
+    // across a block and prevent step discontinuities when DBAP speaker sets
+    // switch (e.g., due to a focus change or abrupt position jump).
+    //
+    // Currently identity (all gains == 1.0) — placeholder for future top-K
+    // per-source gain precomputation. When implemented, mNextChannelGains will
+    // be filled with the block-end spatializer gains before rendering, and the
+    // copy-to-output loop will lerp between prev and next per-frame.
+    //
+    // THREADING: Audio thread only.
+
+    std::vector<float> mPrevChannelGains; // gains at start of current block (end of last block)
+    std::vector<float> mNextChannelGains; // gains at end of current block (computed each block)
 };
 

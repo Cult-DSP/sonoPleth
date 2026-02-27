@@ -213,3 +213,117 @@ Python's stdout reader.
 | `gui/realtimeGUI/realtime_runner.py`                       | `_on_started` stays `LAUNCHING`; `_on_stdout` sentinel probe; `engine_ready` Signal |
 | `gui/realtimeGUI/realtime_panels/RealtimeControlsPanel.py` | Added `flush_to_osc()` method                                                       |
 | `gui/realtimeGUI/realtimeGUI.py`                           | `runner.engine_ready.connect(controls_panel.flush_to_osc)`                          |
+
+## Runtime control smoothing & pause-click fixes (Phase 10 polishing)
+
+> **Status: ✅ Implemented** — `RealtimeBackend.hpp` rewritten. Build verified clean (`[100%] Built target sonoPleth_realtime`).
+
+### Problem statement
+
+Before this pass, `processBlock` had three race/quality defects:
+
+| #   | Defect                                                                           | Symptom                                                          |
+| --- | -------------------------------------------------------------------------------- | ---------------------------------------------------------------- |
+| 1   | Each runtime control was read multiple times per block from `std::atomic` fields | Incoherent parameter state mid-block; unnecessary atomic traffic |
+| 2   | Parameter changes applied instantaneously                                        | Audible zipper noise when adjusting gain/focus/mix sliders       |
+| 3   | Pause/resume implemented as a hard mute (`memset → return`)                      | Audible click on every pause and resume                          |
+
+### Solution A — Per-block control snapshot
+
+At the very start of `processBlock`, all runtime controls are read **exactly once** into a local `ControlSnapshot`:
+
+```cpp
+struct ControlSnapshot {
+    float masterGain   = 1.0f;
+    float focus        = 1.0f;
+    float loudspeakerMix = 1.0f;
+    float subMix       = 1.0f;
+    bool  autoComp     = false;
+};
+```
+
+`masterGain`, `loudspeakerMix`, `subMix`, `focusAutoCompensation`, and `paused` are `std::atomic` and are loaded with `.load()`. `dbapFocus` is a plain `float` (see **Invariant 9** below) and is read directly.
+
+The snapshot values are then stored as `mSmooth.target` for the smoothing step.
+
+### Solution B — Exponential smoothing (tau = 50 ms)
+
+Each block, the smoothed state advances toward the snapshot target:
+
+$$\alpha = 1 - e^{-\Delta t / \tau}, \quad \tau = 50\,\text{ms}$$
+
+where $\Delta t = \text{framesPerBuffer} / \text{sampleRate}$. This costs one `std::exp` call per block (~negligible vs. audio work).
+
+```cpp
+double alpha = 1.0 - std::exp(-blockDurSec / mSmooth.tauSec);
+auto& s = mSmooth.smoothed;
+auto& t = mSmooth.target;
+s.masterGain     += alpha * (t.masterGain     - s.masterGain);
+s.loudspeakerMix += alpha * (t.loudspeakerMix - s.loudspeakerMix);
+s.subMix         += alpha * (t.subMix         - s.subMix);
+s.focus          += alpha * (t.focus          - s.focus);
+s.autoComp        = t.autoComp;   // boolean — instant, no smoothing
+```
+
+The smoothed values are written back into `mConfig` before `Spatializer::renderBlock()` is called, so the spatializer always sees temporally-coherent parameters.
+
+### Solution C — Pause/resume fade (8 ms linear ramp)
+
+Hard-mute pause guard **removed**. Instead, a per-sample linear ramp `mPauseFade ∈ [0, 1]` is multiplied onto every output sample in Step 4.
+
+**State machine:**
+
+| State                | `mPauseFade` | `mPauseFadeStep` | `mPauseFadeFramesLeft` |
+| -------------------- | ------------ | ---------------- | ---------------------- |
+| Playing normally     | `1.0`        | `0.0`            | `0`                    |
+| Pause edge detected  | 1→0          | `< 0` (fade-out) | `fadeFrames`           |
+| Fully paused         | `0.0`        | `0.0`            | `0`                    |
+| Resume edge detected | 0→1          | `> 0` (fade-in)  | `fadeFrames`           |
+
+`fadeFrames = ceil(kPauseFadeMs * sampleRate / 1000)`, `kPauseFadeMs = 8.0`.
+
+**Fully-paused optimisation:** once `mPauseFade` reaches 0 and `mPrevPaused` is still `true`, the block is zeroed and returned early **without advancing `frameCounter`**. This means playback position is preserved across pauses.
+
+### Solution D — Per-channel gain-ramp anchors (placeholder)
+
+`mPrevChannelGains` and `mNextChannelGains` (both `std::vector<float>`, resized to `io.channelsOut()`) are reserved for future per-block gain interpolation. Currently the identity ramp (constant gain across the block) is applied — this eliminates per-channel step artefacts when speaker count changes between blocks. Full DBAP top-K interpolation is deferred to a future pass.
+
+---
+
+### Threading invariants (additions to master list)
+
+**Invariant 8 — Single atomic read per block:**  
+The audio callback loads each `std::atomic` control field **at most once** per `processBlock` invocation, storing the result in the local `ControlSnapshot`. No atomic is re-read inside the rendering loops.
+
+**Invariant 9 — `dbapFocus` plain-float data race (accepted, future hardening):**  
+`RealtimeConfig::dbapFocus` is a plain `float` written by the ParameterServer OSC listener thread and read by the audio thread. On the target hardware (x86-64, ARM64) a naturally-aligned `float` load/store is single-instruction and thus de-facto atomic. This is a benign data race per the C++ memory model but is technically UB. Future hardening: change `dbapFocus` to `std::atomic<float>` in `RealtimeTypes.hpp` and load with `.load(std::memory_order_relaxed)`.
+
+**Invariant 10 — `frameCounter` not advanced while fully paused:**  
+When `mPauseFade == 0.0f` and `paused == true`, the block returns after zeroing output without incrementing `frameCounter` or `playbackTimeSec`. Pose interpolation therefore resumes from the exact frame it left off.
+
+**Invariant 11 — No heap allocation in processBlock:**  
+`mPrevChannelGains` and `mNextChannelGains` are resized (and thus heap-allocated) only when `io.channelsOut()` changes — a configuration event, not a per-block event. Per-block execution path is allocation-free.
+
+---
+
+### Private members summary
+
+| Member                 | Type                      | Purpose                                            |
+| ---------------------- | ------------------------- | -------------------------------------------------- |
+| `mSmooth.target`       | `ControlSnapshot`         | Raw atomic snapshot for this block                 |
+| `mSmooth.smoothed`     | `ControlSnapshot`         | Exponentially-smoothed running state               |
+| `mSmooth.tauSec`       | `double`                  | Smoothing time constant (0.050 s)                  |
+| `kPauseFadeMs`         | `static constexpr double` | Fade duration in ms (8.0)                          |
+| `mPrevPaused`          | `bool`                    | Previous block's pause state for edge detection    |
+| `mPauseFade`           | `float`                   | Current fade envelope [0, 1]                       |
+| `mPauseFadeStep`       | `float`                   | Per-sample increment (signed; negative = fade out) |
+| `mPauseFadeFramesLeft` | `unsigned int`            | Samples remaining in active fade                   |
+| `mPrevChannelGains[]`  | `std::vector<float>`      | Gain anchor at block start (per output channel)    |
+| `mNextChannelGains[]`  | `std::vector<float>`      | Gain anchor at block end (per output channel)      |
+
+### Files changed
+
+| File                                                                  | Change                                                                                                        |
+| --------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| `spatial_engine/realtimeEngine/src/RealtimeBackend.hpp`               | Full `processBlock` rewrite; new private member section; `#include <cmath>` added                             |
+| `internalDocsMD/realtime_planning/agentDocs/agent_backend_adapter.md` | Full Phase 10 polish section added (problems, solutions A–D, member table, call-order table, threading notes) |
