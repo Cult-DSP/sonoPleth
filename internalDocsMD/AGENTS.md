@@ -851,24 +851,26 @@ The real-time engine (`spatial_engine/realtimeEngine/`) performs live spatial au
 
 The engine follows a sequential agent architecture where each agent handles one stage of the audio processing chain. All agents share `RealtimeConfig` and `EngineState` structs defined in `RealtimeTypes.hpp`.
 
-| Phase | Agent                         | Status      | File                       |
-| ----- | ----------------------------- | ----------- | -------------------------- |
-| 1     | **Backend Adapter** (Agent 8) | ✅ Complete | `RealtimeBackend.hpp`      |
-| 2     | **Streaming** (Agent 1)       | ✅ Complete | `Streaming.hpp`            |
-| 3     | **Pose** (Agent 2)            | ✅ Complete | `Pose.hpp`                 |
-| 4     | **Spatializer** (Agent 3)     | ✅ Complete | `Spatializer.hpp`          |
-| —     | **ADM Direct Streaming**      | ✅ Complete | `MultichannelReader.hpp`   |
-| 5     | LFE Router (Agent 4)          | ⏭️ Skipped  | — (handled in Spatializer) |
-| 6     | Compensation Agent (Agent 5)  | Not started | —                          |
-| 7     | Output Remap (Agent 6)        | Not started | —                          |
-| 8     | Transport Agent (Agent 7)     | Not started | —                          |
-| 9     | Control Surface (Agent 9)     | Not started | —                          |
+| Phase | Agent                         | Status      | File                                                   |
+| ----- | ----------------------------- | ----------- | ------------------------------------------------------ |
+| 1     | **Backend Adapter** (Agent 8) | ✅ Complete | `RealtimeBackend.hpp`                                  |
+| 2     | **Streaming** (Agent 1)       | ✅ Complete | `Streaming.hpp`                                        |
+| 3     | **Pose** (Agent 2)            | ✅ Complete | `Pose.hpp`                                             |
+| 4     | **Spatializer** (Agent 3)     | ✅ Complete | `Spatializer.hpp`                                      |
+| —     | **ADM Direct Streaming**      | ✅ Complete | `MultichannelReader.hpp`                               |
+| 5     | LFE Router (Agent 4)          | ⏭️ Skipped  | — (handled in Spatializer)                             |
+| 6     | **Compensation and Gain**     | ✅ Complete | `main.cpp` + `RealtimeTypes.hpp`                       |
+| 7     | **Output Remap**              | ✅ Complete | `OutputRemap.hpp`                                      |
+| 8     | **Threading and Safety**      | ✅ Complete | `RealtimeTypes.hpp` (audit + docs)                     |
+| 9     | **Init / Config update**      | ✅ Complete | `init.sh`, `src/config/`                               |
+| 10    | **GUI Agent (Phase 10)**      | ✅ Complete | `gui/realtimeGUI/` + `realtimeMain.py`                 |
+| 10.1  | **OSC Timing Fix**            | ✅ Complete | `realtime_runner.py` (sentinel probe + `flush_to_osc`) |
 
 ### Key Files
 
-- **`RealtimeTypes.hpp`** — Shared data types: `RealtimeConfig` (sample rate, buffer size, layout-derived output channels, paths including `admFile` for ADM direct streaming, atomic gain/playing/shouldExit), `EngineState` (atomic frame counter, playback time, CPU load, source/speaker counts). Output channel count is computed from the speaker layout by `Spatializer::init()` — not user-specified.
+- **`RealtimeTypes.hpp`** — Shared data types: `RealtimeConfig` (sample rate, buffer size, layout-derived output channels, paths including `admFile` for ADM direct streaming, atomics: `masterGain`, `dbapFocus`, `loudspeakerMix`, `subMix`, `focusAutoCompensation`, `paused`, `playing`, `shouldExit`), `EngineState` (atomic frame counter, playback time, CPU load, source/speaker counts). Output channel count is computed from the speaker layout by `Spatializer::init()` — not user-specified. **Phase 8:** full threading model documented inline (3-thread table, memory-order table, 6 invariants). **Phase 10:** added `std::atomic<bool> paused{false}` with threading doc comment.
 
-- **`RealtimeBackend.hpp`** — Agent 8. Wraps AlloLib's `AudioIO` for audio I/O. Registers a static callback that dispatches to `processBlock()`. Phase 4: zeroes all output channels, calls Pose to compute positions, calls Spatializer to render DBAP-panned audio into all speaker channels including LFE routing to subwoofers.
+- **`RealtimeBackend.hpp`** — Agent 8. Wraps AlloLib's `AudioIO` for audio I/O. Registers a static callback that dispatches to `processBlock()`. Phase 4: zeroes all output channels, calls Pose to compute positions, calls Spatializer to render DBAP-panned audio into all speaker channels including LFE routing to subwoofers. **Phase 10:** pause guard added at the top of `processBlock()` — relaxed load of `config.paused`, zero all output channels + early return (RT-safe, no locks).
 
 - **`Streaming.hpp`** — Agent 1. Double-buffered disk streaming for audio sources. Supports two input modes: (1) **mono file mode** — each source opens its own mono WAV file (for LUSID packages via `--sources`), and (2) **ADM direct streaming mode** — a shared `MultichannelReader` opens one multichannel ADM WAV file, reads interleaved chunks, and de-interleaves individual channels into per-source buffers (for ADM sources via `--adm`, skipping stem splitting). In both modes, each source gets two pre-allocated 5-second buffers (240k frames at 48kHz). A background loader thread monitors consumption and preloads the next chunk into the inactive buffer when the active buffer is 50% consumed. The audio callback reads from buffers using atomic state flags — no locks on the audio thread. Key methods: `loadScene()` (mono mode), `loadSceneFromADM()` (multichannel mode), `loaderWorkerMono()`, `loaderWorkerMultichannel()`.
 
@@ -878,9 +880,43 @@ The engine follows a sequential agent architecture where each agent handles one 
 
 - **`Spatializer.hpp`** — Agent 3. DBAP spatial audio panning. Builds `al::Speakers` from the speaker layout (radians → degrees, consecutive 0-based channels), computes `outputChannels` from the layout (`max(numSpeakers-1, max(subDeviceChannels)) + 1` — same formula as offline renderer), creates `al::Dbap` with configurable focus. At each audio block: spatializes non-LFE sources via `renderBuffer()` into an internal render buffer, routes LFE sources directly to subwoofer channels with `masterGain * 0.95 / numSubwoofers` compensation, then copies the render buffer to the real AudioIO output. The copy step is the future insertion point for Channel Remap (mapping logical render channels to physical device outputs). Nothing is hardcoded to any specific speaker layout. All math adapted from `SpatialRenderer.cpp` with provenance comments.
 
-- **`main.cpp`** — CLI entry point. Parses arguments (`--layout`, `--scene`, `--sources` or `--adm`, `--samplerate`, `--buffersize`, `--gain`), loads LUSID scene via `JSONLoader`, loads speaker layout via `LayoutLoader`, creates Streaming (opens source WAVs — either individual mono files via `--sources` or one multichannel ADM via `--adm`), creates Pose (analyzes layout, stores keyframes), creates Spatializer (builds speakers, computes output channels from layout, creates DBAP), creates RealtimeBackend (opens AudioIO with layout-derived channel count), wires all agents together, starts audio, runs monitoring loop, handles SIGINT for clean shutdown. `--sources` and `--adm` are mutually exclusive; no `--channels` flag — channel count is always derived from the layout.
+- **`main.cpp`** — CLI entry point. Parses arguments (`--layout`, `--scene`, `--sources` or `--adm`, `--samplerate`, `--buffersize`, `--gain`, `--osc_port`, `--focus`, `--remap`), loads LUSID scene via `JSONLoader`, loads speaker layout via `LayoutLoader`, creates Streaming (opens source WAVs — either individual mono files via `--sources` or one multichannel ADM via `--adm`), creates Pose (analyzes layout, stores keyframes), creates Spatializer (builds speakers, computes output channels from layout, creates DBAP), creates RealtimeBackend (opens AudioIO with layout-derived channel count), wires all agents together. **Phase 10:** creates 6 `al::Parameter`/`al::ParameterBool` objects (`gain`, `focus`, `speaker_mix_db`, `sub_mix_db`, `auto_comp`, `paused`) seeded from CLI defaults; starts `al::ParameterServer` on `127.0.0.1:oscPort`; registers change callbacks (relaxed atomic stores to `RealtimeConfig`); `pendingAutoComp` flag consumed in main monitoring loop; prints sentinel `"[Main] ParameterServer listening on 127.0.0.1:<port>"` once server is confirmed up; calls `paramServer.stopServer()` first in shutdown. `--sources` and `--adm` are mutually exclusive; no `--channels` flag — channel count always derived from the layout.
 
-- **`runRealtime.py`** — Python launcher that mirrors `runPipeline.py`. Accepts the same inputs: ADM WAV file or LUSID package directory + speaker layout. For ADM sources, runs preprocessing (extract ADM metadata → parse to LUSID scene → write scene.lusid.json only — **no stem splitting**) then launches the C++ engine with `--adm` pointing to the original multichannel WAV. For LUSID packages, validates the package and launches with `--sources` pointing to the mono files folder. Provides `run_realtime_from_ADM()` and `run_realtime_from_LUSID()` entry points. Uses `checkSourceType()` to detect input type from CLI. No `--channels` parameter — channel count derived from speaker layout by the C++ engine.
+- **`runRealtime.py`** — Python launcher that mirrors `runPipeline.py`. Accepts the same inputs: ADM WAV file or LUSID package directory + speaker layout. For ADM sources, runs preprocessing (extract ADM metadata → parse to LUSID scene → write scene.lusid.json only — **no stem splitting**) then launches the C++ engine with `--adm` pointing to the original multichannel WAV. For LUSID packages, validates the package and launches with `--sources` pointing to the mono files folder. Provides `run_realtime_from_ADM()` and `run_realtime_from_LUSID()` entry points. Uses `checkSourceType()` to detect input type from CLI. **Phase 10:** added `--osc_port` (default 9009) and `--remap` passthrough to the C++ engine command; both threaded through all three call sites (`_launch_realtime_engine`, `run_realtime_from_ADM`, `run_realtime_from_LUSID`) and CLI parsing. No `--channels` parameter — channel count derived from speaker layout by the C++ engine.
+
+### OSC Runtime Control Plane (Phase 10)
+
+The C++ engine exposes 6 live-controllable parameters via `al::ParameterServer` (AlloLib OSC server, `127.0.0.1:9009`). The Python GUI sends `python-osc` UDP messages; callbacks run on the ParameterServer listener thread and write only to `std::atomic` fields (relaxed order).
+
+#### Parameter table
+
+| Parameter      | OSC address                | C++ type            | Range     | Default | Config field              |
+| -------------- | -------------------------- | ------------------- | --------- | ------- | ------------------------- |
+| Master Gain    | `/realtime/gain`           | `al::Parameter`     | 0.0 – 1.0 | 0.5     | `masterGain`              |
+| DBAP Focus     | `/realtime/focus`          | `al::Parameter`     | 0.2 – 5.0 | 1.5     | `dbapFocus`               |
+| Speaker Mix dB | `/realtime/speaker_mix_db` | `al::Parameter`     | -10 – +10 | 0.0     | `loudspeakerMix` (linear) |
+| Sub Mix dB     | `/realtime/sub_mix_db`     | `al::Parameter`     | -10 – +10 | 0.0     | `subMix` (linear)         |
+| Auto-Comp      | `/realtime/auto_comp`      | `al::ParameterBool` | 0 / 1     | 0       | `focusAutoCompensation`   |
+| Pause/Play     | `/realtime/paused`         | `al::ParameterBool` | 0 / 1     | 0       | `paused`                  |
+
+#### GUI state machine & OSC delivery timing
+
+The GUI runner (`RealtimeRunner`) has 6 states. OSC sends are only allowed in `RUNNING` and `PAUSED`:
+
+| State       | OSC sends | Transition trigger                            |
+| ----------- | --------- | --------------------------------------------- |
+| `IDLE`      | ✗         | Initial                                       |
+| `LAUNCHING` | ✗         | `QProcess::started`                           |
+| `RUNNING`   | ✓         | Stdout sentinel `"ParameterServer listening"` |
+| `PAUSED`    | ✓         | Pause button                                  |
+| `EXITED`    | ✗         | Process exit code 0 / SIGINT                  |
+| `ERROR`     | ✗         | Non-zero exit                                 |
+
+**Key design:** `_on_started` keeps the runner in `LAUNCHING` (not `RUNNING`). `_on_stdout` scans every line for the sentinel printed by `main.cpp` after `paramServer.serverRunning()` succeeds. This prevents silent UDP packet loss during the engine's startup loading phase (scene parse, WAV open, binary load — can take several seconds).
+
+On sentinel match → `engine_ready` signal → `controls_panel.flush_to_osc()` pushes all 5 current slider/toggle values immediately.
+
+**Full reference:** `internalDocsMD/realtime_planning/agentDocs/allolib_parameters_reference.md` · `agent_threading_and_safety.md §OSC Runtime Parameter Delivery`
 
 ### Build System
 
@@ -929,34 +965,55 @@ Output channels are derived from the speaker layout automatically (e.g., 56 for 
 
 ---
 
+### ✅ Phase 10 — Realtime GUI (PySide6) — COMPLETE (Feb 26 2026)
 
+**Entry point:** `python realtimeMain.py` (project root)
 
-### CURRENT TASK (2026-02-26): Phase 10 — Realtime GUI Prototype (PySide6)
+**What was built:**
 
-**Goal:** ship a minimal-but-real realtime controller UI without bloating the existing offline GUI.
+| File                                                        | Purpose                                                                                          |
+| ----------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| `realtimeMain.py`                                           | Project-root launcher — loads `gui/styles.qss`, creates `RealtimeWindow`, runs `QApplication`    |
+| `gui/realtimeGUI/__init__.py`                               | Package marker                                                                                   |
+| `gui/realtimeGUI/realtimeGUI.py`                            | `RealtimeWindow(QMainWindow)` — assembles 4 panels, wires all runner signals                     |
+| `gui/realtimeGUI/realtime_runner.py`                        | `RealtimeConfig`, `RealtimeRunnerState`, `DebouncedOSCSender`, `RealtimeRunner` (QProcess + OSC) |
+| `gui/realtimeGUI/realtime_panels/__init__.py`               | Package marker                                                                                   |
+| `gui/realtimeGUI/realtime_panels/RealtimeInputPanel.py`     | Source / layout / remap / buffer / scan inputs                                                   |
+| `gui/realtimeGUI/realtime_panels/RealtimeTransportPanel.py` | Start / Stop / Kill / Restart / Pause / Play + status pill                                       |
+| `gui/realtimeGUI/realtime_panels/RealtimeControlsPanel.py`  | Live OSC sliders + auto-comp toggle + `flush_to_osc()`                                           |
+| `gui/realtimeGUI/realtime_panels/RealtimeLogPanel.py`       | Stdout/stderr console, 2000-line cap, auto-scroll                                                |
 
-**Implementation decisions (authoritative):**
-- Keep existing offline GUI untouched; create a **new entry point**: `gui/realtimeGUI/realtimeGUI.py` (and optionally a `gui/realtimeGUI/` folder tree).
-- Launch realtime playback via `QProcess` calling `runRealtime.py` (same pattern as offline `pipeline_runner.py`).
-- Add Transport: **Play / Pause / Stop / Restart** (Pause requires engine support).
-- Expose runtime controls:
-  - `masterGain` (0..1)
-  - `dbapFocus` (0.2..5)
-  - `loudspeakerMix_db` (-10..+10)
-  - `subMix_db` (-10..+10)
-  - `auto_compensation` toggle
-- Expose launch-time controls:
-  - source (ADM WAV or LUSID package dir), layout JSON, buffer size, optional remap CSV, optional `scan_audio`.
+**Runtime controls exposed (all via OSC to `al::ParameterServer` port 9009):**
 
-**Runtime control plane (do NOT invent a one-off protocol):**
-- Prefer AlloLib **`al::Parameter` + `ParameterBundle` + `ParameterServer` (OSC)** for all runtime controls.
-- GUI sends OSC parameter updates to the engine; engine reads params RT-safely (audio thread reads; heavy work in main/control thread).
+| Control        | OSC address                | Range     | Default |
+| -------------- | -------------------------- | --------- | ------- |
+| Master Gain    | `/realtime/gain`           | 0.0 – 1.0 | 0.5     |
+| DBAP Focus     | `/realtime/focus`          | 0.2 – 5.0 | 1.5     |
+| Speaker Mix dB | `/realtime/speaker_mix_db` | -10 – +10 | 0.0     |
+| Sub Mix dB     | `/realtime/sub_mix_db`     | -10 – +10 | 0.0     |
+| Auto-Comp      | `/realtime/auto_comp`      | 0 / 1     | 0       |
+| Pause/Play     | `/realtime/paused`         | 0 / 1     | 0       |
 
-**Reference spec:** `agent_gui_UPDATED_v2.md` (Phase 10 GUI requirements and testing checklist).  
+**OSC timing fix (Phase 10.1, Feb 26 2026):**
 
-### CRUCIAL NEXT MILESTONE (post-prototype): Pipeline Refactor Plan (C++-first realtime)
+`_on_started` (QProcess `started` signal) fires when `runRealtime.py` spawns — not when `al::ParameterServer` binds its UDP socket. Runner stays in `LAUNCHING` (OSC blocked) until `_on_stdout` detects the sentinel line:
+
+```
+[Main] ParameterServer listening on 127.0.0.1:<port>
+```
+
+On sentinel match → state transitions to `RUNNING` → `engine_ready` signal → `controls_panel.flush_to_osc()` pushes all current GUI values to the engine. Full details: `agent_threading_and_safety.md §OSC Runtime Parameter Delivery`.
+
+### CURRENT: Phase 11 — Polish Tasks
+
+- Default source folder for audio: `sourceData/`
+- Default speaker layout dropdown selections: TransLAB and AlloSphere (based on offline GUI implementation)
+- Update main project README
+
+### CRUCIAL NEXT MILESTONE: Pipeline Refactor (C++-first realtime)
 
 After the realtime GUI prototype is working:
+
 - Make the **C++ realtime executable** the canonical launcher (Python becomes optional wrapper / tooling).
 - Keep Python only for **offline/prep utilities** (LUSID transcoding, batch tooling) until a C/C++ rewrite is justified.
 - Maintain a stable “control plane contract” (parameter names + ranges) so GUIs (Python now, possible C++/Qt later) don’t get rewritten.
@@ -973,11 +1030,18 @@ sonoPleth/
 ├── runPipeline.py                   # Main CLI entry point
 ├── runGUI.py                        # Jupyter notebook GUI (DEPRECATED)
 ├── README.md                        # User documentation
+├── realtimeMain.py                      # NEW: Realtime GUI entry point (python realtimeMain.py)
 ├── gui/                             # PySide6 desktop GUI (primary UI)
-│   ├── realtimeGUI/                # NEW: dedicated realtime UI (Phase 10)
-│   │   ├── realtimeGUI.py           # NEW entry point (parallel to gui/main.py)
-│   │   ├── realtime_runner.py       # QProcess wrapper for runRealtime.py + OSC/Parameter control
-│   │   └── realtime_panels/         # Optional: modular panels (Input/Controls/Transport/Logs)
+│   ├── realtimeGUI/                # Realtime GUI (Phase 10) ✅
+│   │   ├── __init__.py              # Package marker
+│   │   ├── realtimeGUI.py           # RealtimeWindow — assembles 4 panels
+│   │   ├── realtime_runner.py       # RealtimeRunner (QProcess + OSC), DebouncedOSCSender, state machine
+│   │   └── realtime_panels/
+│   │       ├── __init__.py
+│   │       ├── RealtimeInputPanel.py      # Source / layout / remap / buffer / scan
+│   │       ├── RealtimeTransportPanel.py  # Start/Stop/Kill/Restart/Pause/Play
+│   │       ├── RealtimeControlsPanel.py   # Live OSC sliders + flush_to_osc()
+│   │       └── RealtimeLogPanel.py        # Stdout/stderr console (2000-line cap)
 │   ├── main.py                      # App entry: MainWindow, QSS loader
 │   ├── styles.qss                   # Qt stylesheet (light mode)
 │   ├── background.py                # Radial geometry + lens focal point
@@ -1055,17 +1119,18 @@ sonoPleth/
 │   ├── spatialRender/
 │   │   ├── CMakeLists.txt           # CMake config
 │   │   └── build/                   # Build output dir
-│   └── realtimeEngine/              # Real-time spatial audio engine
+│   └── realtimeEngine/              # Real-time spatial audio engine ✅ ALL PHASES COMPLETE
 │       ├── CMakeLists.txt           # Build config (links AlloLib + Gamma)
 │       ├── build/                   # Build output dir
 │       └── src/
-│           ├── main.cpp                # CLI entry point (--sources or --adm)
-│           ├── RealtimeTypes.hpp       # Shared data types (config, state)
-│           ├── RealtimeBackend.hpp     # Agent 8: AlloLib AudioIO wrapper
+│           ├── main.cpp                # CLI entry + ParameterServer (Phase 10)
+│           ├── RealtimeTypes.hpp       # Shared data types + threading model (Phase 8)
+│           ├── RealtimeBackend.hpp     # Agent 8: AudioIO wrapper + pause guard (Phase 10)
 │           ├── Streaming.hpp           # Agent 1: double-buffered WAV streaming
 │           ├── MultichannelReader.hpp  # ADM direct streaming (de-interleave)
 │           ├── Pose.hpp                # Agent 2: source position interpolation
-│           └── Spatializer.hpp         # Agent 3: DBAP spatial panning
+│           ├── Spatializer.hpp         # Agent 3: DBAP spatial panning + gains (Phase 6)
+│           └── OutputRemap.hpp         # Agent 7: physical channel remap from CSV
 ├── thirdparty/
 │   └── allolib/                     # Git submodule (audio lib)
 ├── processedData/                   # Pipeline outputs
@@ -1399,15 +1464,16 @@ python LUSID/tests/benchmark_xml_parsers.py
 ### High Priority
 
 #### Realtime GUI Prototype (Phase 10 — current)
+
 - Build `gui/realtimeGUI/realtimeGUI.py` + `RealtimeRunner` (QProcess → `runRealtime.py`).
 - Implement **Play/Pause/Restart** controls (Pause requires engine support).
 - Implement runtime control plane using **AlloLib Parameters + ParameterServer (OSC)**.
 
 #### Pipeline Refactor (next major task after prototype)
+
 - Promote C++ realtime executable to the canonical entrypoint.
 - Keep Python in the short term for LUSID transcoding + file prep; consider C/C++ rewrite later.
 - Preserve parameter/control contract so UI doesn’t get thrown away.
-
 
 #### LUSID Integration Tasks
 
@@ -1711,7 +1777,6 @@ For questions or contributions, open an issue or PR on GitHub.
 ---
 
 **End of Agent Context Document**
-
 
 **OSC port policy:** use a **fixed localhost port (9009)** for the engine `ParameterServer`.
 This is simplest for the prototype, but may conflict if multiple instances run or the port is occupied.
