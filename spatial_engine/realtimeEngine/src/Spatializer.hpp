@@ -229,9 +229,9 @@ public:
                   << ", max sub ch: " << maxChannel << ")." << std::endl;
 
         // ── Create DBAP panner ───────────────────────────────────────────
-        mDBap = std::make_unique<al::Dbap>(mSpeakers, mConfig.dbapFocus);
+        mDBap = std::make_unique<al::Dbap>(mSpeakers, mConfig.dbapFocus.load());
         std::cout << "[Spatializer] DBAP initialized (focus="
-                  << mConfig.dbapFocus << ")." << std::endl;
+                  << mConfig.dbapFocus.load() << ")." << std::endl;
 
         // ── Pre-allocate per-source mono buffer ──────────────────────────
         mSourceBuffer.resize(mConfig.bufferSize, 0.0f);
@@ -527,7 +527,7 @@ public:
         compensation = std::max(0.316f, std::min(3.162f, compensation));
 
         std::cout << "[Spatializer] Focus auto-compensation: focus="
-                  << mConfig.dbapFocus
+                  << mConfig.dbapFocus.load()
                   << " → loudspeakerMix=" << compensation
                   << " (" << (20.0f * std::log10(compensation)) << " dB)" << std::endl;
 

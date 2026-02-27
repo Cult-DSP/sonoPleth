@@ -150,11 +150,11 @@ An earlier implementation wrote `mSmooth.smoothed.*` back into the `mConfig` ato
 
 **Fix:** introduced `ControlsSnapshot` (a plain struct defined in `Spatializer.hpp`) and changed `renderBlock()` to accept `const ControlsSnapshot& ctrl`. The audio thread now has a strict ownership model:
 
-| Role                    | `mConfig` atomics                              | `mSmooth.smoothed`                             |
-| ----------------------- | ---------------------------------------------- | ---------------------------------------------- |
-| **Written by**          | OSC listener thread only                       | Audio thread only                              |
-| **Read by**             | Audio thread (Step A snapshot, once per block) | Audio thread (Step 7, into `ControlsSnapshot`) |
-| **Never written by**    | Audio thread                                   | OSC thread                                     |
+| Role                 | `mConfig` atomics                              | `mSmooth.smoothed`                             |
+| -------------------- | ---------------------------------------------- | ---------------------------------------------- |
+| **Written by**       | OSC listener thread only                       | Audio thread only                              |
+| **Read by**          | Audio thread (Step A snapshot, once per block) | Audio thread (Step 7, into `ControlsSnapshot`) |
+| **Never written by** | Audio thread                                   | OSC thread                                     |
 
 `Spatializer::renderBlock()` reads **only** from `ctrl` for `masterGain`, `focus`, `loudspeakerMix`, and `subMix`. It calls `mDBap->setFocus(ctrl.focus)` at the top of each block — also fixed here (previously `mDBap->mFocus` was baked at `init()` and never updated at runtime).
 
@@ -162,11 +162,11 @@ An earlier implementation wrote `mSmooth.smoothed.*` back into the `mConfig` ato
 
 Gain range changed from `[0.0, 1.0]` to `[0.1, 3.0]`, default remains `0.5`.
 
-| Location                              | Before           | After            |
-| ------------------------------------- | ---------------- | ---------------- |
-| `main.cpp` `gainParam` min/max        | `0.0f – 1.0f`   | `0.1f – 3.0f`   |
-| `runRealtime.py` validation guard     | `0.0 ≤ gain ≤ 1.0` | `0.1 ≤ gain ≤ 3.0` |
-| `RealtimeControlsPanel.py` row range  | `0.0–1.0, step 0.01` | `0.1–3.0, step 0.05` |
+| Location                             | Before               | After                |
+| ------------------------------------ | -------------------- | -------------------- |
+| `main.cpp` `gainParam` min/max       | `0.0f – 1.0f`        | `0.1f – 3.0f`        |
+| `runRealtime.py` validation guard    | `0.0 ≤ gain ≤ 1.0`   | `0.1 ≤ gain ≤ 3.0`   |
+| `RealtimeControlsPanel.py` row range | `0.0–1.0, step 0.01` | `0.1–3.0, step 0.05` |
 
 #### Threading notes
 

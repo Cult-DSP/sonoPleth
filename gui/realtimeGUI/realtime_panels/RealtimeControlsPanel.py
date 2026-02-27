@@ -2,14 +2,15 @@
 RealtimeControlsPanel.py — Live runtime parameter sliders.
 
 Five controls, all sent via OSC to al::ParameterServer (port 9009):
-  - Master Gain      /realtime/gain           0.1 – 3.0    default 0.5
-  - DBAP Focus       /realtime/focus          0.2 – 5.0    default 1.5
-  - Speaker Mix dB   /realtime/speaker_mix_db -10 – +10    default 0.0
-  - Sub Mix dB       /realtime/sub_mix_db     -10 – +10    default 0.0
-  - Auto Comp        /realtime/auto_comp      bool         default OFF
+  - Master Gain      /realtime/gain             0.1 – 3.0    default 0.5
+  - DBAP Focus       /realtime/focus            0.2 – 5.0    default 1.5
+  - Speaker Mix dB   /realtime/speaker_mix_db   -10 – +10    default 0.0
+  - Sub Mix dB       /realtime/sub_mix_db       -10 – +10    default 0.0
+  - Auto Comp        /realtime/auto_comp        bool         default OFF
+  - Elevation Mode   /realtime/elevation_mode   0/1/2        default 0
 
 Sliders emit schedule_osc (40 ms debounce).
-Checkbox and spinbox changes emit send_osc (immediate).
+Checkbox, spinbox, and combobox changes emit send_osc (immediate).
 
 All controls disabled while Idle / Launching / Exited.
 Calling reset_to_defaults() restores values without firing OSC.
@@ -24,6 +25,7 @@ from typing import Callable, Optional
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
+    QComboBox,
     QDoubleSpinBox,
     QFrame,
     QHBoxLayout,
@@ -49,7 +51,15 @@ DEFAULTS = {
     "speaker_mix_db": 0.0,
     "sub_mix_db":     0.0,
     "auto_comp":      False,
+    "elevation_mode": 0,   # 0=RescaleAtmosUp, 1=RescaleFullSphere, 2=Clamp
 }
+
+# Elevation mode names — index must match C++ ElevationMode enum values
+ELEVATION_MODE_NAMES = [
+    "Rescale Atmos Up (0°–90°)",    # 0 = RescaleAtmosUp  (default)
+    "Rescale Full Sphere (±90°)",   # 1 = RescaleFullSphere
+    "Clamp to Layout",              # 2 = Clamp
+]
 
 
 class _ParamRow(QWidget):
@@ -180,6 +190,9 @@ class RealtimeControlsPanel(QWidget):
         self._auto_comp_check.blockSignals(True)
         self._auto_comp_check.setChecked(DEFAULTS["auto_comp"])
         self._auto_comp_check.blockSignals(False)
+        self._elev_mode_combo.blockSignals(True)
+        self._elev_mode_combo.setCurrentIndex(DEFAULTS["elevation_mode"])
+        self._elev_mode_combo.blockSignals(False)
 
     def flush_to_osc(self) -> None:
         """
@@ -196,6 +209,10 @@ class RealtimeControlsPanel(QWidget):
         self.osc_immediate.emit(
             "/realtime/auto_comp",
             1.0 if self._auto_comp_check.isChecked() else 0.0,
+        )
+        self.osc_immediate.emit(
+            "/realtime/elevation_mode",
+            float(self._elev_mode_combo.currentIndex()),
         )
 
     def update_state(self, state_name: str) -> None:
@@ -236,6 +253,22 @@ class RealtimeControlsPanel(QWidget):
         self._auto_comp_check.setChecked(DEFAULTS["auto_comp"])
         layout.addWidget(self._auto_comp_check)
 
+        # Vertical rescaling mode selector
+        elev_row = QWidget()
+        elev_layout = QHBoxLayout(elev_row)
+        elev_layout.setContentsMargins(0, 0, 0, 0)
+        elev_layout.setSpacing(10)
+        elev_lbl = QLabel("Elevation Mode")
+        elev_lbl.setFixedWidth(150)
+        elev_lbl.setObjectName("Muted")
+        elev_layout.addWidget(elev_lbl)
+        self._elev_mode_combo = QComboBox()
+        for name in ELEVATION_MODE_NAMES:
+            self._elev_mode_combo.addItem(name)
+        self._elev_mode_combo.setCurrentIndex(DEFAULTS["elevation_mode"])
+        elev_layout.addWidget(self._elev_mode_combo, stretch=1)
+        layout.addWidget(elev_row)
+
         root.addWidget(card)
 
         # Wire OSC signals
@@ -263,8 +296,13 @@ class RealtimeControlsPanel(QWidget):
             lambda s: self.osc_immediate.emit(
                 "/realtime/auto_comp", 1.0 if s else 0.0))
 
+        self._elev_mode_combo.currentIndexChanged.connect(
+            lambda idx: self.osc_immediate.emit(
+                "/realtime/elevation_mode", float(idx)))
+
     def _set_all_enabled(self, enabled: bool) -> None:
         for row in (self._gain_row, self._focus_row,
                     self._spk_row, self._sub_row):
             row.set_enabled(enabled)
         self._auto_comp_check.setEnabled(enabled)
+        self._elev_mode_combo.setEnabled(enabled)

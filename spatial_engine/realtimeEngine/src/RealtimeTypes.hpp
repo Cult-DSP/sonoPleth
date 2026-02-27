@@ -36,7 +36,13 @@
 //  │ RealtimeConfig::masterGain  │ relaxed (audio reads; GUI writes — OK  │
 //  │ ::loudspeakerMix, ::subMix  │ because stale value = smooth fade,     │
 //  │                             │ not a data race on non-atomic data)    │
+//  │ ::dbapFocus                 │ relaxed (audio snapshots in step A;    │
+//  │                             │ OSC listener writes — one-block lag    │
+//  │                             │ is inaudible. Was plain float before,  │
+//  │                             │ which was a data race — now fixed.)    │
 //  │ ::focusAutoCompensation     │ relaxed (same reasoning)               │
+//  │ ::elevationMode             │ relaxed (stale-by-one-block is fine;   │
+//  │                             │ mode switch is not sample-accurate)    │
 //  │ ::playing, ::shouldExit     │ relaxed (polling-only, no dep. data)   │
 //  │ ::paused                    │ relaxed (ParameterServer listener       │
 //  │                             │ writes; audio thread polls — one-buffer │
@@ -128,9 +134,11 @@ enum class ElevationMode {
 // ─────────────────────────────────────────────────────────────────────────────
 // RealtimeConfig — Global configuration for the real-time engine
 // ─────────────────────────────────────────────────────────────────────────────
-// Set once at startup, read-only during playback.
-// The audio thread may read any field without synchronization because these
-// don't change after init (except masterGain which is std::atomic).
+// Set once at startup, read-only during playback except for the fields marked
+// std::atomic, which may be written by the OSC listener thread at any time.
+// The audio thread reads all atomics via relaxed loads in processBlock() Step A
+// (snapshot) and in Pose::computePositions() (elevationMode). It NEVER writes
+// back to any of these atomics — those are the exclusive domain of the writers.
 
 struct RealtimeConfig {
     // ── Audio device settings ────────────────────────────────────────────
@@ -150,8 +158,20 @@ struct RealtimeConfig {
     int    outputChannels   = 0;       // Set by Spatializer::init() from layout
 
     // ── Spatializer settings (mirrors offline RenderConfig) ──────────────
-    float  dbapFocus        = 1.0f;    // DBAP focus/rolloff exponent (0.2–5.0)
-    ElevationMode elevationMode = ElevationMode::RescaleAtmosUp;  // Elevation mapping
+    // dbapFocus: atomic<float> so the OSC listener thread can safely write it
+    // while the audio thread snapshots it in processBlock() Step A.
+    // (Was a plain float before — that was a data race, even if benign on
+    // most architectures. Fixed here for correctness.)
+    std::atomic<float> dbapFocus{1.0f};  // DBAP focus/rolloff exponent (0.2–5.0)
+
+    // Elevation rescaling mode — stored as atomic<int> so the OSC listener
+    // thread can safely update it while the audio thread reads it per-block.
+    // Cast to/from ElevationMode using static_cast<ElevationMode>(value).
+    //   0 = RescaleAtmosUp (default)
+    //   1 = RescaleFullSphere
+    //   2 = Clamp
+    std::atomic<int> elevationMode{
+        static_cast<int>(ElevationMode::RescaleAtmosUp)};  // Runtime-switchable
 
     // ── Gain settings ────────────────────────────────────────────────────
     // All gain controls are atomic<float> / atomic<bool> so the GUI/control

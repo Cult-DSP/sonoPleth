@@ -33,7 +33,14 @@
 //
 //  READ-ONLY after loadScene() (safe to read from any thread without sync):
 //    mSources, mSourceOrder, mLayoutRadius, mLayoutMinElRad,
-//    mLayoutMaxElRad, mLayoutIs2D, mConfig, mState
+//    mLayoutMaxElRad, mLayoutIs2D, mState
+//
+//  LIVE ATOMIC (read by audio thread per-block, written by OSC listener):
+//    mConfig.elevationMode — loaded once at the top of computePositions() via
+//      relaxed atomic load. Stale-by-one-block is acceptable: elevation mode
+//      switches are not sample-accurate operations. No other mConfig fields
+//      are read by Pose during playback — the rest of mConfig is read-only
+//      after loadScene() from Pose's perspective.
 //
 //  AUDIO-THREAD-OWNED (must not be read or written from any other thread
 //  while audio is streaming):
@@ -190,7 +197,9 @@ public:
     // REAL-TIME SAFE: no allocation (after first block), no I/O, no locks.
 
     void computePositions(double blockCenterTimeSec) {
-        ElevationMode elMode = mConfig.elevationMode;
+        // Read elevation mode once per block (relaxed — stale-by-one-block is fine).
+        ElevationMode elMode = static_cast<ElevationMode>(
+            mConfig.elevationMode.load(std::memory_order_relaxed));
 
         for (size_t i = 0; i < mSourceOrder.size(); ++i) {
             const std::string& name = mSourceOrder[i];

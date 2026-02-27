@@ -8,6 +8,13 @@
 > GUI Agent fix for "sliders move but values not updated" — see §OSC Runtime
 > Parameter Delivery at the bottom of this file.
 >
+> **Feb 27 2026 addendum: `dbapFocus` race fixed + `elevationMode` runtime switch**
+> `dbapFocus` promoted from plain `float` to `std::atomic<float>` — closes the
+> pre-existing data race documented as Invariant 9. `elevationMode` added as a new
+> runtime-switchable `std::atomic<int>` in `RealtimeConfig`, readable per-block by
+> the audio thread and writable at any time via OSC. See §Elevation Mode Runtime
+> Switch and the updated invariant table below.
+>
 > **What was implemented (Phase 8):**
 >
 > - Canonical threading model documented in `RealtimeTypes.hpp` (3-thread table,
@@ -179,6 +186,10 @@ def flush_to_osc(self) -> None:
     self.osc_immediate.emit("/realtime/sub_mix_db",     self._sub_row.value())
     v = 1.0 if self._auto_comp_check.isChecked() else 0.0
     self.osc_immediate.emit("/realtime/auto_comp", v)
+    self.osc_immediate.emit(
+        "/realtime/elevation_mode",
+        float(self._elev_mode_combo.currentIndex()),
+    )
 ```
 
 This guarantees the engine always starts with the values the user has
@@ -242,7 +253,7 @@ struct ControlSnapshot {
 };
 ```
 
-`masterGain`, `loudspeakerMix`, `subMix`, `focusAutoCompensation`, and `paused` are `std::atomic` and are loaded with `.load()`. `dbapFocus` is a plain `float` (see **Invariant 9** below) and is read directly.
+`masterGain`, `loudspeakerMix`, `subMix`, `focusAutoCompensation`, and `paused` are `std::atomic` and are loaded with `.load()`. `dbapFocus` is also `std::atomic<float>` (promoted from plain `float` on Feb 27 2026 — see §`dbapFocus` data race fix below) and is loaded with `.load(std::memory_order_relaxed)`.
 
 The snapshot values are then stored as `mSmooth.target` for the smoothing step.
 
@@ -295,8 +306,8 @@ Hard-mute pause guard **removed**. Instead, a per-sample linear ramp `mPauseFade
 **Invariant 8 — Single atomic read per block:**  
 The audio callback loads each `std::atomic` control field **at most once** per `processBlock` invocation, storing the result in the local `ControlSnapshot`. No atomic is re-read inside the rendering loops.
 
-**Invariant 9 — `dbapFocus` plain-float data race (accepted, future hardening):**  
-`RealtimeConfig::dbapFocus` is a plain `float` written by the ParameterServer OSC listener thread and read by the audio thread. On the target hardware (x86-64, ARM64) a naturally-aligned `float` load/store is single-instruction and thus de-facto atomic. This is a benign data race per the C++ memory model but is technically UB. Future hardening: change `dbapFocus` to `std::atomic<float>` in `RealtimeTypes.hpp` and load with `.load(std::memory_order_relaxed)`.
+**Invariant 9 — ~~`dbapFocus` plain-float data race (accepted, future hardening)~~ CLOSED (Feb 27 2026):**  
+`RealtimeConfig::dbapFocus` is now `std::atomic<float>`. Previously it was a plain `float` written by the ParameterServer OSC listener thread and read by the audio thread — a data race that was technically UB even though de-facto atomic on x86-64/ARM64. All read sites use `.load(std::memory_order_relaxed)`, all write sites use `.store(v, std::memory_order_relaxed)`. Files updated: `RealtimeTypes.hpp`, `main.cpp` (4 sites), `RealtimeBackend.hpp` (snapshot), `Spatializer.hpp` (`init()` + `computeFocusCompensation()` prints).
 
 **Invariant 10 — `frameCounter` not advanced while fully paused:**  
 When `mPauseFade == 0.0f` and `paused == true`, the block returns after zeroing output without incrementing `frameCounter` or `playbackTimeSec`. Pose interpolation therefore resumes from the exact frame it left off.
@@ -344,10 +355,109 @@ Stack-allocated in `processBlock()`, passed by `const&` to `renderBlock()`. Life
 
 ### Files changed
 
-| File                                                                  | Change                                                                                                                                                      |
-| --------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `spatial_engine/realtimeEngine/src/RealtimeBackend.hpp`               | Full `processBlock` rewrite; `ControlsSnapshot` passed to `renderBlock()`; smoothed values never written back to `mConfig`; `#include <cmath>` added        |
-| `spatial_engine/realtimeEngine/src/Spatializer.hpp`                   | Added `ControlsSnapshot` struct (file-scope); `renderBlock()` takes `const ControlsSnapshot& ctrl`; removed all `mConfig` atomic reads for live params; `mDBap->setFocus(ctrl.focus)` per-block |
-| `spatial_engine/realtimeEngine/src/main.cpp`                          | `gainParam` range `0.0–1.0` → `0.1–3.0`                                                                                                                    |
-| `runRealtime.py`                                                       | Gain validation guard updated to `[0.1, 3.0]`                                                                                                              |
-| `gui/realtimeGUI/realtime_panels/RealtimeControlsPanel.py`            | Master Gain slider range and step updated                                                                                                                   |
+| File                                                       | Change                                                                                                                                                                                          |
+| ---------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `spatial_engine/realtimeEngine/src/RealtimeBackend.hpp`    | Full `processBlock` rewrite; `ControlsSnapshot` passed to `renderBlock()`; smoothed values never written back to `mConfig`; `#include <cmath>` added                                            |
+| `spatial_engine/realtimeEngine/src/Spatializer.hpp`        | Added `ControlsSnapshot` struct (file-scope); `renderBlock()` takes `const ControlsSnapshot& ctrl`; removed all `mConfig` atomic reads for live params; `mDBap->setFocus(ctrl.focus)` per-block |
+| `spatial_engine/realtimeEngine/src/main.cpp`               | `gainParam` range `0.0–1.0` → `0.1–3.0`                                                                                                                                                         |
+| `runRealtime.py`                                           | Gain validation guard updated to `[0.1, 3.0]`                                                                                                                                                   |
+| `gui/realtimeGUI/realtime_panels/RealtimeControlsPanel.py` | Master Gain slider range and step updated                                                                                                                                                       |
+
+---
+
+## `dbapFocus` data race fix + `elevationMode` runtime switch (Feb 27 2026)
+
+> **Status: ✅ Implemented** — Build verified clean (`[100%] Built target sonoPleth_realtime`, zero warnings).
+
+### `dbapFocus` promoted to `std::atomic<float>` (closes Invariant 9)
+
+`RealtimeConfig::dbapFocus` was previously a plain `float`. It was written by the ParameterServer OSC listener thread and read by the audio thread's per-block snapshot in `RealtimeBackend::processBlock()` Step A. This is a data race per the C++ memory model — technically undefined behaviour even though it is de-facto atomic on x86-64 and ARM64 due to single-instruction aligned 4-byte stores.
+
+**Fix:** `dbapFocus` is now `std::atomic<float>`. All read sites use `.load(std::memory_order_relaxed)`. All write sites use `.store(v, std::memory_order_relaxed)`. The relaxed ordering is correct for the same reason as all other live-control atomics: a one-block stale read of a gain/focus value is inaudible and does not constitute a logical data dependency.
+
+| File | Change |
+|---|---|
+| `RealtimeTypes.hpp` | `float dbapFocus` → `std::atomic<float> dbapFocus{1.0f}`; added to memory-ordering table |
+| `main.cpp` | Init: `.store()`; 2× prints: `.load()`; `focusParam` seed: `.load()`; OSC callback: `.store()` |
+| `RealtimeBackend.hpp` | Step A snapshot: `.load(relaxed)`; removed stale "plain float" comment |
+| `Spatializer.hpp` | `init()` and `computeFocusCompensation()` print: `.load()` |
+
+### `elevationMode` — new runtime-switchable atomic
+
+`RealtimeConfig::elevationMode` replaces the previous static `ElevationMode` field (which was only settable at startup via `--elevation_mode` CLI arg and had no OSC path).
+
+**Type:** `std::atomic<int>` storing `static_cast<int>(ElevationMode::*)`.
+
+| Value | `ElevationMode` | Meaning |
+|---|---|---|
+| `0` | `RescaleAtmosUp` | Maps Atmos-style `[0°, +90°]` content into the layout's elevation range. **Default.** |
+| `1` | `RescaleFullSphere` | Maps the full `[-90°, +90°]` sphere into the layout's elevation range. |
+| `2` | `Clamp` | Hard-clips elevation to the layout's min/max bounds. |
+
+These modes are identical to the offline renderer's `SpatialRenderer::sanitizeDirForLayout()`. The realtime engine's `Pose::sanitizeDirForLayout()` uses the same math, ported in `Pose.hpp`.
+
+#### Threading model for `elevationMode`
+
+| Thread | Operation | Ordering |
+|---|---|---|
+| OSC listener (ParameterServer) | `.store(mode, relaxed)` on `/realtime/elevation_mode` change | `relaxed` — no dependent data |
+| Audio thread (`Pose::computePositions`) | `.load(relaxed)` once at top of per-block loop | `relaxed` — stale-by-one-block is acceptable |
+
+**Why relaxed is correct:** An elevation mode switch is not sample-accurate. The audio consequence of applying the switch one block (10–11 ms at 512/48k) later than the OSC message arrived is indistinguishable from applying it at the exact block boundary. No dependent data follows the atomic — the loaded value is used to select a branch in `sanitizeDirForLayout()`, not to order other memory operations.
+
+**Why `elevationMode` is NOT in `ControlsSnapshot` / the smoother:**  
+`ControlsSnapshot` in `RealtimeBackend` exists to smooth continuous float parameters (gain, focus, mix) to eliminate zipper noise. `elevationMode` is a discrete 3-value enum. Smoothing an integer index is meaningless, and the only consumer (`Pose`) reads it directly from the atomic — routing it through the backend snapshot would add indirection for no benefit.
+
+#### OSC address and GUI
+
+| Layer | Detail |
+|---|---|
+| OSC address | `/realtime/elevation_mode` |
+| Value type | `float` carrying integer `0.0`, `1.0`, or `2.0` (standard AlloLib practice — no `al::ParameterInt`) |
+| C++ callback | `elevModeParam.registerChangeCallback([&](float v) { int mode = clamp(round(v), 0, 2); config.elevationMode.store(mode, relaxed); })` |
+| CLI flag | `--elevation_mode <0\|1\|2>` (default `0`) |
+| GUI control | `QComboBox` in `RealtimeControlsPanel`; items: *Rescale Atmos Up (0°–90°)*, *Rescale Full Sphere (±90°)*, *Clamp to Layout* |
+| Flush on ready | Included in `flush_to_osc()` — value pushed to engine when `engine_ready` fires |
+| Disabled when idle | `_elev_mode_combo.setEnabled(enabled)` in `_set_all_enabled()` |
+
+#### Updated `RealtimeTypes.hpp` memory-ordering table entry
+
+```
+│ ::dbapFocus                 │ relaxed (audio snapshots in step A;    │
+│                             │ OSC listener writes — one-block lag    │
+│                             │ is inaudible. Was plain float before,  │
+│                             │ which was a data race — now fixed.)    │
+│ ::elevationMode             │ relaxed (stale-by-one-block is fine;   │
+│                             │ mode switch is not sample-accurate)    │
+```
+
+#### Updated `Pose.hpp` threading section (live atomics note)
+
+`Pose.hpp` previously listed `mConfig` as "read-only after `loadScene()`". This was inaccurate — `mConfig.elevationMode` is now a live atomic. The threading section was updated to:
+
+```
+LIVE ATOMIC (read by audio thread per-block, written by OSC listener):
+  mConfig.elevationMode — loaded once at the top of computePositions() via
+    relaxed atomic load. Stale-by-one-block is acceptable: elevation mode
+    switches are not sample-accurate operations. No other mConfig fields
+    are read by Pose during playback.
+```
+
+### New invariants
+
+**Invariant 14 — `elevationMode` is the only `mConfig` field read by `Pose` during playback:**  
+All other `mConfig` fields accessed by `Pose` (`sampleRate`, `bufferSize`, etc.) are set before `loadScene()` and never change during playback. `elevationMode` is the single exception — it is a live atomic read once per block at the top of `computePositions()`. No other `mConfig` reads occur inside `computePositions()`.
+
+**Invariant 15 — `elevationMode` is never smoothed:**  
+The exponential smoother in `RealtimeBackend` operates only on continuous float parameters (`masterGain`, `focus`, `loudspeakerMix`, `subMix`). `elevationMode` is discrete and is read directly by `Pose` — it must not be added to `ControlSnapshot` or the smoother. An instantaneous enum switch on block boundaries is the correct and intended behaviour.
+
+### Files changed
+
+| File | Change |
+|---|---|
+| `RealtimeTypes.hpp` | `dbapFocus`: `float` → `std::atomic<float>`; `elevationMode`: new `std::atomic<int>{RescaleAtmosUp}`; memory-ordering table updated; struct-level comment updated |
+| `Pose.hpp` | Threading comment: `mConfig` removed from "read-only" list; new "LIVE ATOMIC" section for `elevationMode`; `computePositions()` loads atomic with `relaxed` |
+| `RealtimeBackend.hpp` | Step A snapshot: `dbapFocus` `.load(relaxed)`; `SmoothedState` comment documents why `elevationMode` is excluded |
+| `Spatializer.hpp` | `dbapFocus` reads in `init()` and `computeFocusCompensation()` → `.load()` |
+| `main.cpp` | All `dbapFocus` sites → atomic; `--elevation_mode` CLI flag parsed; `elevModeParam` registered with OSC callback; startup summary prints mode name; `--help` updated |
+| `RealtimeControlsPanel.py` | `QComboBox` with 3 mode labels; `currentIndexChanged` → `/realtime/elevation_mode`; added to `flush_to_osc()`, `reset_to_defaults()`, `_set_all_enabled()` |

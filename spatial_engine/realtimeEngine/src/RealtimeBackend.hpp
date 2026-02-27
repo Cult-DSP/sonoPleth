@@ -246,13 +246,10 @@ private:
         // Nothing below this point in the block should read the config atomics.
         // This keeps the audio thread free of repeated atomic traffic inside the
         // Spatializer / mixing inner loops.
-        // Note: dbapFocus is a plain float written by the ParameterServer listener
-        // thread. We snapshot it here (relaxed read — same "one-buffer lag" contract
-        // as the atomics). The smoothed value is written back before renderBlock.
         {
             ControlSnapshot& t  = mSmooth.target;
             t.masterGain        = mConfig.masterGain.load(std::memory_order_relaxed);
-            t.focus             = mConfig.dbapFocus;  // plain float — snapshot once
+            t.focus             = mConfig.dbapFocus.load(std::memory_order_relaxed);
             t.loudspeakerMix    = mConfig.loudspeakerMix.load(std::memory_order_relaxed);
             t.subMix            = mConfig.subMix.load(std::memory_order_relaxed);
             t.autoComp          = mConfig.focusAutoCompensation.load(std::memory_order_relaxed);
@@ -424,6 +421,12 @@ private:
     // runtime control values. It is passed to renderBlock() via ControlsSnapshot.
     // It is NEVER written back into mConfig atomics — those remain the exclusive
     // domain of the OSC/GUI writer threads.
+    //
+    // NOTE: elevationMode is intentionally NOT in this snapshot. It is a discrete
+    // enum read directly by Pose::computePositions() via its own relaxed atomic
+    // load. Smoothing a discrete enum index makes no sense, and Pose is the only
+    // consumer, so routing it through the backend snapshot would add complexity
+    // for no benefit.
     //
     // tau = 50 ms → α ≈ 0.52 at 512/48k (10.7 ms block) → ~4 blocks to 95%.
     // Audibly this means a slider move smooths over ~200 ms — imperceptible

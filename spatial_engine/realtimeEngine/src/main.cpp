@@ -13,14 +13,17 @@
 //  10. Shuts down cleanly (paramServer → streaming agent → backend)
 //
 // PHASE 10: GUI Agent — adds al::ParameterServer for live OSC control from
-//   the Python GUI (gui/realtimeGUI/). Registers 6 al::Parameter objects:
-//     /realtime/gain           — master gain 0–1
-//     /realtime/focus          — DBAP rolloff exponent 0.2–5.0
-//     /realtime/speaker_mix_db — loudspeaker mix trim in dB (±10)
-//     /realtime/sub_mix_db     — subwoofer mix trim in dB (±10)
-//     /realtime/auto_comp      — focus auto-compensation toggle (bool)
-//     /realtime/paused         — pause/play toggle (bool)
-//   New flags: --osc_port <int> (default 9009), --focus <float> (default 1.5)
+//   the Python GUI (gui/realtimeGUI/). Registers 7 al::Parameter objects:
+//     /realtime/gain             — master gain 0.1–3.0
+//     /realtime/focus            — DBAP rolloff exponent 0.2–5.0
+//     /realtime/speaker_mix_db   — loudspeaker mix trim in dB (±10)
+//     /realtime/sub_mix_db       — subwoofer mix trim in dB (±10)
+//     /realtime/auto_comp        — focus auto-compensation toggle (bool)
+//     /realtime/paused           — pause/play toggle (bool)
+//     /realtime/elevation_mode   — vertical rescaling mode (0=RescaleAtmosUp,
+//                                  1=RescaleFullSphere, 2=Clamp)
+//   New flags: --osc_port <int> (default 9009), --focus <float> (default 1.5),
+//              --elevation_mode <0|1|2> (default 0 = RescaleAtmosUp)
 //   Shutdown order: paramServer.stopServer() BEFORE streaming.shutdown()
 //
 // PHASE 7: Output Remap Agent — adds --remap <csv> flag.
@@ -135,6 +138,10 @@ static void printUsage(const char* progName) {
               << "  --speaker_mix <dB>  Loudspeaker mix trim in dB (±10, default: 0)\n"
               << "  --sub_mix <dB>      Subwoofer mix trim in dB (±10, default: 0)\n"
               << "  --auto_compensation Enable focus auto-compensation (default: off)\n"
+              << "  --elevation_mode <n> Vertical rescaling mode (default: 0):\n"
+              << "                       0 = RescaleAtmosUp   (Atmos [0,+90°] → layout)\n"
+              << "                       1 = RescaleFullSphere ([-90°,+90°] → layout)\n"
+              << "                       2 = Clamp            (hard clip to layout bounds)\n"
               << "  --remap <path>      CSV file mapping internal layout channels to device\n"
               << "                      output channels (default: identity, no remapping)\n"
               << "                      CSV format: 'layout,device' (0-based, headers required)\n"
@@ -184,8 +191,15 @@ int main(int argc, char* argv[]) {
     //       No --channels flag needed.
 
     // Phase 10: focus exponent + OSC port
-    config.dbapFocus = getArgFloat(argc, argv, "--focus", 1.5f);
+    config.dbapFocus.store(getArgFloat(argc, argv, "--focus", 1.5f), std::memory_order_relaxed);
     int oscPort = getArgInt(argc, argv, "--osc_port", 9009);
+
+    // Elevation mode: 0=RescaleAtmosUp (default), 1=RescaleFullSphere, 2=Clamp
+    {
+        int elModeInt = getArgInt(argc, argv, "--elevation_mode", 0);
+        elModeInt = std::max(0, std::min(2, elModeInt));  // clamp to valid range
+        config.elevationMode.store(elModeInt, std::memory_order_relaxed);
+    }
 
     // pendingAutoComp: set by ParameterServer callback (listener thread) when
     // /realtime/auto_comp changes; consumed on the main thread in the monitoring
@@ -233,8 +247,13 @@ int main(int argc, char* argv[]) {
     std::cout << "  Speaker mix:  " << config.loudspeakerMix.load() << " (" << speakerMixDb << " dB)" << std::endl;
     std::cout << "  Sub mix:      " << config.subMix.load() << " (" << subMixDb << " dB)" << std::endl;
     std::cout << "  Auto-comp:    " << (config.focusAutoCompensation.load() ? "enabled" : "disabled") << std::endl;
-    std::cout << "  Focus:        " << config.dbapFocus << std::endl;
+    std::cout << "  Focus:        " << config.dbapFocus.load() << std::endl;
     std::cout << "  OSC port:     " << oscPort << std::endl;
+    {
+        static const char* elModeNames[] = {"RescaleAtmosUp", "RescaleFullSphere", "Clamp"};
+        int em = config.elevationMode.load(std::memory_order_relaxed);
+        std::cout << "  Elevation:    " << elModeNames[em] << " (mode " << em << ")" << std::endl;
+    }
     std::cout << "  (Output channels will be derived from speaker layout)" << std::endl;
     std::cout << std::endl;
 
@@ -312,7 +331,7 @@ int main(int argc, char* argv[]) {
         return 1;
     }
     std::cout << "[Main] Spatializer ready: DBAP with " << spatializer.numSpeakers()
-              << " speakers, focus=" << config.dbapFocus << "." << std::endl;
+              << " speakers, focus=" << config.dbapFocus.load() << "." << std::endl;
     std::cout << "[Main] Output channels (from layout): " << config.outputChannels << std::endl;
 
     // ── Phase 6: Compensation and Gain ───────────────────────────────────
@@ -362,7 +381,7 @@ int main(int argc, char* argv[]) {
     al::Parameter     gainParam     {"gain",           "realtime",
                                      config.masterGain.load(),  0.1f,  3.0f};
     al::Parameter     focusParam    {"focus",          "realtime",
-                                     config.dbapFocus,          0.2f,  5.0f};
+                                     config.dbapFocus.load(),   0.2f,  5.0f};
     al::Parameter     spkMixDbParam {"speaker_mix_db", "realtime",
                                      speakerMixDb,             -10.0f, 10.0f};
     al::Parameter     subMixDbParam {"sub_mix_db",     "realtime",
@@ -370,6 +389,12 @@ int main(int argc, char* argv[]) {
     al::ParameterBool autoCompParam {"auto_comp",      "realtime",
                                      config.focusAutoCompensation.load() ? 1.0f : 0.0f};
     al::ParameterBool pausedParam   {"paused",         "realtime", 0.0f};
+    // elevation_mode: float carrying an integer value 0/1/2 (al::Parameter
+    // doesn't have an int specialization — float is idiomatic in AlloLib OSC).
+    al::Parameter     elevModeParam {"elevation_mode", "realtime",
+                                     static_cast<float>(config.elevationMode.load(
+                                         std::memory_order_relaxed)),
+                                     0.0f, 2.0f};
 
     // Register change callbacks ─────────────────────────────────────────
     // THREADING: All callbacks fire on the ParameterServer listener thread.
@@ -381,7 +406,7 @@ int main(int argc, char* argv[]) {
     });
 
     focusParam.registerChangeCallback([&](float v) {
-        config.dbapFocus = v;          // float — non-atomic, written by listener thread
+        config.dbapFocus.store(v, std::memory_order_relaxed);  // atomic store — no data race
         // Queue recomputation; main thread will call computeFocusCompensation().
         if (config.focusAutoCompensation.load(std::memory_order_relaxed)) {
             pendingAutoComp.store(true, std::memory_order_relaxed);
@@ -414,10 +439,20 @@ int main(int argc, char* argv[]) {
         std::cout << "\n[OSC] paused → " << (p ? "paused" : "playing") << std::flush;
     });
 
+    elevModeParam.registerChangeCallback([&](float v) {
+        int mode = static_cast<int>(std::round(v));
+        mode = std::max(0, std::min(2, mode));   // guard against out-of-range
+        config.elevationMode.store(mode, std::memory_order_relaxed);
+        static const char* names[] = {"RescaleAtmosUp", "RescaleFullSphere", "Clamp"};
+        std::cout << "\n[OSC] elevation_mode → " << names[mode]
+                  << " (" << mode << ")" << std::flush;
+    });
+
     // Start the ParameterServer ─────────────────────────────────────────
     al::ParameterServer paramServer{"127.0.0.1", oscPort};
     paramServer << gainParam << focusParam << spkMixDbParam
-                << subMixDbParam << autoCompParam << pausedParam;
+                << subMixDbParam << autoCompParam << pausedParam
+                << elevModeParam;
 
     if (!paramServer.serverRunning()) {
         std::cerr << "[Main] FATAL: ParameterServer failed to start on port "
