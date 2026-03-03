@@ -124,7 +124,7 @@ Rules:
 
 ### AlloLib Audit & Lightweighting — ✅ COMPLETE (Feb 22, 2026)
 
-> Full details: [`internalDocsMD/allolib-audit.md`](allolib-audit.md)
+> Full details: [`internalDocsMD/Repo_Auditing/allolib-audit.md`](Repo_Auditing/allolib-audit.md)
 
 **Problem:** `thirdparty/allolib` had full git history (1,897 commits). `.git/modules/thirdparty/allolib` = **511 MB**; working tree = 38 MB.
 
@@ -847,7 +847,7 @@ Core dataclasses for LUSID Scene v0.5.2:
 
 The real-time engine (`spatial_engine/realtimeEngine/`) performs live spatial audio rendering. It reads the same LUSID scene files and source WAVs as the offline renderer but streams them through an audio device in real-time instead of rendering to a WAV file.
 
-**Status:** All phases complete (Phases 1–10 + OSC timing fix + Polish tasks). See `internalDocsMD/realtime_planning/agentDocs/realtime_master.md` for full completion logs.
+**Status:** All phases complete (Phases 1–10 + OSC timing fix + Polish tasks). See `internalDocsMD/Realtime_Engine/agentDocs/realtime_master.md` for full completion logs.
 
 ### Architecture — Agent Model
 
@@ -920,7 +920,7 @@ The GUI runner (`RealtimeRunner`) has 6 states. OSC sends are only allowed in `R
 
 On sentinel match → `engine_ready` signal → `controls_panel.flush_to_osc()` pushes all 5 current slider/toggle values immediately.
 
-**Full reference:** `internalDocsMD/realtime_planning/agentDocs/allolib_parameters_reference.md` · `agent_threading_and_safety.md §OSC Runtime Parameter Delivery`
+**Full reference:** `internalDocsMD/Realtime_Engine/agentDocs/allolib_parameters_reference.md` · `agent_threading_and_safety.md §OSC Runtime Parameter Delivery`
 
 ### Build System
 
@@ -1064,13 +1064,25 @@ sonoPleth/
 │       └── effects.py               # Drop shadow helpers
 ├── internalDocsMD/                  # Main project documentation
 │   ├── AGENTS.md                    # THIS FILE
-│   ├── RENDERING.md                 # Spatial renderer docs
 │   ├── TODO.md                      # Task list
-│   ├── json_schema_info.md          # LUSID/layout JSON schemas
-│   ├── dolbyMetadata.md             # Atmos channel labels
-│   ├── 1-27-rendering-dev.md        # VBAP robustness notes (Jan 27)
-│   ├── 1-28-vertical-dev.md         # Multi-spatializer notes (Jan 28)
-│   └── DBAP-Testing.md              # DBAP focus testing (Feb 3)
+│   ├── Dependencies/
+│   │   ├── dolbyMetadata.md             # Atmos channel labels
+│   │   ├── importingLUSIDpackage.md
+│   │   └── json_schema_info.md          # LUSID/layout JSON schemas
+│   ├── OS/
+│   │   └── 2-23-OS-updates.md
+│   ├── Realtime_Engine/
+│   │   ├── realtimeEngine_designDoc.md
+│   │   ├── agentDocs/
+│   │   └── references/
+│   ├── Repo_Auditing/
+│   │   ├── allolib-audit.md
+│   │   └── REPO_CLEANUP_AUDIT.md
+│   └── Spatialization/
+│       ├── 1-27-rendering-dev.md        # VBAP robustness notes (Jan 27)
+│       ├── 1-28-vertical-dev.md         # Multi-spatializer notes (Jan 28)
+│       ├── DBAP-Testing.md              # DBAP focus testing (Feb 3)
+│       └── RENDERING.md                 # Spatial renderer docs
 ├── LUSID/                           # LUSID Scene format library
 │   ├── README.md                    # LUSID user docs
 │   ├── schema/
@@ -1363,7 +1375,7 @@ speaker.azimuth = s.azimuth * 180.0f / M_PI;
 3. **Add CLI flag** in `main.cpp` argument parsing
 4. **Update dispatch** in `renderPerBlock()` to call new panner
 5. \*\*Test with various layouts`
-6. **Document** in `internalDocsMD/RENDERING.md`
+6. **Document** in `internalDocsMD/Spatialization/RENDERING.md`
 
 ### Git Workflow
 
@@ -1668,8 +1680,8 @@ python LUSID/tests/benchmark_xml_parsers.py
 
 ### Documentation
 
-- [RENDERING.md](RENDERING.md) — Spatial renderer comprehensive docs
-- [json_schema_info.md](json_schema_info.md) — LUSID & layout JSON schemas
+- [Spatialization/RENDERING.md](Spatialization/RENDERING.md) — Spatial renderer comprehensive docs
+- [Dependencies/json_schema_info.md](Dependencies/json_schema_info.md) — LUSID & layout JSON schemas
 - [LUSID/internalDocs/AGENTS.md](../LUSID/internalDocs/AGENTS.md) — LUSID-specific agent spec
 - [LUSID/internalDocs/DEVELOPMENT.md](../LUSID/internalDocs/DEVELOPMENT.md) — LUSID dev notes
 - [LUSID/internalDocs/xml_benchmark.md](../LUSID/internalDocs/xml_benchmark.md) — XML parser benchmarks

@@ -100,16 +100,16 @@ This audit identified files and directories that can be safely removed to clean 
 
 #### Files to Review: HUMAN NOTE: LEAVE INTERNAL DOCS
 
-- `internalDocsMD/1-27-rendering-dev.md` - dated development notes
-- `internalDocsMD/1-28-vertical-dev.md` - dated development notes
-- `internalDocsMD/2-23-OS-updates.md` - dated OS-specific notes
-- `internalDocsMD/DBAP-Testing.md` - may be superseded by RENDERING.md
-- `internalDocsMD/dolbyMetadata.md` - may be outdated
-- `internalDocsMD/importingLUSIDpackage.md` - may be outdated
+- `internalDocsMD/Spatialization/1-27-rendering-dev.md` - dated development notes
+- `internalDocsMD/Spatialization/1-28-vertical-dev.md` - dated development notes
+- `internalDocsMD/OS/2-23-OS-updates.md` - dated OS-specific notes
+- `internalDocsMD/Spatialization/DBAP-Testing.md` - may be superseded by RENDERING.md
+- `internalDocsMD/Dependencies/dolbyMetadata.md` - may be outdated
+- `internalDocsMD/Dependencies/importingLUSIDpackage.md` - may be outdated
 
 #### Verification:
 
-- Compare with current `internalDocsMD/RENDERING.md`
+- Compare with current `internalDocsMD/Spatialization/RENDERING.md`
 - Check if information is still relevant to current architecture
 
 ### 6. Development Artifacts (LOW PRIORITY)

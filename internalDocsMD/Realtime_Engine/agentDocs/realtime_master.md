@@ -135,8 +135,8 @@ Based on the architecture's data-flow dependencies, the planned order is:
 
 ### Phase 10 Completion Log (GUI Agent) — ✅ Complete (Feb 26 2026)
 
-**Design doc:** `internalDocsMD/realtime_planning/agentDocs/agent_gui_UPDATED_v3.md`
-**AlloLib IPC reference:** `internalDocsMD/realtime_planning/agentDocs/allolib_parameters_reference.md`
+**Design doc:** `internalDocsMD/Realtime_Engine/agentDocs/agent_gui_UPDATED_v3.md`
+**AlloLib IPC reference:** `internalDocsMD/Realtime_Engine/agentDocs/allolib_parameters_reference.md`
 
 #### Decisions locked
 
@@ -803,8 +803,8 @@ auditable specification of what each thread owns and what the rules are.
 | Processed data (scene JSON, etc.) | `processedData/stageForRender/scene.lusid.json`                                             |
 | ADM extracted metadata            | `processedData/currentMetaData.xml`                                                         |
 | LUSID schema                      | `LUSID/schema/lusid_scene_v0.5.schema.json`                                                 |
-| Design doc (streaming/DBAP)       | `internalDocsMD/realtime_planning/realtimeEngine_designDoc.md`                              |
-| ADM streaming design doc          | `internalDocsMD/realtime_planning/agentDocs/agent_adm_direct_streaming.md`                  |
+| Design doc (streaming/DBAP)       | `internalDocsMD/Realtime_Engine/realtimeEngine_designDoc.md`                                |
+| ADM streaming design doc          | `internalDocsMD/Realtime_Engine/agentDocs/agent_adm_direct_streaming.md`                    |
 
 ### Verified Test Commands (End-to-End)
 
@@ -871,7 +871,7 @@ Below is a summary of each agent in the system and its primary responsibilities:
 - **Backend Adapter Agent:** Abstracts the audio hardware or API (e.g., CoreAudio, ASIO, ALSA, PortAudio). It provides a unified interface for the engine to output audio, handling device initialization, buffer callbacks or threads, and bridging between the engine’s audio buffers and the OS/hardware.
 - **GUI Agent:** Handles the graphical user interface and user interaction. It displays system state (levels, positions, statuses) and allows the user to adjust parameters (e.g., moving sound sources, changing volumes, selecting output device) in a way that’s safe for the real-time engine.
 
-Each agent has its own detailed document (located in `internalDocsMD/realtime_planning/agentDocs/`) describing its role, constraints, and interfaces in depth. Developers responsible for each component should refer to those documents for implementation guidance.
+Each agent has its own detailed document (located in `internalDocsMD/Realtime_Engine/agentDocs/`) describing its role, constraints, and interfaces in depth. Developers responsible for each component should refer to those documents for implementation guidance.
 
 ## Data Flow and Interactions
 

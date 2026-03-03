@@ -177,7 +177,7 @@ This works because both files are at `repo/src/config/configCPP_*.py`.
 - `src/config/configCPP_windows.py` - Full implementation
 - `init.sh` - Updated import path
 - `internalDocsMD/AGENTS.md` - Added OS configuration section
-- `internalDocsMD/2-23-OS-updates.md` - This documentation
+- `internalDocsMD/OS/2-23-OS-updates.md` - This documentation
 
 ## Verification Commands
 

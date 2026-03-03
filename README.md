@@ -106,7 +106,7 @@ python realtimeMain.py --scene processedData/stageForRender/scene.lusid.json --s
 - `--gui` - Launch realtime GUI for parameter control
 - `--osc_port` - OSC port for external control (default: 12345)
 
-See [`internalDocsMD/realtime_planning/realtimeEngine_designDoc.md`](internalDocsMD/realtime_planning/realtimeEngine_designDoc.md) for full documentation.
+See [`internalDocsMD/Realtime_Engine/realtimeEngine_designDoc.md`](internalDocsMD/Realtime_Engine/realtimeEngine_designDoc.md) for full documentation.
 
 ### Run the Desktop GUI
 
@@ -128,7 +128,7 @@ The project supports three spatializers from AlloLib:
 - **VBAP** - Vector Base Amplitude Panning, best for layouts with good 3D coverage
 - **LBAP** - Layer-Based Amplitude Panning, designed for multi-ring layouts
 
-See [`internalDocsMD/RENDERING.md`](internalDocsMD/RENDERING.md) for full documentation.
+See [`internalDocsMD/Spatialization/RENDERING.md`](internalDocsMD/Spatialization/RENDERING.md) for full documentation.
 
 ### Rebuilding the Renderers
 
@@ -193,7 +193,7 @@ The engine uses a sequential agent model with double-buffered streaming, pose in
 | **Localization** | Moderate                  | Precise               | Moderate             |
 | **Best For**     | Unknown/irregular layouts | Dense 3D arrays       | Allosphere, TransLAB |
 
-See [`internalDocsMD/realtime_planning/realtimeEngine_designDoc.md`](internalDocsMD/realtime_planning/realtimeEngine_designDoc.md) for detailed architecture documentation.
+See [`internalDocsMD/Realtime_Engine/realtimeEngine_designDoc.md`](internalDocsMD/Realtime_Engine/realtimeEngine_designDoc.md) for detailed architecture documentation.
 
 ---
 
@@ -374,8 +374,8 @@ Valid values: `"seconds"` (default), `"samples"`, `"milliseconds"`
 
 For detailed documentation, see:
 
-- [RENDERING.md](internalDocsMD/RENDERING.md) - Full rendering documentation
-- [json_schema_info.md](internalDocsMD/json_schema_info.md) - JSON schema reference
+- [Spatialization/RENDERING.md](internalDocsMD/Spatialization/RENDERING.md) - Full rendering documentation
+- [Dependencies/json_schema_info.md](internalDocsMD/Dependencies/json_schema_info.md) - JSON schema reference
 
 ## Testing Files
 
