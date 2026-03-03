@@ -1,6 +1,6 @@
 # sonoPleth — Comprehensive Agent Context
 
-**Last Updated:** February 26, 2026  
+**Last Updated:** March 2, 2026  
 **Project:** sonoPleth - Open Spatial Audio Infrastructure  
 **Lead Developer:** Lucian Parisi
 
@@ -46,7 +46,7 @@ Switching from BWF MetaEdit to embedded EBU parsing submodules (TRACK A — COMP
 Replace the external `bwfmetaedit` dependency with **embedded EBU libraries** while keeping the existing ADM parsing + LUSID conversion behavior unchanged. **Completed.**
 
 - Output: `processedData/currentMetaData.xml` (ADM XML string extracted from WAV via `sonopleth_adm_extract`)
-- Downstream modules unchanged: `src/analyzeADM/parser.py` (lxml) and `LUSID/src/xmlParser.py` continue to operate on the extracted XML file
+- Downstream modules at the time of Track A: `src/analyzeADM/parser.py` (lxml) and `LUSID/src/xmlParser.py` were the active parsers. **Both are now archived** — replaced by `xml_etree_parser.py` (single-step stdlib).
 - This is a **plumbing swap only**. ADM support not broadened in Track A (Track B documented below as future work).
 
 ### Documentation update obligations (MANDATORY)
@@ -270,11 +270,8 @@ ADM BWF WAV File
     │
     ├─► checkAudioChannels.py → containsAudio.json
     │
-    └─► analyzeADM/parser.py (lxml) → Python dicts
-                                        │
-                                        ▼
-                              LUSID/src/xmlParser.py
-                              (ADM dicts → LUSID scene)
+    └─► LUSID/src/xml_etree_parser.py
+        parse_adm_xml_to_lusid_scene() [stdlib, single-step, no lxml]
                                         │
                                         ▼
                       processedData/stageForRender/scene.lusid.json
@@ -299,10 +296,17 @@ The C++ renderer reads LUSID directly — no intermediate format conversion.
 
 ### Recent Architecture Changes (v0.5.2)
 
+**Single-step XML → LUSID pipeline (wired in):**
+
+- `LUSID/src/xml_etree_parser.py` (`parse_adm_xml_to_lusid_scene()`) is now the active parser in the main pipeline
+- `packageForRender.py` calls `xml_etree_parser` directly — no intermediate dicts or lxml dependency
+- `runPipeline.py` and `runGUI.py` use the single-step path
+- The old `analyzeADM/parser.py` (lxml) → `LUSID/src/xmlParser.py` (dict-based) two-step path is archived in `old_XML_parse/`
+
 **Eliminated intermediate JSON files:**
 
 - `objectData.json`, `directSpeakerData.json`, `globalData.json` no longer written to disk
-- Data flows as Python dicts in memory: `parseMetadata()` → `packageForRender()` → `adm_to_lusid_scene()`
+- Data flows directly in memory through the xml_etree_parser
 - Only `containsAudio.json` written to disk (consumed by stem splitter)
 
 **ADM Duration Preservation (v0.5.2):**
@@ -341,7 +345,7 @@ The C++ renderer reads LUSID directly — no intermediate format conversion.
   - `parseMetadata(xmlPath)` → returns dict with `objectData`, `directSpeakerData`, `globalData`
   - `getGlobalData()`, `getDirectSpeakerData()` — extract specific ADM sections
 - **Dependencies**: `lxml` (external)
-- **Status**: Active in main pipeline, but may be replaced by stdlib parser
+- **Status**: **Archived** to `src/analyzeADM/old_XML_parse/` — replaced by `xml_etree_parser.py` single-step path in the active pipeline
 
 #### `src/analyzeADM/checkAudioChannels.py`
 
@@ -383,27 +387,23 @@ Core dataclasses for LUSID Scene v0.5.2:
   - `parse_json(json_str)` → `LusidScene` object
 - **Validation**: Warns on missing fields, invalid values, unknown types (auto-corrects)
 
-#### `LUSID/src/xmlParser.py` — ADM to LUSID Converter
+#### `LUSID/src/xmlParser.py` — ADM to LUSID Converter (Archived)
 
 - **Purpose**: Convert pre-parsed ADM data dicts → LUSID scene
-- **Key Functions**:
+- **Status**: **Archived** to `LUSID/src/old_XML_parse/xmlParser.py` — replaced by `xml_etree_parser.py`
+- **Key Functions (archived)**:
   - `adm_to_lusid_scene(object_data, direct_speaker_data, global_data, contains_audio)` → `LusidScene`
   - `load_processed_data_and_build_scene(processed_dir)` — convenience function
-- **Channel Mapping**:
-  - DirectSpeakers: Channel N → Group N → Node `N.1` (type: `direct_speaker`)
-  - Channel 4 hardcoded as LFE (see `_DEV_LFE_HARDCODED` flag)
-  - Audio Objects: Object N → Group (10+N) → Node `X.1` (type: `audio_object`)
-- **Silent Channel Skipping**: Uses `containsAudio` dict to skip empty channels
 
-#### `LUSID/src/xml_etree_parser.py` — ✨ **NEW** Single-Step XML Parser
+#### `LUSID/src/xml_etree_parser.py` — Single-Step XML Parser (Active)
 
-- **Purpose**: Parse ADM XML → LUSID scene in one step (no intermediate dicts)
+- **Purpose**: Parse ADM XML → LUSID scene in one step (no intermediate dicts) — **now the active parser in the main pipeline**
 - **Dependencies**: Python stdlib only (`xml.etree.ElementTree`)
-- **Performance**: 2.3x faster than lxml two-step pipeline
+- **Performance**: 2.3x faster than the old lxml two-step pipeline
 - **Key Functions**:
   - `parse_adm_xml_to_lusid_scene(xml_path, contains_audio)` → `LusidScene`
   - `parse_and_write_lusid_scene(xml_path, output_path, contains_audio)`
-- **Status**: Ready for integration into main pipeline (not yet wired)
+- **Status**: ✅ Wired into main pipeline (`packageForRender.py`, `runPipeline.py`, `runRealtime.py`)
 
 ### 3. Audio Stem Splitting
 
@@ -424,12 +424,14 @@ Core dataclasses for LUSID Scene v0.5.2:
 #### `src/packageADM/packageForRender.py`
 
 - **Purpose**: Orchestrate stem splitting and LUSID scene generation
-- **Key Functions**: `packageForRender(adm_wav_path, output_dir, parsed_adm_data, contains_audio_data)`
+- **Key Functions**:
+  - `packageForRender(adm_wav_path, output_dir, contains_audio_data)` — full stem split + scene write (calls `xml_etree_parser` directly)
+  - `writeSceneOnly(adm_wav_path, output_dir, contains_audio_data)` — write scene.lusid.json without stem splitting (used by realtime ADM path)
 - **Flow**:
-  1. Split ADM WAV into mono stems
-  2. Call `LUSID.xmlParser.adm_to_lusid_scene()`
+  1. Call `xml_etree_parser.parse_adm_xml_to_lusid_scene()` → `LusidScene`
+  2. Split ADM WAV into mono stems (full pipeline only)
   3. Write `scene.lusid.json` to `stageForRender/`
-- **Status**: Updated for dict-based flow (no JSON intermediates)
+- **Status**: Updated — calls stdlib parser directly, no lxml or intermediate dicts
 
 ### 5. C++ Spatial Renderer
 
@@ -845,7 +847,7 @@ Core dataclasses for LUSID Scene v0.5.2:
 
 The real-time engine (`spatial_engine/realtimeEngine/`) performs live spatial audio rendering. It reads the same LUSID scene files and source WAVs as the offline renderer but streams them through an audio device in real-time instead of rendering to a WAV file.
 
-**Status:** Phase 4 complete (DBAP spatialization with layout-derived channels). Phase 5 (LFE Router) skipped — LFE pass-through already implemented in Spatializer. Phases 6–9 pending.
+**Status:** All phases complete (Phases 1–10 + OSC timing fix + Polish tasks). See `internalDocsMD/realtime_planning/agentDocs/realtime_master.md` for full completion logs.
 
 ### Architecture — Agent Model
 
@@ -863,8 +865,10 @@ The engine follows a sequential agent architecture where each agent handles one 
 | 7     | **Output Remap**              | ✅ Complete | `OutputRemap.hpp`                                      |
 | 8     | **Threading and Safety**      | ✅ Complete | `RealtimeTypes.hpp` (audit + docs)                     |
 | 9     | **Init / Config update**      | ✅ Complete | `init.sh`, `src/config/`                               |
-| 10    | **GUI Agent (Phase 10)**      | ✅ Complete | `gui/realtimeGUI/` + `realtimeMain.py`                 |
+| 10    | **GUI Agent**                 | ✅ Complete | `gui/realtimeGUI/` + `realtimeMain.py`                 |
 | 10.1  | **OSC Timing Fix**            | ✅ Complete | `realtime_runner.py` (sentinel probe + `flush_to_osc`) |
+| 11    | **Documentation update**      | ✅ Complete | `README.md`, `AGENTS.md`                               |
+| 12    | **Polish tasks**              | ✅ Complete | Default audio folder, layout dropdowns, remap CSV      |
 
 ### Key Files
 
@@ -1004,11 +1008,12 @@ Output channels are derived from the speaker layout automatically (e.g., 56 for 
 
 On sentinel match → state transitions to `RUNNING` → `engine_ready` signal → `controls_panel.flush_to_osc()` pushes all current GUI values to the engine. Full details: `agent_threading_and_safety.md §OSC Runtime Parameter Delivery`.
 
-### CURRENT: Phase 11 — Polish Tasks
+### ✅ Phase 11 & 12 — Polish Tasks (Complete, Feb 26 2026)
 
-- Default source folder for audio: `sourceData/`
-- Default speaker layout dropdown selections: TransLAB and AlloSphere (based on offline GUI implementation)
-- Update main project README
+- Default source folder for audio: `sourceData/` ✅
+- Default speaker layout dropdown selections: TransLAB and AlloSphere ✅
+- Default remap CSV dropdown with Allosphere example ✅
+- Main project README updated ✅
 
 ### CRUCIAL NEXT MILESTONE: Pipeline Refactor (C++-first realtime)
 
@@ -1026,7 +1031,7 @@ After the realtime GUI prototype is working:
 sonoPleth/
 ├── activate.sh                      # Reactivate venv (use: source activate.sh)
 ├── init.sh                          # One-time setup (use: source init.sh)
-├── requirements.txt                 # Python dependencies (inc. lxml)
+├── requirements.txt                 # Python dependencies (lxml removed; python-osc added)
 ├── runPipeline.py                   # Main CLI entry point
 ├── runGUI.py                        # Jupyter notebook GUI (DEPRECATED)
 ├── README.md                        # User documentation
@@ -1090,7 +1095,7 @@ sonoPleth/
 │       └── xml_benchmark.md         # Benchmark results
 ├── src/
 │   ├── analyzeADM/
-│   │   ├── parser.py                # lxml ADM XML parser
+│   │   ├── parser.py                # lxml ADM XML parser (ARCHIVED to old_XML_parse/)
 │   │   ├── checkAudioChannels.py   # Detect silent channels
 │   │   └── extractMetadata.py      # ADM extractor wrapper (sonopleth_adm_extract)
 │   ├── packageADM/
@@ -1188,21 +1193,21 @@ source activate.sh
 
 ```bash
 python3 runPipeline.py              # Uses system Python, missing deps
-python3 LUSID/tests/benchmark*.py   # Missing lxml
+python3 LUSID/tests/benchmark*.py   # May be missing deps
 ```
 
 **✅ Correct:**
 
 ```bash
 python runPipeline.py               # Uses venv Python with all deps
-python LUSID/tests/benchmark*.py    # venv has lxml
+python LUSID/tests/benchmark*.py    # Uses venv Python
 ```
 
 ### Dependencies
 
 **Python (requirements.txt):**
 
-- `lxml` — ADM XML parsing (may be removable after xml_etree_parser migration)
+- `lxml` — ADM XML parsing (removed from active pipeline; archived in `old_XML_parse/`; `requirements.txt` updated)
 - `soundfile` — Audio file I/O
 - `numpy` — Numerical operations
 - `matplotlib` — Render analysis plots
@@ -1220,13 +1225,13 @@ python LUSID/tests/benchmark*.py    # venv has lxml
 ### ADM Parsing
 
 **Issue:** `ModuleNotFoundError: No module named 'lxml'`  
-**Solution:** Activate venv: `source activate.sh`
+**Solution:** `lxml` is no longer required by the active pipeline. If you still see this, activate venv (`source activate.sh`) and ensure you're not running archived code from `old_XML_parse/`.
 
 **Issue:** `sonopleth_adm_extract` binary not found  
 **Solution:** Run `./init.sh` to build the embedded ADM extractor.
 
-**Issue:** Empty `objectData.json` after parsing  
-**Solution:** Check ADM XML format. Some ADM files have non-standard structure.
+**Issue:** Empty scene / no frames after parsing  
+**Solution:** Check ADM XML format. Some ADM files have non-standard structure. Use the debug `scene.summary()` output for diagnostics.
 
 ### Stem Splitting
 
@@ -1276,19 +1281,11 @@ speaker.azimuth = s.azimuth * 180.0f / M_PI;
 
 **Fix:** `WavUtils.cpp` now auto-selects RF64 format for files over 4 GB. `analyzeRender.py` now detects and warns about this condition.
 
-**Issue:** ⚠️ Master gain is louder than documented default  
-**Cause:** `SpatialRenderer.hpp` declares `float masterGain = 0.5` but `main.cpp` help text and `RENDERING.md` both say `0.25`. Users relying on docs get 2× louder output.  
-**Solution:** Pending — decide on correct default, then update hpp + docs to match.
+**Issue:** ✅ Master gain default is now consistently `0.5` across all code and docs.
 
-### Pipeline Orchestration
+**Issue:** ✅ `dbap_focus` forwarded for all DBAP-based modes (`"dbap"` and `"dbapfocus"`).
 
-**Issue:** ⚠️ `dbap_focus` ignored in default `"dbap"` render mode  
-**Cause:** `runPipeline.py` only passes `--dbap_focus` when `renderMode == "dbapfocus"`, not when `renderMode == "dbap"`.  
-**Solution:** Pending — forward `--dbap_focus` for all DBAP-based modes.
-
-**Issue:** ⚠️ `master_gain` not controllable from Python pipeline  
-**Cause:** `src/createRender.py` `runSpatialRender()` never builds a `--master_gain` CLI argument. The parameter is only accessible via direct C++ invocation.  
-**Solution:** Pending — add `master_gain` kwarg to `createRender.py` and forward to C++.
+**Issue:** ✅ `master_gain` exposed in Python pipeline — accepted by `createRender.py`, passed as `--master_gain` to C++.
 
 **Issue:** ⚠️ Double audio-channel scan wastes ~28 seconds  
 **Cause:** `runPipeline.py` calls `exportAudioActivity()` (writes `containsAudio.json`) then immediately calls `channelHasAudio()` again — both scan the entire WAV.  
@@ -1463,11 +1460,13 @@ python LUSID/tests/benchmark_xml_parsers.py
 
 ### High Priority
 
-#### Realtime GUI Prototype (Phase 10 — current)
+#### Realtime GUI Prototype (Phases 1–12 — ✅ COMPLETE, Feb 26 2026)
 
-- Build `gui/realtimeGUI/realtimeGUI.py` + `RealtimeRunner` (QProcess → `runRealtime.py`).
-- Implement **Play/Pause/Restart** controls (Pause requires engine support).
-- Implement runtime control plane using **AlloLib Parameters + ParameterServer (OSC)**.
+- `gui/realtimeGUI/realtimeGUI.py` + `RealtimeRunner` built and working.
+- Play/Pause/Restart controls operational via `config.paused` atomic + OSC.
+- Runtime control plane using AlloLib `al::Parameter` + `ParameterServer` (OSC port 9009) fully wired.
+- OSC timing fix: runner waits for `"ParameterServer listening"` sentinel before sending OSC.
+- Polish tasks complete: `sourceData/` default folder, TransLAB/AlloSphere layout dropdowns, remap CSV dropdown.
 
 #### Pipeline Refactor (next major task after prototype)
 
@@ -1477,39 +1476,31 @@ python LUSID/tests/benchmark_xml_parsers.py
 
 #### LUSID Integration Tasks
 
-- [ ] **Wire `xml_etree_parser` into main pipeline**
-  - Replace `sonoPleth parser.py → xmlParser.py` two-step with single `xml_etree_parser.parse_adm_xml_to_lusid_scene()`
-  - Update `packageForRender.py` to call stdlib parser directly
-  - Test end-to-end equivalence
+- [ ] **Wire `xml_etree_parser` into main pipeline** ✅ DONE
+  - `packageForRender.py` calls `xml_etree_parser.parse_adm_xml_to_lusid_scene()` directly
+  - lxml two-step path archived in `old_XML_parse/`
 
-- [ ] **Create LusidScene debug summary method**
-  - Add `scene.summary()` method to `LusidScene` class
-  - Replace old `analyzeMetadata.printSummary()` (reads from disk)
-  - Print version, sampleRate, frame count, node counts by type
+- [ ] **Create LusidScene debug summary method** ✅ DONE
+  - `scene.summary()` method added to `LusidScene` class
+  - Used in `runPipeline.py` and `runGUI.py`
 
 - [ ] **Label-based LFE detection**
-  - Disable `_DEV_LFE_HARDCODED` flag in `xmlParser.py`
+  - Disable `_DEV_LFE_HARDCODED` flag in `xml_etree_parser.py`
   - Detect LFE by checking `speakerLabel` for "LFE" substring
   - Test with diverse ADM files (not just channel 4)
 
-- [ ] **Remove lxml dependency evaluation**
-  - If `xml_etree_parser` fully replaces lxml usage, remove from `requirements.txt`
-  - Audit codebase for remaining lxml imports
-  - Update documentation
+- [ ] **Remove lxml dependency** ✅ DONE
+  - `lxml` no longer used in any active code path
+  - Removed from `requirements.txt`
+  - `src/analyzeADM/parser.py` archived to `old_XML_parse/`
 
 #### Renderer Enhancements
 
-- [ ] **Fix masterGain default mismatch** ⚠️ _[Issues list #4]_
-  - `SpatialRenderer.hpp` declares `0.5`, `main.cpp` help/comments say `0.25`, `RENDERING.md` says `0.25f`
-  - Decide canonical default, update all three locations to match
+- [x] **Fix masterGain default mismatch** ✅ FIXED — standardized to `0.5` across `SpatialRenderer.hpp`, `main.cpp`, `RENDERING.md`
 
-- [ ] **Expose `master_gain` in Python pipeline** ⚠️ _[Issues list #6]_
-  - Add `master_gain` parameter to `createRender.py` `runSpatialRender()`
-  - Forward as `--master_gain` CLI argument to C++ executable
+- [x] **Expose `master_gain` in Python pipeline** ✅ FIXED — `src/createRender.py` accepts `master_gain`, passes as `--master_gain` to C++
 
-- [ ] **Forward `dbap_focus` for all DBAP modes** ⚠️ _[Issues list #5]_
-  - `runPipeline.py` currently only sends `--dbap_focus` for `"dbapfocus"` mode
-  - Should forward for plain `"dbap"` mode too (C++ supports it regardless)
+- [x] **Forward `dbap_focus` for all DBAP modes** ✅ FIXED — `runPipeline.py` sends `--dbap_focus` for both `"dbap"` and `"dbapfocus"` modes
 
 - [ ] **LFE gain control**
   - Make `dbap_sub_compensation` a configurable parameter (CLI flag or config file)
@@ -1563,13 +1554,17 @@ python LUSID/tests/benchmark_xml_parsers.py
   - `interpolation_hint` — per-node interpolation mode
   - `width` — source width parameter (DBAP/reverb)
 
-- [ ] **Real-time rendering engine — remaining phases**
-  - Phases 1-4 complete (Backend, Streaming, Pose, Spatializer) + ADM Direct Streaming optimization
+- [x] **Real-time rendering engine — ALL PHASES COMPLETE** ✅ (Feb 26 2026)
+  - Phases 1–4: Backend, Streaming, Pose, Spatializer ✅
+  - ADM Direct Streaming optimization ✅
   - Phase 5: LFE Router — ⏭️ Skipped (LFE pass-through already implemented in Spatializer.hpp)
-  - Phase 6: Compensation Agent — loudspeaker mix + sub mix sliders (±10 dB post-DBAP trims) + focus auto-compensation toggle
-  - Phase 7: Output Remap — logical-to-physical channel mapping (using layout `deviceChannel` fields)
-  - Phase 8: Transport Agent — seek, loop, scene reload
-  - Phase 9: Control Surface — GUI integration (Qt)
+  - Phase 6: Compensation Agent — loudspeaker mix + sub mix sliders (±10 dB) + focus auto-compensation ✅
+  - Phase 7: Output Remap — CSV-based logical-to-physical channel mapping ✅
+  - Phase 8: Threading and Safety audit ✅
+  - Phase 9: Init/Config update (`init.sh`, `src/config/`) ✅
+  - Phase 10: GUI (PySide6, QProcess, OSC control plane) ✅
+  - Phase 10.1: OSC timing fix (sentinel probe) ✅
+  - Phase 11–12: Polish tasks ✅
 
 - [ ] **AlloLib player bundle**
   - Package renderer + player + layout loader as single allolib app
@@ -1695,12 +1690,10 @@ python LUSID/tests/benchmark_xml_parsers.py
 
 **Fix:** `WavUtils.cpp` now auto-selects `SF_FORMAT_RF64` when data exceeds 4 GB. `analyzeRender.py` cross-checks file size vs header.
 
-#### ⚠️ OPEN — masterGain Default Mismatch
+#### ✅ RESOLVED — masterGain Default Mismatch (2026-02-16)
 
-- `SpatialRenderer.hpp` declares `float masterGain = 0.5;`
-- `main.cpp` help text and comments say `0.25`
-- `RENDERING.md` documents `0.25f`
-- **Impact:** Users relying on documentation get 2× louder output than expected.
+- `SpatialRenderer.hpp`, `main.cpp` help text, and `RENDERING.md` all standardized to `0.5`.
+- **Fix:** Updated all three locations to match `float masterGain = 0.5`.
 
 #### ⚠️ OPEN — runPipeline.py Robustness
 
@@ -1757,7 +1750,10 @@ All OS implementations provide the same API:
 
 ### Version History
 
-- **v0.5.2** (2026-02-16): RF64 auto-selection for large renders, WAV header overflow fix, analyzeRender.py file-size cross-check, debug print cleanup
+- **v0.5.2** (2026-03-02): Realtime engine + GUI complete (Phases 1–12); `xml_etree_parser` wired into main pipeline; lxml removed; `LusidScene.summary()` added; polish tasks done
+- **v0.5.2** (2026-02-26): OSC timing fix (sentinel probe + `flush_to_osc`); Phase 10 GUI complete
+- **v0.5.2** (2026-02-23): Cross-platform C++ config (`configCPP_posix.py` / `configCPP_windows.py`); AlloLib shallow clone
+- **v0.5.2** (2026-02-16): RF64 auto-selection for large renders, WAV header overflow fix, `analyzeRender.py` file-size cross-check, debug print cleanup, masterGain/dbap_focus/master_gain fixes
 - **v0.5.2** (2026-02-13): Duration field added to LUSID scene, ADM duration preservation, XML parser migration, eliminate intermediate JSONs
 - **v0.5.0** (2026-02-05): Initial LUSID Scene format
 - **PUSH 3** (2026-01-28): LFE routing, multi-spatializer support (DBAP/VBAP/LBAP)

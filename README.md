@@ -186,12 +186,12 @@ The engine uses a sequential agent model with double-buffered streaming, pose in
 
 **Supported Spatializers:**
 
-| Feature          | DBAP (default)            | VBAP                  | LBAP                        |
-| ---------------- | ------------------------- | --------------------- | --------------------------- |
-| **Coverage**     | No gaps (works anywhere)  | Can have gaps         | No gaps                     |
-| **Layout Req**   | Any layout                | Good 3D triangulation | Multi-ring layers           |
-| **Localization** | Moderate                  | Precise               | Moderate                    |
-| **Best For**     | Unknown/irregular layouts | Dense 3D arrays       | Allosphere, TransLAB        |
+| Feature          | DBAP (default)            | VBAP                  | LBAP                 |
+| ---------------- | ------------------------- | --------------------- | -------------------- |
+| **Coverage**     | No gaps (works anywhere)  | Can have gaps         | No gaps              |
+| **Layout Req**   | Any layout                | Good 3D triangulation | Multi-ring layers    |
+| **Localization** | Moderate                  | Precise               | Moderate             |
+| **Best For**     | Unknown/irregular layouts | Dense 3D arrays       | Allosphere, TransLAB |
 
 See [`internalDocsMD/realtime_planning/realtimeEngine_designDoc.md`](internalDocsMD/realtime_planning/realtimeEngine_designDoc.md) for detailed architecture documentation.
 
