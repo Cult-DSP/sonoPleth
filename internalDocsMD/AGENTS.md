@@ -1,6 +1,6 @@
 # spatialroot — Comprehensive Agent Context
 
-**Last Updated:** March 4, 2026  
+**Last Updated:** March 7, 2026  
 **Project:** spatialroot - Open Spatial Audio Infrastructure  
 **Lead Developer:** Lucian Parisi
 
@@ -9,6 +9,14 @@
 > instead of `extractMetaData()` + Python oracle + `writeSceneOnly()`.
 > `runPipeline.py` is DEPRECATED — do not modify.
 > See `cult_transcoder/internalDocsMD/AGENTS-CULT.md §8` and `DEV-PLAN-CULT.md Phase 3`.
+
+> **Phase 4 (2026-03-07):** `cult-transcoder` gains `--lfe-mode` flag (hardcoded | speaker-label)
+> and ADM profile detection (DolbyAtmos, Sony360RA). 40/40 tests pass. Fully documented in
+> `cult_transcoder/internalDocsMD/AGENTS-CULT.md §11`.
+
+> **Phase 5 GUI (2026-03-07):** TRANSCODE tab added to realtime GUI (`gui/realtimeGUI/`).
+> New files: `RealtimeTranscodePanel.py`, `realtime_transcoder_runner.py`.
+> Font system overhauled to `Courier New` (cross-platform). See §Phase 5 below.
 
 ---
 
@@ -1022,6 +1030,104 @@ On sentinel match → state transitions to `RUNNING` → `engine_ready` signal �
 - Default remap CSV dropdown with Allosphere example ✅
 - Main project README updated ✅
 
+---
+
+### ✅ Phase 5 GUI — TRANSCODE Tab (PySide6) — COMPLETE (2026-03-07)
+
+This phase adds a **TRANSCODE tab** alongside the ENGINE tab in `RealtimeWindow`.
+It provides a GUI front-end for `cult-transcoder transcode` (offline ADM → LUSID conversion).
+
+**Window structure after Phase 5:**
+
+- `RealtimeWindow` now contains a `QTabWidget (self._tabs)`
+  - Tab 0 **ENGINE** — original 4-panel scroll area (unchanged from Phase 10)
+  - Tab 1 **TRANSCODE** — new `RealtimeTranscodePanel` in its own scroll area
+
+**New files:**
+
+| File                                                        | Purpose                                                                                                                                                                      |
+| ----------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `gui/realtimeGUI/realtime_panels/RealtimeTranscodePanel.py` | Full TRANSCODE panel — File…/Dir… browse, in-format combo, LFE mode combo, output path field, TRANSCODE button, streaming log, colour-coded status label, Open Report button |
+| `gui/realtimeGUI/realtime_transcoder_runner.py`             | `QProcess` wrapper for `cult-transcoder transcode`; streams stdout/stderr live; emits `output(str)`, `started()`, `finished(int, str)`                                       |
+
+**`RealtimeTranscodePanel` public API:**
+
+- `set_running(running: bool)` — disables all inputs while transcoding
+- `set_finished(success: bool, report_path: str)` — re-enables inputs, colours status label (green/red), reveals Open Report button
+- `append_line(text: str)` — appends a line to the streaming log widget
+
+**`RealtimeTranscoderRunner` binary resolution** (`_resolve_binary()`):
+
+```python
+project_root / "cult_transcoder" / "build" / "cult-transcoder"      # macOS/Linux
+project_root / "cult_transcoder" / "build" / "cult-transcoder.exe"  # Windows
+# project_root = Path(__file__).resolve().parents[3]
+```
+
+**cult-transcoder command built at runtime:**
+
+```
+cult-transcoder transcode
+  --in         <in_path>
+  --in-format  <in_format>          # auto | adm_wav | adm_xml | lusid_json
+  --out        <out_path>           # defaults to processedData/stageForRender/scene.lusid.json
+  --out-format lusid_json
+  --report     <out_path>.report.json
+  --lfe-mode   <lfe_mode>           # hardcoded (default) | speaker-label
+```
+
+**Cross-platform file dialog pattern (pinned):**
+macOS `NSOpenPanel` cannot mix file + directory selection in a single dialog.
+All panels use two separate buttons — never combine into one dialog:
+
+| Button label        | Dialog call                                                                    | Used for                                   |
+| ------------------- | ------------------------------------------------------------------------------ | ------------------------------------------ |
+| `File...`           | `QFileDialog.getOpenFileName(filter="ADM Files (*.wav *.xml);;All Files (*)")` | ADM WAV / ADM XML source                   |
+| `Dir...` / `Pkg...` | `QFileDialog.getExistingDirectory()`                                           | Output directory / LUSID package directory |
+
+`RealtimeTranscodePanel` uses `File...` + `Dir...`. `RealtimeInputPanel` uses `File...` + `Pkg...`.
+
+**Font system — overhauled for cross-platform compatibility:**
+`QFont("Space Mono", N)` produced a 60ms Qt warning on systems where Space Mono is not installed.
+The new system lives entirely in `theme.py`:
+
+```python
+_UI_FONT_FAMILY = "Courier New"
+
+def ui_font(size: int = 8) -> QFont:
+    f = QFont(_UI_FONT_FAMILY, size + 2)   # +2pt baked in (size bump from 2026-03-07)
+    f.setStyleHint(QFont.StyleHint.TypeWriter)
+    return f  # NO bold/DemiBold
+```
+
+- QSS base rule added: `QWidget { font-family: 'Courier New', 'Courier', monospace; }`
+- All QSS `font-size` values bumped +2pt: `7pt->9pt`, `8pt->10pt`, `9pt->10pt`, `12pt->13pt`
+- Import in every panel file: `from .theme import ui_font`
+- Do **not** add `DemiBold` or `font-weight: bold` — confirmed bad by owner
+
+**If stale font or behaviour issues recur**, delete `.pyc` caches:
+
+```bash
+find gui/realtimeGUI -name "*.pyc" -delete
+find gui/realtimeGUI -name "__pycache__" -type d -exec rm -rf {} +
+```
+
+**`realtimeGUI.py` key changes:**
+
+- `QTabWidget (self._tabs)` wraps ENGINE tab (original scroll area) and TRANSCODE tab
+- `self._tc_runner = RealtimeTranscoderRunner(project_root)` in `__init__`
+- `_connect_runner()`: wires `tc_runner.output -> panel.append_line`, `tc_runner.started -> panel.set_running(True)`, `tc_runner.finished -> _on_transcode_finished`
+- `_on_run_transcode(in_path, in_format, out_path, lfe_mode)` — starts the QProcess
+- `_on_transcode_finished(exit_code, report_path)` — calls `panel.set_finished(success, report_path)`
+
+**`RealtimeInputPanel.py` key changes:**
+
+- Single `Browse` -> two buttons: `File...` (`_source_file_btn`) + `Pkg...` (`_source_dir_btn`)
+- `_browse_source_file()` -> `getOpenFileName`; `_browse_source_dir()` -> `getExistingDirectory`
+- `set_enabled_for_state()` gates both new buttons
+
+---
+
 ### CRUCIAL NEXT MILESTONE: Pipeline Refactor (C++-first realtime)
 
 After the realtime GUI prototype is working:
@@ -1039,21 +1145,24 @@ spatialroot/
 ├── activate.sh                      # Reactivate venv (use: source activate.sh)
 ├── init.sh                          # One-time setup (use: source init.sh)
 ├── requirements.txt                 # Python dependencies (lxml removed; python-osc added)
-├── runPipeline.py                   # Main CLI entry point
+├── runPipeline.py                   # DEPRECATED — do not modify
 ├── runGUI.py                        # Jupyter notebook GUI (DEPRECATED)
 ├── README.md                        # User documentation
-├── realtimeMain.py                      # NEW: Realtime GUI entry point (python realtimeMain.py)
+├── realtimeMain.py                  # Realtime GUI entry point (python realtimeMain.py)
 ├── gui/                             # PySide6 desktop GUI (primary UI)
-│   ├── realtimeGUI/                # Realtime GUI (Phase 10) ✅
+│   ├── realtimeGUI/                 # Realtime GUI (Phase 10 + Phase 5 TRANSCODE tab) ✅
 │   │   ├── __init__.py              # Package marker
-│   │   ├── realtimeGUI.py           # RealtimeWindow — assembles 4 panels
+│   │   ├── realtimeGUI.py           # RealtimeWindow -- QTabWidget (ENGINE + TRANSCODE tabs)
 │   │   ├── realtime_runner.py       # RealtimeRunner (QProcess + OSC), DebouncedOSCSender, state machine
+│   │   ├── realtime_transcoder_runner.py  # NEW (Phase 5): QProcess wrapper for cult-transcoder
 │   │   └── realtime_panels/
 │   │       ├── __init__.py
-│   │       ├── RealtimeInputPanel.py      # Source / layout / remap / buffer / scan
-│   │       ├── RealtimeTransportPanel.py  # Start/Stop/Kill/Restart/Pause/Play
-│   │       ├── RealtimeControlsPanel.py   # Live OSC sliders + flush_to_osc()
-│   │       └── RealtimeLogPanel.py        # Stdout/stderr console (2000-line cap)
+│   │       ├── theme.py                       # Colour tokens, make_qss(), ui_font() helper
+│   │       ├── RealtimeInputPanel.py          # Source / layout / remap / buffer (File... + Pkg... buttons)
+│   │       ├── RealtimeTransportPanel.py      # Start/Stop/Kill/Restart/Pause/Play
+│   │       ├── RealtimeControlsPanel.py       # Live OSC sliders + flush_to_osc()
+│   │       ├── RealtimeLogPanel.py            # Stdout/stderr console (2000-line cap)
+│   │       └── RealtimeTranscodePanel.py      # NEW (Phase 5): offline ADM->LUSID panel
 │   ├── main.py                      # App entry: MainWindow, QSS loader
 │   ├── styles.qss                   # Qt stylesheet (light mode)
 │   ├── background.py                # Radial geometry + lens focal point
@@ -1769,7 +1878,11 @@ All OS implementations provide the same API:
 
 ### Version History
 
-- **v0.5.2** (2026-03-02): Realtime engine + GUI complete (Phases 1–12); `xml_etree_parser` wired into main pipeline; lxml removed; `LusidScene.summary()` added; polish tasks done
+### Version History
+
+- **v0.5.2** (2026-03-07): Phase 5 GUI — TRANSCODE tab added (`RealtimeTranscodePanel`, `RealtimeTranscoderRunner`); font system overhauled (`ui_font()`, Courier New, no bold); file dialog two-button pattern; `RealtimeInputPanel` File.../Pkg... buttons; QTabWidget ENGINE/TRANSCODE tabs
+- **v0.5.2** (2026-03-07): Phase 4 cult-transcoder -- `--lfe-mode` flag (hardcoded|speaker-label), ADM profile detection (DolbyAtmos/Sony360RA), 40/40 tests pass
+- **v0.5.2** (2026-03-04): Phase 3 -- ADM WAV preprocessing delegated to cult-transcoder; `runRealtime.py` calls `cult-transcoder transcode --in-format adm_wav`; realtime engine + GUI complete (Phases 1-12); `xml_etree_parser` wired into main pipeline; lxml removed; `LusidScene.summary()` added; polish tasks done
 - **v0.5.2** (2026-02-26): OSC timing fix (sentinel probe + `flush_to_osc`); Phase 10 GUI complete
 - **v0.5.2** (2026-02-23): Cross-platform C++ config (`configCPP_posix.py` / `configCPP_windows.py`); AlloLib shallow clone
 - **v0.5.2** (2026-02-16): RF64 auto-selection for large renders, WAV header overflow fix, `analyzeRender.py` file-size cross-check, debug print cleanup, masterGain/dbap_focus/master_gain fixes
