@@ -236,30 +236,33 @@ public:
         std::cout << "[Spatializer] DBAP initialized (focus="
                   << mConfig.dbapFocus.load() << ")." << std::endl;
 
-        // ── Pre-cache speaker DBAP positions for proximity guard ─────────
-        // The DBAP coord transform is (x, y, z) → (x, z, -y) × radius.
-        // We reproduce the same transform here so that the source positions
-        // computed by Pose::directionToDBAPPosition() and the speaker
-        // positions used for distance testing are in the same space.
+        // ── Pre-cache speaker positions in DBAP-internal space ──────────
+        // DBAP::renderBuffer() applies this flip to the source position before
+        // computing distances:
+        //   relpos = Vec3d(pos.x, -pos.z, pos.y)
+        // Speaker positions are stored as mSpeakerVecs[k] = speaker.vec(),
+        // which is audio-space Cartesian: (sin(az)*cosEl*r, cos(az)*cosEl*r, sin(el)*r).
+        // Distances are then computed as |relpos - mSpeakerVecs[k]|.
+        //
+        // To make the proximity guard geometrically exact — i.e. to guard
+        // against the same distances DBAP actually computes — we must cache
+        // speaker positions as speaker.vec() (Vec3d, already available from
+        // the al::Speakers array we built) and apply the same source flip
+        // before comparing. No separate spherical reconstruction needed.
         mSpeakerPositions.clear();
         mSpeakerPositions.reserve(mNumSpeakers);
-        for (const auto& spk : layout.speakers) {
-            // Convert spherical (az,el,r) to Cartesian in our coord system,
-            // then apply the DBAP transform: our (x,y,z) → DBAP (x,z,-y).
-            float az = spk.azimuth;   // radians, measured from +y (front) toward +x
-            float el = spk.elevation; // radians, +up
-            float r  = (spk.radius > 0.0f) ? spk.radius : mLayoutRadius;
-            float cosEl = std::cos(el);
-            // Our convention (y-forward, x-right, z-up):
-            float sx = std::sin(az) * cosEl * r;
-            float sy = std::cos(az) * cosEl * r;
-            float sz = std::sin(el) * r;
-            // DBAP transform matches Pose::directionToDBAPPosition:
-            // (x, y, z) → (x, z, -y)
-            mSpeakerPositions.emplace_back(sx, sz, -sy);
+        for (int i = 0; i < mNumSpeakers; ++i) {
+            // speaker.vec() returns audio-space Cartesian in double precision.
+            // Store as float — precision is adequate for a proximity guard.
+            al::Vec3d v = mSpeakers[i].vec();
+            mSpeakerPositions.emplace_back(
+                static_cast<float>(v.x),
+                static_cast<float>(v.y),
+                static_cast<float>(v.z));
         }
         std::cout << "[Spatializer] Pre-cached " << mSpeakerPositions.size()
-                  << " speaker positions for proximity guard." << std::endl;
+                  << " speaker positions (DBAP-internal space) for proximity guard."
+                  << std::endl;
 
         // ── Pre-allocate per-source mono buffer ──────────────────────────
         mSourceBuffer.resize(mConfig.bufferSize, 0.0f);
@@ -372,46 +375,51 @@ public:
                 mSourceBuffer[f] *= masterGain;
             }
 
-            // Phase 12 Fix 1: per-speaker proximity guard.
+            // Phase 13: per-speaker proximity guard (geometrically exact).
             //
-            // The original Phase 11 guard checked pose.position.mag() (distance
-            // from the origin). This was geometrically inert: positions are always
-            // normalized direction × mLayoutRadius (~5.2 m for TransLab), so the
-            // origin-distance test never fires in practice.
+            // COORDINATE SPACE:
+            //   DBAP::renderBuffer() transforms the source position internally:
+            //     relpos = Vec3d(pos.x, -pos.z, pos.y)
+            //   Speaker vectors mSpeakerVecs[k] = speaker.vec() are in audio-space
+            //   Cartesian (y-forward, x-right, z-up). Distances are computed as:
+            //     dist = |relpos - mSpeakerVecs[k]|
             //
-            // The real hazard is a source passing close to an individual speaker
-            // in DBAP position space. At near-zero source-to-speaker distance,
-            // DBAP's inverse-distance weighting concentrates essentially all
-            // energy into that one speaker, producing a hard gain spike and an
-            // audible click or broadband transient.
+            //   Our mSpeakerPositions[] cache stores speaker.vec() exactly.
+            //   We apply the same flip to pose.position to get relpos, guard in
+            //   that space, then un-flip back to pose space for renderBuffer().
             //
-            // Fix: for each speaker, if the source falls within kMinSpeakerDist,
-            // push it outward along the source→speaker axis so the minimum
-            // clearance is maintained. The push is smooth (linear along the
-            // connecting vector) — it does not introduce a step discontinuity.
-            // speakerProximityCount is incremented each time the guard fires so
-            // the monitoring loop can report how often this path is active.
+            //   Forward flip  (pose space → DBAP-internal):  (x,y,z) → (x,-z,y)
+            //   Inverse flip  (DBAP-internal → pose space):  (x,y,z) → (x,z,-y)
+            //   (Both are their own inverse — one application undoes the other.)
             //
-            // kMinSpeakerDist = 0.15 m: conservative first-pass value.
-            // The worst observed case (source 21.1 at t=47.79 s) passes 0.049 m
-            // from speaker ch15 — well inside this radius. Testing at 0.15 m
-            // first; can be reduced toward 0.05–0.10 m if localization sounds
-            // artificially constrained near speakers.
-            al::Vec3f safePos = pose.position;
-            for (const auto& spkPos : mSpeakerPositions) {
-                al::Vec3f delta = safePos - spkPos;
+            // THRESHOLD: 0.15 m. Worst observed case is source 21.1 at 0.049 m
+            // from speaker ch15 at t=47.79 s. 0.15 m gives comfortable clearance
+            // without over-constraining trajectory freedom near speakers.
+
+            // Step 1: transform pose.position into DBAP-internal space
+            const al::Vec3f& p = pose.position;
+            al::Vec3f relpos(p.x, -p.z, p.y);  // same flip DBAP applies internally
+
+            // Step 2: guard in DBAP-internal space (exact geometry)
+            bool guardFiredForSource = false;
+            for (const auto& spkVec : mSpeakerPositions) {
+                al::Vec3f delta = relpos - spkVec;
                 float dist = delta.mag();
                 if (dist < kMinSpeakerDist) {
-                    // Push source outward along source→speaker axis.
-                    // If source is degenerate (exactly on speaker), displace
-                    // along +Y (front) in DBAP space as a safe fallback.
-                    safePos = spkPos + ((dist > 1e-7f)
+                    relpos = spkVec + ((dist > 1e-7f)
                         ? (delta / dist) * kMinSpeakerDist
                         : al::Vec3f(0.0f, kMinSpeakerDist, 0.0f));
-                    mState.speakerProximityCount.fetch_add(1,
-                        std::memory_order_relaxed);
+                    guardFiredForSource = true;
                 }
             }
+            if (guardFiredForSource) {
+                mState.speakerProximityCount.fetch_add(1, std::memory_order_relaxed);
+            }
+
+            // Step 3: un-flip back to pose space for renderBuffer()
+            // renderBuffer() will re-apply (x,y,z)→(x,-z,y) internally,
+            // recovering the guarded relpos we just computed.
+            al::Vec3f safePos(relpos.x, relpos.z, -relpos.y);
 
             // Spatialize into the internal render buffer (sized for all
             // layout channels). renderBuffer() computes per-speaker gains once
@@ -577,82 +585,28 @@ public:
     float computeFocusCompensation() {
         if (!mInitialized) return 1.0f;
 
-        // Build a reference position: front center at layout radius
-        // In DBAP-ready coordinates: (x=0, y=radius, z=0)
-        al::Vec3d refPos(0.0, static_cast<double>(mLayoutRadius), 0.0);
-
-        // Use a 1-frame buffer for the impulse test
-        const int testFrames = 64;
-        std::vector<float> impulse(testFrames, 1.0f);
-        const int outCh = static_cast<int>(mRenderIO.channelsOut());
-
-        // Allocate a small temporary AudioIOData for the test
-        al::AudioIOData testIO;
-        testIO.framesPerBuffer(testFrames);
-        testIO.framesPerSecond(mConfig.sampleRate);
-        testIO.channelsIn(0);
-        testIO.channelsOut(outCh);
-        testIO.zeroOut();
-
-        // Render the unit impulse at the reference position
-        mDBap->renderBuffer(testIO, refPos, impulse.data(), testFrames);
-
-        // Measure RMS power on main (non-sub) channels
-        float power = 0.0f;
-        int mainCount = 0;
-        for (int ch = 0; ch < outCh; ++ch) {
-            if (isSubwooferChannel(ch)) continue;
-            const float* buf = testIO.outBuffer(ch);
-            for (int f = 0; f < testFrames; ++f) {
-                power += buf[f] * buf[f];
-            }
-            ++mainCount;
-        }
-        if (mainCount > 0) power /= static_cast<float>(mainCount * testFrames);
-
-        // Reference power: DBAP at focus=0 distributes to all speakers equally.
-        // We compute the reference by re-running at focus=0.
-        al::Dbap refPanner(mSpeakers, 0.0f);
-        al::AudioIOData refIO;
-        refIO.framesPerBuffer(testFrames);
-        refIO.framesPerSecond(mConfig.sampleRate);
-        refIO.channelsIn(0);
-        refIO.channelsOut(outCh);
-        refIO.zeroOut();
-        refPanner.renderBuffer(refIO, refPos, impulse.data(), testFrames);
-
-        float refPower = 0.0f;
-        for (int ch = 0; ch < outCh; ++ch) {
-            if (isSubwooferChannel(ch)) continue;
-            const float* buf = refIO.outBuffer(ch);
-            for (int f = 0; f < testFrames; ++f) {
-                refPower += buf[f] * buf[f];
-            }
-        }
-        if (mainCount > 0) refPower /= static_cast<float>(mainCount * testFrames);
-
-        // Compensation = sqrt(refPower / power) — amplitude scalar to
-        // normalize current loudness back to the focus=0 reference.
-        float compensation = 1.0f;
-        if (power > 1e-10f && refPower > 1e-10f) {
-            compensation = std::sqrt(refPower / power);
-        }
-
-        // Clamp to ±10 dB range (linear: ~0.316 to ~3.162)
-        compensation = std::max(0.316f, std::min(3.162f, compensation));
-
-        std::cout << "[Spatializer] Focus auto-compensation: focus="
-                  << mConfig.dbapFocus.load()
-                  << " → autoCompValue=" << compensation
-                  << " (" << (20.0f * std::log10(compensation)) << " dB)" << std::endl;
-
-        // Phase 11: write into mAutoCompValue, NOT mConfig.loudspeakerMix.
-        // mConfig.loudspeakerMix is reserved exclusively for the manual slider
-        // (written by the OSC spkMixDbParam callback). Keeping them separate
-        // enforces Invariant 8: the two paths can never clobber each other.
-        // renderBlock() reads mAutoCompValue only when ctrl.autoComp is true.
-        mAutoCompValue = compensation;
-        return compensation;
+        // Phase 13: auto-compensation is temporarily disabled.
+        // The previous implementation had two structural bugs:
+        //   1. The reference position (0, radius, 0) was passed directly to
+        //      renderBuffer(), but renderBuffer() applies an internal coord flip
+        //      (pos.x, -pos.z, pos.y) before computing distances. The position
+        //      that was actually tested was (0, 0, radius) — the top of the sphere,
+        //      not the front-center reference intended.
+        //   2. At focus=0, DBAP gain = pow(1/(1+dist), 0) = 1.0 for every speaker,
+        //      so refPower ≈ N (not 1.0), making the ratio refPower/power
+        //      proportional to N² — producing compensation values that hit the
+        //      ±10 dB clamp every time.
+        // Result: autoComp was applying ~+10 dB unconditionally, making artifacts
+        // significantly worse whenever it was enabled.
+        //
+        // Disabled by returning 1.0f (identity). The mAutoCompValue member,
+        // the renderBlock() autoComp branch, and the OSC plumbing are all kept
+        // intact so this can be re-enabled once the math is corrected.
+        // TODO: reimplement with correct reference position and power model.
+        std::cout << "[Spatializer] computeFocusCompensation: disabled (returning 1.0). "
+                     "See Phase 13 notes." << std::endl;
+        mAutoCompValue = 1.0f;
+        return 1.0f;
     }
 
 private:

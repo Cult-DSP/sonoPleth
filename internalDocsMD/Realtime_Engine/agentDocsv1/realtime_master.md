@@ -1267,11 +1267,11 @@ layout revealed the following minimum source-to-speaker distances at the closest
 approach points in DBAP position space:
 
 | Source | Min dist (m) | Max DBAP gain | Speaker | Time (s) |
-|--------|-------------|---------------|---------|----------|
-| 21.1   | **0.049**   | 0.988         | ch15    | 47.79    |
-| 27.1   | 0.133       | 0.948         | ch15    | 68.90    |
-| 28.1   | 0.220       | 0.883         | ch10    | 31.03    |
-| 33.1   | 0.321       | 0.839         | ch1     | 19.15    |
+| ------ | ------------ | ------------- | ------- | -------- |
+| 21.1   | **0.049**    | 0.988         | ch15    | 47.79    |
+| 27.1   | 0.133        | 0.948         | ch15    | 68.90    |
+| 28.1   | 0.220        | 0.883         | ch10    | 31.03    |
+| 33.1   | 0.321        | 0.839         | ch1     | 19.15    |
 
 Source 21.1 passes **through** the Phase 11 exclusion zone (4.9 cm < 5 cm
 `kMinSourceDist`) — but the Phase 11 guard never fired because it checked
@@ -1335,10 +1335,10 @@ segments) helps correlate guard activity with known problematic trajectories.
 
 The following were analyzed but deliberately deferred from this pass:
 
-| Item | Reason deferred |
-|------|----------------|
-| Block-to-block position smoothing (`Pose.hpp`, alpha ≈ 0.5–0.7) | Second priority; adds lag and may obscure remaining spatial math issues. Revisit only if clicks persist after proximity fix. |
-| Scene loop / `resetForLoop()` (`Streaming.hpp` + `main.cpp`) | Separate lifecycle feature; introduces moving parts while audio artifact diagnosis is ongoing. Implement in a dedicated pass. |
+| Item                                                            | Reason deferred                                                                                                               |
+| --------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| Block-to-block position smoothing (`Pose.hpp`, alpha ≈ 0.5–0.7) | Second priority; adds lag and may obscure remaining spatial math issues. Revisit only if clicks persist after proximity fix.  |
+| Scene loop / `resetForLoop()` (`Streaming.hpp` + `main.cpp`)    | Separate lifecycle feature; introduces moving parts while audio artifact diagnosis is ongoing. Implement in a dedicated pass. |
 
 ### Phase 12 Invariants
 
@@ -1352,11 +1352,181 @@ The following were analyzed but deliberately deferred from this pass:
 
 ### Phase 12 Agent Implementation Order Table Update
 
-| Phase | Agent(s)                        | Status          |
-|-------|---------------------------------|-----------------|
-| 1–11  | _(as above)_                    | ✅ Complete     |
-| 12    | **DBAP Proximity Bug-Fix Pass** | ✅ Complete     |
-|       | Fix 1: Per-speaker proximity guard | ✅ `Spatializer.hpp` |
+| Phase | Agent(s)                                  | Status                                                  |
+| ----- | ----------------------------------------- | ------------------------------------------------------- |
+| 1–11  | _(as above)_                              | ✅ Complete                                             |
+| 12    | **DBAP Proximity Bug-Fix Pass**           | ✅ Complete                                             |
+|       | Fix 1: Per-speaker proximity guard        | ✅ `Spatializer.hpp`                                    |
 |       | Fix 2: `speakerProximityCount` diagnostic | ✅ `RealtimeTypes.hpp` + `Spatializer.hpp` + `main.cpp` |
-|       | Position smoothing | ⏸ Deferred |
-|       | Scene loop / `resetForLoop()` | ⏸ Deferred |
+|       | Position smoothing                        | ⏸ Deferred                                              |
+|       | Scene loop / `resetForLoop()`             | ⏸ Deferred                                              |
+
+---
+
+## Phase 13 — Coordinate Space Correctness + AutoComp Disable
+
+### Root Cause: Phase 12 Speaker Cache was in the Wrong Coordinate Space
+
+During Phase 12, `Spatializer::init()` manually reconstructed speaker positions
+from the JSON layout data and stored them as `(sx, sz, -sy)` — the same transform
+applied by `directionToDBAPPosition()` to produce _Pose-output space_ coordinates.
+However, the proximity guard in `renderBlock()` needed to compare source positions
+against speaker positions **in DBAP-internal space**, which is a different
+coordinate system.
+
+**Coordinate space chain (fully traced from `al_Dbap.cpp` and `al_Speaker.cpp`):**
+
+| Space                             | Formula                                         | Used by                                                        |
+| --------------------------------- | ----------------------------------------------- | -------------------------------------------------------------- |
+| Pose-output space                 | `(dir.x·r, dir.z·r, −dir.y·r)`                  | `pose.position`, input to `renderBuffer()`                     |
+| DBAP-internal space               | `(pos.x, −pos.z, pos.y)`                        | flip applied inside `renderBuffer()` before distance math      |
+| `speaker.vec()`                   | `(sin(az)·cosEl·r, cos(az)·cosEl·r, sin(el)·r)` | speaker positions stored in DBAP — same as DBAP-internal space |
+| Forward flip (pose→DBAP-internal) | `(x,y,z) → (x,−z,y)`                            | guard pre-step                                                 |
+| Inverse flip (DBAP-internal→pose) | `(x,y,z) → (x,z,−y)`                            | guard post-step (same operation, self-inverse)                 |
+
+The Phase 12 cache stored positions in Pose-output space. The proximity
+comparisons were therefore mixing two different spaces — the distances computed
+were geometrically meaningless and the guard would fire (or not fire) at the
+wrong positions.
+
+### Fix 1 — Speaker Position Cache: Use `speaker.vec()`
+
+**File:** `Spatializer.hpp`, `init()`
+
+**Before (Phase 12):** manually computed `(sx, sz, -sy)` from JSON data.
+
+**After (Phase 13):** uses `mSpeakers[i].vec()` directly:
+
+```cpp
+mSpeakerPositions.clear();
+mSpeakerPositions.reserve(mNumSpeakers);
+for (int i = 0; i < mNumSpeakers; ++i) {
+    al::Vec3d v = mSpeakers[i].vec();
+    mSpeakerPositions.emplace_back(
+        static_cast<float>(v.x),
+        static_cast<float>(v.y),
+        static_cast<float>(v.z));
+}
+```
+
+`al::Speaker::vec()` returns the same Cartesian vectors that `al_Dbap.cpp`
+stores internally in `mSpeakerVecs[k]`. The cache is now in exactly the same
+space that DBAP uses for its distance computations.
+
+### Fix 2 — Proximity Guard: Operate Entirely in DBAP-Internal Space
+
+**File:** `Spatializer.hpp`, `renderBlock()`
+
+The guard now performs an explicit flip before comparing, pushes in the correct
+space, then un-flips back to Pose-output space before calling `renderBuffer()`.
+`renderBuffer()` re-applies the flip internally, recovering the pushed position.
+
+```cpp
+// Step 1: flip pose.position → DBAP-internal space
+const al::Vec3f& p = pose.position;
+al::Vec3f relpos(p.x, -p.z, p.y);
+
+// Step 2: guard in DBAP-internal space (same space as mSpeakerPositions)
+bool guardFiredForSource = false;
+for (const auto& spkVec : mSpeakerPositions) {
+    al::Vec3f delta = relpos - spkVec;
+    float dist = delta.mag();
+    if (dist < kMinSpeakerDist) {
+        relpos = spkVec + ((dist > 1e-7f)
+            ? (delta / dist) * kMinSpeakerDist
+            : al::Vec3f(0.0f, kMinSpeakerDist, 0.0f));
+        guardFiredForSource = true;
+    }
+}
+if (guardFiredForSource) {
+    mState.speakerProximityCount.fetch_add(1, std::memory_order_relaxed);
+}
+
+// Step 3: un-flip back to pose space for renderBuffer()
+al::Vec3f safePos(relpos.x, relpos.z, -relpos.y);
+mDBap->renderBuffer(mRenderIO, safePos, mSourceBuffer.data(), numFrames);
+```
+
+**Counter behavior change:** The counter now increments once per source per
+block (not once per speaker-pair), which is more meaningful for the monitoring
+display — it reflects how many source-blocks were remapped, not how many
+individual speaker collisions were found within a single block.
+
+### Fix 3 — Disable Auto-Compensation (Two Structural Bugs Found)
+
+**File:** `Spatializer.hpp`, `computeFocusCompensation()`
+
+Full audit of `computeFocusCompensation()` revealed two independent bugs that
+together caused ~+10 dB unconditional boost when `autoComp` was enabled:
+
+**Bug A — Wrong reference position:**
+`refPos = (0, radius, 0)` was passed directly to `renderBuffer()`. But
+`renderBuffer()` applies the internal flip `(x,y,z)→(x,−z,y)` before
+computing distances. The position that was actually tested was `(0, 0, radius)` —
+the top of the sphere, not the intended front-center reference. All speaker
+distances from the zenith point are equal and far, producing an anomalously
+low reference power.
+
+**Bug B — Wrong focus=0 baseline:**
+At `mFocus=0`, DBAP computes `gain = pow(1/(1+dist), 0) = 1.0` for every
+speaker regardless of distance. The reference power accumulator therefore sums
+N×1.0 across all speakers rather than a physically meaningful power. This
+inflated `refPower` relative to the actual focused `power` at any `focus > 0`,
+pushing `compensation = sqrt(refPower/power)` toward the +10 dB clamp on every
+call.
+
+**Fix:** `computeFocusCompensation()` body replaced with a stub that immediately
+returns `1.0f` (identity — no gain change). The function signature, `mAutoCompValue`
+member, `ctrl.autoComp` branch in `renderBlock()`, and all OSC plumbing are
+preserved intact for future reimplementation.
+
+```cpp
+float computeFocusCompensation() {
+    if (!mInitialized) return 1.0f;
+    // [Phase 13] Disabled — see realtime_master.md for root cause.
+    mAutoCompValue = 1.0f;
+    return 1.0f;
+}
+```
+
+**Confirmed:** Buzzing was present with `autoComp OFF`, so autoComp was not the
+root cause of the movement-click artifacts. The proximity guard coordinate fix
+(Fixes 1 + 2) is the primary structural change targeting those artifacts.
+
+### Phase 13 Invariants
+
+**Invariant 12 — Speaker position cache uses DBAP-internal coordinate space:**
+
+> `mSpeakerPositions[i]` shall contain `mSpeakers[i].vec()` cast to `float` —
+> the same Cartesian vector that `al_Dbap.cpp` stores in `mSpeakerVecs[i]`.
+> No manual spherical-to-Cartesian conversion or coordinate flip shall be
+> applied to these values. Any future changes to the speaker layout must
+> regenerate the cache via the `init()` path, which calls `vec()` directly.
+
+**Invariant 13 — Proximity guard operates entirely in DBAP-internal space:**
+
+> The proximity guard in `renderBlock()` shall convert `pose.position` to
+> DBAP-internal space `(x,−z,y)` before all distance comparisons and push
+> operations. The guarded position shall be converted back to Pose-output space
+> `(x,z,−y)` before being passed to `renderBuffer()`. No guard comparison or
+> push shall be performed in Pose-output space.
+
+**Invariant 14 — Auto-compensation is a no-op until redesigned:**
+
+> `computeFocusCompensation()` shall return `1.0f` unconditionally. The
+> `mAutoCompValue` member and `ctrl.autoComp` branch are preserved for future
+> use but the compensation scalar applied to audio output is always 1.0.
+> This invariant is revoked when a correct reimplementation is merged.
+
+### Phase 13 Agent Implementation Order Table Update
+
+| Phase | Agent(s)                                               | Status                                            |
+| ----- | ------------------------------------------------------ | ------------------------------------------------- |
+| 1–12  | _(as above)_                                           | ✅ Complete                                       |
+| 13    | **Coordinate Space + AutoComp Correctness**            | ✅ Complete                                       |
+|       | Fix 1: Speaker cache → `speaker.vec()` (DBAP-internal) | ✅ `Spatializer.hpp` `init()`                     |
+|       | Fix 2: Guard flip/push/unflip in DBAP-internal space   | ✅ `Spatializer.hpp` `renderBlock()`              |
+|       | Fix 3: AutoComp disabled (stub returns 1.0f)           | ✅ `Spatializer.hpp` `computeFocusCompensation()` |
+|       | Position smoothing                                     | ⏸ Deferred                                        |
+|       | Scene loop / `resetForLoop()`                          | ⏸ Deferred                                        |
+|       | AutoComp redesign (correct ref position + power model) | ⏸ Deferred                                        |
