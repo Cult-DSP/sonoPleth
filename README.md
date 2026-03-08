@@ -3,7 +3,7 @@ Lead Developer: Lucian Parisi
 
 # spatialroot
 
-This repository contains a comprehensive spatial audio infrastructure for decoding Audio Definition Model Broadcast WAV (ADM BWF) files — Atmos masters — with mapping to speaker arrays using multiple spatializers (DBAP, VBAP, LBAP). Includes both offline rendering pipeline and real-time spatial audio engine with GUI interfaces.
+This repository contains a comprehensive **real-time spatial audio engine** for decoding Audio Definition Model Broadcast WAV (ADM BWF) files — Atmos masters — with mapping to speaker arrays using multiple spatializers (DBAP, VBAP, LBAP). The system includes both live performance capabilities and legacy offline rendering pipeline.
 
 ## Quick Start
 
@@ -58,44 +58,19 @@ python utils/getExamples.py
 
 This downloads example Atmos ADM files for testing.
 
-### Run the Pipeline
-
-```bash
-python runPipeline.py sourceData/driveExampleSpruce.wav
-```
-
-**Command options:**
-
-```bash
-# Default mode (uses example file)
-python runPipeline.py
-
-# With custom ADM file
-python runPipeline.py path/to/your_file.wav
-
-# Full options
-python runPipeline.py <adm_wav_file> <speaker_layout.json> <true|false>
-```
-
-**Arguments:**
-
-- `adm_wav_file` - Path to ADM BWF WAV file (Atmos master)
-- `speaker_layout.json` - Speaker layout JSON (default: `spatialRender/allosphere_layout.json`)
-- `true|false` - Create PDF analysis of render (default: `true`)
-
 ### Run the Realtime Engine
 
 For live spatial audio playback:
 
 ```bash
 # With LUSID scene and mono stems
-python realtimeMain.py --scene processedData/stageForRender/scene.lusid.json --sources processedData/stageForRender/ --layout spatialRender/allosphere_layout.json
+python realtimeMain.py --scene processedData/stageForRender/scene.lusid.json --sources processedData/stageForRender/ --layout spatial_engine/speaker_layouts/allosphere_layout.json
 
 # With ADM file (direct streaming, no stem splitting)
-python realtimeMain.py --adm sourceData/driveExampleSpruce.wav --scene processedData/scene.lusid.json --layout spatialRender/allosphere_layout.json
+python realtimeMain.py --adm sourceData/driveExampleSpruce.wav --scene processedData/scene.lusid.json --layout spatial_engine/speaker_layouts/allosphere_layout.json
 
 # With GUI
-python realtimeMain.py --scene processedData/stageForRender/scene.lusid.json --sources processedData/stageForRender/ --layout spatialRender/allosphere_layout.json --gui
+python realtimeMain.py --scene processedData/stageForRender/scene.lusid.json --sources processedData/stageForRender/ --layout spatial_engine/speaker_layouts/allosphere_layout.json --gui
 ```
 
 **Realtime options:**
@@ -109,69 +84,11 @@ python realtimeMain.py --scene processedData/stageForRender/scene.lusid.json --s
 
 See [`internalDocsMD/Realtime_Engine/realtimeEngine_designDoc.md`](internalDocsMD/Realtime_Engine/realtimeEngine_designDoc.md) for full documentation.
 
-### Run the Desktop GUI
-
-For a graphical interface to configure and run the offline pipeline:
-
-```bash
-python gui/main.py
-```
-
-The GUI provides file pickers, render settings, progress tracking, and log viewing.
-
 ---
 
 ## Usage in other projects
 
 See internalDocsMD/AGENTS.md for help implementing in other projects.
-
-## Spatial Rendering
-
-The project supports three spatializers from AlloLib:
-
-- **DBAP** (default) - Distance-Based Amplitude Panning, works with any layout
-- **VBAP** - Vector Base Amplitude Panning, best for layouts with good 3D coverage
-- **LBAP** - Layer-Based Amplitude Panning, designed for multi-ring layouts
-
-See [`internalDocsMD/Spatialization/RENDERING.md`](internalDocsMD/Spatialization/RENDERING.md) for full documentation.
-
-### Rebuilding the Renderers
-
-If you need to rebuild after code changes:
-
-#### Spatial Renderer (Offline Pipeline)
-
-```bash
-rm -rf spatial_engine/spatialRender/build
-python -c "from src.config.configCPP import buildSpatialRenderer; buildSpatialRenderer()"
-```
-
-Or manually:
-
-```bash
-cd spatial_engine/spatialRender
-mkdir -p build && cd build
-cmake ..
-make -j$(nproc)
-```
-
-#### Realtime Engine
-
-```bash
-rm -rf spatial_engine/realtimeEngine/build
-python -c "from src.config.configCPP import buildRealtimeEngine; buildRealtimeEngine()"
-```
-
-Or manually:
-
-```bash
-cd spatial_engine/realtimeEngine
-mkdir -p build && cd build
-cmake ..
-make -j$(nproc)
-```
-
----
 
 ## Realtime Spatial Audio
 
@@ -320,17 +237,6 @@ spatialroot/bin/python -c "from src.config.configCPP import setupCppTools; setup
 - `gui/main.py` - Desktop GUI for offline pipeline configuration and execution
 - `realtimeMain.py` - Command-line interface for realtime spatial audio engine
 
-## Offline Pipeline Overview
-
-1. **Check Initialization** - Verify all dependencies are installed
-2. **Setup C++ Tools** - Initialize AlloLib, libbw64, libadm submodules; build embedded ADM extractor and spatial renderer
-3. **Extract Metadata** - Use embedded `spatialroot_adm_extract` to extract ADM XML from WAV
-4. **Parse ADM** - Convert ADM XML to internal data structure
-5. **Analyze Audio** - Detect which channels contain audio content
-6. **Package for Render** - Split audio stems (X.1.wav naming) and build LUSID scene (scene.lusid.json)
-7. **Spatial Render** - Generate multichannel spatial audio (renderer reads LUSID scene directly)
-8. **Analyze Render** - Create PDF with dB analysis of each output channel
-
 ## Realtime Engine Overview
 
 1. **Load Scene** - Parse LUSID JSON scene file
@@ -402,3 +308,65 @@ Example ADM files: https://zenodo.org/records/15268471
 ### ADM extraction
 
 - **Primary**: `spatialroot_adm_extract` (embedded, built by `init.sh`) — no external install needed
+
+---
+
+## Offline Pipeline - outdated
+
+**Note:** The offline rendering pipeline is a legacy component maintained for batch processing workflows. For new projects, use the realtime engine for superior performance and features.
+
+### Run the Pipeline
+
+```bash
+python runPipeline.py sourceData/driveExampleSpruce.wav
+```
+
+**Command options:**
+
+```bash
+# Default mode (uses example file)
+python runPipeline.py
+
+# With custom ADM file
+python runPipeline.py path/to/your_file.wav
+
+# Full options
+python runPipeline.py <adm_wav_file> <speaker_layout.json> <true|false>
+```
+
+**Arguments:**
+
+- `adm_wav_file` - Path to ADM BWF WAV file (Atmos master)
+- `speaker_layout.json` - Speaker layout JSON (default: `spatialRender/allosphere_layout.json`)
+- `true|false` - Create PDF analysis of render (default: `true`)
+
+### Run the Desktop GUI
+
+For a graphical interface to configure and run the offline pipeline:
+
+```bash
+python gui/main.py
+```
+
+The GUI provides file pickers, render settings, progress tracking, and log viewing.
+
+### Spatial Rendering
+
+The project supports three spatializers from AlloLib:
+
+- **DBAP** (default) - Distance-Based Amplitude Panning, works with any layout
+- **VBAP** - Vector Base Amplitude Panning, best for layouts with good 3D coverage
+- **LBAP** - Layer-Based Amplitude Panning, designed for multi-ring layouts
+
+See [`internalDocsMD/Spatialization/RENDERING.md`](internalDocsMD/Spatialization/RENDERING.md) for full documentation.
+
+### Offline Pipeline Overview
+
+1. **Check Initialization** - Verify all dependencies are installed
+2. **Setup C++ Tools** - Initialize AlloLib, libbw64, libadm submodules; build embedded ADM extractor and spatial renderer
+3. **Extract Metadata** - Use embedded `spatialroot_adm_extract` to extract ADM XML from WAV
+4. **Parse ADM** - Convert ADM XML to internal data structure
+5. **Analyze Audio** - Detect which channels contain audio content
+6. **Package for Render** - Split audio stems (X.1.wav naming) and build LUSID scene (scene.lusid.json)
+7. **Spatial Render** - Generate multichannel spatial audio (renderer reads LUSID scene directly)
+8. **Analyze Render** - Create PDF with dB analysis of each output channel
