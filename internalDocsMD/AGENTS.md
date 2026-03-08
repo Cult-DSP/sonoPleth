@@ -1839,49 +1839,87 @@ python LUSID/tests/benchmark_xml_parsers.py
 
 ## OS-Specific C++ Tool Configuration
 
-**Updated:** February 23, 2026
+**Updated:** March 7, 2026
 
-spatialroot now supports cross-platform C++ tool building with OS-specific implementations. The configuration system automatically detects the operating system and routes to the appropriate build scripts.
+spatialroot supports cross-platform C++ tool building with OS-specific implementations. The configuration system automatically detects the operating system and routes to the appropriate build scripts.
 
 ### Architecture
 
-- **Router:** `src/config/configCPP.py` - Tiny OS detection and import routing
-- **POSIX (Linux/macOS):** `src/config/configCPP_posix.py` - Uses `make -jN` for builds
-- **Windows:** `src/config/configCPP_windows.py` - Uses `cmake --build --config Release` for Visual Studio compatibility
+- **Router:** `src/config/configCPP.py` — Tiny OS detection and import routing
+- **POSIX (macOS/Linux):** `src/config/configCPP_posix.py`
+- **Windows:** `src/config/configCPP_windows.py`
 
 ### Key Differences
 
-| Aspect               | POSIX                                 | Windows                                         |
-| -------------------- | ------------------------------------- | ----------------------------------------------- |
-| Build Command        | `make -jN`                            | `cmake --build . --parallel N --config Release` |
-| Executable Extension | None                                  | `.exe`                                          |
-| Repo Root Resolution | `Path(__file__).resolve().parents[2]` | `Path(__file__).resolve().parents[2]`           |
+| Aspect               | POSIX                                 | Windows                                                 |
+| -------------------- | ------------------------------------- | ------------------------------------------------------- |
+| Build Command        | `make -jN` (spatial/realtime)         | `cmake --build . --parallel N --config Release`         |
+| cult-transcoder      | `cmake --build` (all platforms)       | `cmake --build --config Release` (multi-config VS gens) |
+| Executable Extension | None                                  | `.exe`                                                  |
+| Repo Root Resolution | `Path(__file__).resolve().parents[2]` | `Path(__file__).resolve().parents[2]`                   |
+
+> ⚠️ **Future dev note:** `buildSpatialRenderer()` and `buildRealtimeEngine()` on POSIX use raw
+> `make -jN`, while `buildCultTranscoder()` on POSIX (and all Windows builds) use `cmake --build`.
+> These should be unified to `cmake --build` for generator-independence and cross-platform parity.
+> See `internalDocsMD/OS/build-wiring.md` for full details and migration steps.
 
 ### Functions
 
-All OS implementations provide the same API:
+All OS implementations expose the same public API via `setupCppTools()`:
 
-- `setupCppTools()` - Main entry point, orchestrates all builds
-- `initializeSubmodules()` - Initialize AlloLib submodule
-- `initializeEbuSubmodules()` - Initialize libbw64/libadm submodules
-- `buildAdmExtractor()` - Build ADM XML extraction tool
-- `buildSpatialRenderer()` - Build spatial audio renderer
+- `setupCppTools()` — Main entry point; orchestrates all builds in order
+- `initializeSubmodules()` — Initialize AlloLib submodule (`thirdparty/allolib`)
+- `initializeCultTranscoderSubmodules()` — Initialize `cult_transcoder/thirdparty/libbw64`
+- `buildCultTranscoder()` — Build `cult-transcoder` CLI (Release, cmake --build)
+- `buildSpatialRenderer()` — Build spatial audio renderer
+- `buildRealtimeEngine()` — Build realtime engine
+- `initializeEbuSubmodules()` — _(superseded, kept for reference)_ Init spatialroot-level libbw64/libadm
+- `buildAdmExtractor()` — _(superseded by cult-transcoder, kept for reference)_ Build spatialroot_adm_extract
+
+### Build Order (setupCppTools)
+
+1. `initializeSubmodules()` — AlloLib (shallow depth=1)
+2. `buildCultTranscoder()` — which first calls `initializeCultTranscoderSubmodules()` internally
+3. `buildSpatialRenderer()`
+4. `buildRealtimeEngine()`
+
+### cult-transcoder Build Details
+
+- **Source dir:** `cult_transcoder/` (git submodule of spatialroot)
+- **Build dir:** `cult_transcoder/build/`
+- **libbw64 submodule:** `cult_transcoder/thirdparty/libbw64` — tracked by cult_transcoder's own
+  `.gitmodules`. Must be initialized before cmake configure or CMakeLists.txt will FATAL_ERROR.
+  The nested submodule path in spatialroot's git objects is `cult_transcoder/modules/thirdparty/libbw64`.
+- **FetchContent deps:** Catch2 (v3.5.3) and pugixml (v1.14) are fetched automatically at
+  cmake configure time — no manual install required.
+- **Binary output:**
+  - macOS/Linux: `cult_transcoder/build/cult-transcoder`
+  - Windows: `cult_transcoder/build/Release/cult-transcoder.exe` (VS generator) or
+    `cult_transcoder/build/cult-transcoder.exe` (Ninja); called via `scripts/cult-transcoder.bat`
 
 ### Build Products
 
-- **ADM Extractor:** `src/adm_extract/build/spatialroot_adm_extract[.exe]`
-- **Spatial Renderer:** `spatial_engine/spatialRender/build/spatialroot_spatial_render[.exe]`
+| Tool                          | Path                                                                  | Status     |
+| ----------------------------- | --------------------------------------------------------------------- | ---------- |
+| cult-transcoder (macOS/Linux) | `cult_transcoder/build/cult-transcoder`                               | Active     |
+| cult-transcoder (Windows)     | `cult_transcoder/build/[Release/]cult-transcoder.exe`                 | Active     |
+| Spatial Renderer              | `spatial_engine/spatialRender/build/spatialroot_spatial_render[.exe]` | Active     |
+| Realtime Engine               | `spatial_engine/realtimeEngine/build/spatialroot_realtime[.exe]`      | Active     |
+| ADM Extractor                 | `src/adm_extract/build/spatialroot_adm_extract[.exe]`                 | Superseded |
 
 ### Integration
 
-- **Init Script:** `init.sh` imports `src.config.configCPP` (updated path)
+- **Init Script:** `init.sh` calls `from src.config.configCPP import setupCppTools`
 - **Idempotent:** All builds check for existing executables before rebuilding
-- **Error Handling:** Clear error messages for missing dependencies (CMake, compilers)
+- **From scratch:** Init assumes nothing is pre-installed; fetches all deps (AlloLib, libbw64,
+  Catch2, pugixml) automatically
+- **Error Handling:** Clear error messages with recovery instructions for all failure modes
 
 ### Version History
 
-### Version History
-
+- **v0.5.3** (2026-03-07): `buildCultTranscoder()` + `initializeCultTranscoderSubmodules()` added
+  to both posix and windows configs; `setupCppTools()` wired to build cult-transcoder as step 2.
+  See `internalDocsMD/OS/build-wiring.md` for posix `make` vs `cmake --build` notes.
 - **v0.5.2** (2026-03-07): Phase 5 GUI — TRANSCODE tab added (`RealtimeTranscodePanel`, `RealtimeTranscoderRunner`); font system overhauled (`ui_font()`, Courier New, no bold); file dialog two-button pattern; `RealtimeInputPanel` File.../Pkg... buttons; QTabWidget ENGINE/TRANSCODE tabs
 - **v0.5.2** (2026-03-07): Phase 4 cult-transcoder -- `--lfe-mode` flag (hardcoded|speaker-label), ADM profile detection (DolbyAtmos/Sony360RA), 40/40 tests pass
 - **v0.5.2** (2026-03-04): Phase 3 -- ADM WAV preprocessing delegated to cult-transcoder; `runRealtime.py` calls `cult-transcoder transcode --in-format adm_wav`; realtime engine + GUI complete (Phases 1-12); `xml_etree_parser` wired into main pipeline; lxml removed; `LusidScene.summary()` added; polish tasks done

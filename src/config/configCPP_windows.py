@@ -20,6 +20,10 @@ def setupCppTools() -> bool:
         print("\n✗ Error: Failed to initialize allolib submodule")
         return False
 
+    if not buildCultTranscoder():
+        print("\n✗ Error: Failed to build cult-transcoder")
+        return False
+
     if not buildSpatialRenderer():
         print("\n✗ Error: Failed to build Spatial renderer")
         return False
@@ -68,6 +72,176 @@ def initializeSubmodules(project_root=None) -> bool:
         return False
     except Exception as e:
         print(f"\n✗ Unexpected error during submodule initialization: {e}")
+        return False
+
+
+def initializeCultTranscoderSubmodules(project_root=None) -> bool:
+    """
+    Initialize the libbw64 submodule nested inside cult_transcoder/thirdparty/libbw64.
+
+    cult_transcoder owns its own copy of libbw64 (tracked via cult_transcoder/.gitmodules).
+    CMakeLists.txt issues FATAL_ERROR if bw64.hpp is missing, so this must run before
+    the CMake configure step. (AGENTS-CULT §8, DEV-PLAN Phase 3)
+
+    Parameters:
+    -----------
+    project_root : Path or str, optional
+        spatialroot root directory. Defaults to get_repo_root().
+
+    Returns:
+    --------
+    bool
+        True if libbw64 headers are present after this call, False on error.
+    """
+    if project_root is None:
+        project_root = get_repo_root()
+    else:
+        project_root = Path(project_root).resolve()
+
+    cult_dir = project_root / "cult_transcoder"
+    libbw64_header = cult_dir / "thirdparty" / "libbw64" / "include" / "bw64" / "bw64.hpp"
+
+    if libbw64_header.exists():
+        print("✓ cult_transcoder/thirdparty/libbw64 already initialized")
+        return True
+
+    print("Initializing cult_transcoder/thirdparty/libbw64 submodule...")
+    try:
+        result = subprocess.run(
+            ["git", "submodule", "update", "--init", "--depth", "1",
+             "thirdparty/libbw64"],
+            cwd=str(cult_dir),
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        if result.stdout:
+            print(result.stdout)
+        if libbw64_header.exists():
+            print("✓ cult_transcoder/thirdparty/libbw64 initialized")
+            return True
+        print("✗ libbw64 headers still missing after submodule update")
+        return False
+
+    except subprocess.CalledProcessError as e:
+        print(f"\n✗ cult_transcoder/thirdparty/libbw64 init failed (exit {e.returncode})")
+        print(f"stdout: {e.stdout}")
+        print(f"stderr: {e.stderr}")
+        return False
+    except Exception as e:
+        print(f"\n✗ Unexpected error initializing cult_transcoder/thirdparty/libbw64: {e}")
+        return False
+
+
+def buildCultTranscoder(
+    build_dir="cult_transcoder/build",
+    source_dir="cult_transcoder",
+) -> bool:
+    """
+    Build the cult-transcoder CLI using CMake (Windows).
+
+    Build process:
+    1. Ensure cult_transcoder/thirdparty/libbw64 submodule is initialized.
+       (CMakeLists.txt issues FATAL_ERROR if bw64.hpp is missing — AGENTS-CULT §8)
+    2. cmake -B <build_dir> -DCMAKE_BUILD_TYPE=Release <source_dir>
+       FetchContent (Catch2, pugixml) is resolved automatically at configure time.
+    3. cmake --build <build_dir> --config Release
+
+    Binary paths (AGENTS-CULT §9):
+        Windows : cult_transcoder/build/cult-transcoder.exe (called via .bat wrapper)
+
+    Parameters:
+    -----------
+    build_dir : str
+        CMake build directory path, relative to project root.
+    source_dir : str
+        Directory containing cult_transcoder's CMakeLists.txt, relative to project root.
+
+    Returns:
+    --------
+    bool
+        True if the binary exists (or was built successfully), False otherwise.
+    """
+    project_root = get_repo_root()
+    build_path = project_root / build_dir
+    source_path = project_root / source_dir
+    executable = build_path / "Release" / exe("cult-transcoder")
+    # Visual Studio multi-config generators place the binary under build/Release/
+    # Single-config (Ninja) places it directly under build/ — check both
+    executable_flat = build_path / exe("cult-transcoder")
+
+    if executable.exists() or executable_flat.exists():
+        found = executable if executable.exists() else executable_flat
+        print(f"✓ cult-transcoder already built at: {found}")
+        return True
+
+    cmake_file = source_path / "CMakeLists.txt"
+    if not cmake_file.exists():
+        print(f"✗ cult_transcoder CMakeLists.txt not found at {cmake_file}")
+        print("  Ensure the cult_transcoder submodule is initialized:")
+        print("  git submodule update --init cult_transcoder")
+        return False
+
+    # libbw64 must be present before cmake configure or it will FATAL_ERROR
+    if not initializeCultTranscoderSubmodules(project_root):
+        return False
+
+    build_path.mkdir(parents=True, exist_ok=True)
+
+    print("Building cult-transcoder (Windows).")
+    print(f"  Source:    {source_path}")
+    print(f"  Build dir: {build_path}")
+
+    try:
+        import multiprocessing
+        num_cores = multiprocessing.cpu_count()
+
+        # Configure — FetchContent (Catch2, pugixml) resolved here automatically
+        print("\n  Running CMake configuration (Release)...")
+        result = subprocess.run(
+            ["cmake", "-B", str(build_path),
+             "-DCMAKE_BUILD_TYPE=Release",
+             str(source_path)],
+            cwd=str(project_root),
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        if result.stdout:
+            print(result.stdout)
+
+        # Build — --config Release for Visual Studio multi-config generators
+        print(f"\n  Running cmake --build ({num_cores} cores, Release)...")
+        result = subprocess.run(
+            ["cmake", "--build", str(build_path),
+             "--parallel", str(num_cores),
+             "--config", "Release"],
+            cwd=str(project_root),
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        if result.stdout:
+            print(result.stdout)
+
+        found = executable if executable.exists() else executable_flat
+        if found.exists():
+            print(f"✓ cult-transcoder built successfully: {found}")
+            return True
+
+        print("✗ Build completed but cult-transcoder.exe not found — check CMake target name")
+        return False
+
+    except subprocess.CalledProcessError as e:
+        print(f"\n✗ cult-transcoder build failed (exit {e.returncode})")
+        print(f"stdout: {e.stdout}")
+        print(f"stderr: {e.stderr}")
+        return False
+    except FileNotFoundError:
+        print("\n✗ cmake not found — install CMake and build tools")
+        return False
+    except Exception as e:
+        print(f"\n✗ Unexpected error building cult-transcoder: {e}")
         return False
 
 
