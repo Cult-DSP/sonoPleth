@@ -271,6 +271,7 @@ LFE sources are excluded from fast-mover detection (they have no spatial positio
 ### Context
 
 The engine now sounds good in some runs but produces non-deterministic output failures:
+
 - Eden run 1: audio shifted to channels 15+ upward, skipping 1–14
 - Canyon/Swale mid-playback: loudspeakers disappeared while subs remained
 - MOTU channels 1 and 2 extremely quiet or skipped
@@ -285,10 +286,12 @@ Focus shifted from DSP/click polishing to routing/output-state correctness.
 #### Internal bus (render buffer)
 
 `Spatializer::init()` computes `computedOutputChannels` from the layout:
+
 ```
 maxChannel = max(numSpeakers - 1, max(subwooferDeviceChannels))
 outputChannels = maxChannel + 1
 ```
+
 This value is written into `mConfig.outputChannels` and `mRenderIO` is sized to it.
 The render buffer is layout-sized and never changes after init.
 
@@ -340,12 +343,14 @@ In `main.cpp`, `outputRemap.load()` is called at line 371, but `backend.init()` 
 at line 477. At remap load time, `config.outputChannels` exists (layout-derived) but
 the actual device channel count is not yet known. Both `renderChannels` and
 `deviceChannels` arguments to `load()` are passed as `config.outputChannels`:
+
 ```cpp
 bool remapOk = outputRemap.load(remapPath,
                                 config.outputChannels,   // renderChannels ← correct
                                 config.outputChannels);  // deviceChannels ← WRONG:
                                                          // should be actual hw count
 ```
+
 Any remap entry targeting a device channel ≥ `config.outputChannels` would be dropped
 even if supported by the device. Not triggering current symptoms (no `--remap` in
 failing tests) but is a latent correctness bug.
@@ -423,7 +428,7 @@ on `OutputRemap` for post-open validation.
 The Canyon/Swale "loudspeakers disappeared, subs remained" behavior COULD be:
 (a) the channel truncation bug on a run where the device opened under-provisioned
 (b) proximity guard mass-fire concentrating 101 sources on the DBAP equidistant
-    shell → per-speaker gain below audibility threshold for mains only
+shell → per-speaker gain below audibility threshold for mains only
 (c) both, with the channel bug as the primary event and guard as amplifier
 
 Current code evidence for (b): guard fires per-source per block (not per-channel),
