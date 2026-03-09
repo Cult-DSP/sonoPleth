@@ -333,7 +333,8 @@ public:
         // Zero the internal render buffer (DBAP accumulates into it)
         mRenderIO.zeroOut();
 
-        for (const auto& pose : poses) {
+        for (size_t si = 0; si < poses.size(); ++si) {
+            const auto& pose = poses[si];
 
             // Skip sources with no valid position
             if (!pose.isValid) continue;
@@ -349,6 +350,26 @@ public:
                 // Read LFE audio into pre-allocated buffer
                 streaming.getBlock(pose.name, currentFrame, numFrames,
                                    mSourceBuffer.data());
+
+                // Fix 1 — Onset fade (LFE path)
+                // Detect whether this block has meaningful signal energy.
+                // If the previous block was silent and this one is active,
+                // ramp the first kOnsetFadeSamples samples from 0→1 to
+                // suppress the step-from-zero low-end pop at source onset.
+                if (si < mSourceWasSilent.size()) {
+                    float energy = 0.0f;
+                    for (unsigned int f = 0; f < numFrames; ++f)
+                        energy += mSourceBuffer[f] * mSourceBuffer[f];
+                    const bool currentlyActive = (energy > kOnsetEnergyThreshold);
+                    if (mSourceWasSilent[si] && currentlyActive) {
+                        const unsigned int fadeEnd =
+                            std::min(kOnsetFadeSamples, numFrames);
+                        for (unsigned int f = 0; f < fadeEnd; ++f)
+                            mSourceBuffer[f] *=
+                                static_cast<float>(f) / static_cast<float>(fadeEnd);
+                    }
+                    mSourceWasSilent[si] = currentlyActive ? 0u : 1u;
+                }
 
                 float subGain = (masterGain * kSubCompensation)
                                 / static_cast<float>(mSubwooferChannels.size());
@@ -369,7 +390,24 @@ public:
             // Read mono audio from streaming agent
             streaming.getBlock(pose.name, currentFrame, numFrames,
                                mSourceBuffer.data());
-
+            // Fix 1 — Onset fade (DBAP path)
+            // Same gate-and-ramp logic as the LFE path above.
+            // Applied before the master-gain multiply so the ramp is not
+            // scaled twice and does not affect the proximity guard below.
+            if (si < mSourceWasSilent.size()) {
+                float energy = 0.0f;
+                for (unsigned int f = 0; f < numFrames; ++f)
+                    energy += mSourceBuffer[f] * mSourceBuffer[f];
+                const bool currentlyActive = (energy > kOnsetEnergyThreshold);
+                if (mSourceWasSilent[si] && currentlyActive) {
+                    const unsigned int fadeEnd =
+                        std::min(kOnsetFadeSamples, numFrames);
+                    for (unsigned int f = 0; f < fadeEnd; ++f)
+                        mSourceBuffer[f] *=
+                            static_cast<float>(f) / static_cast<float>(fadeEnd);
+                }
+                mSourceWasSilent[si] = currentlyActive ? 0u : 1u;
+            }
             // Apply master gain to the source buffer before DBAP.
             for (unsigned int f = 0; f < numFrames; ++f) {
                 mSourceBuffer[f] *= masterGain;
@@ -551,6 +589,22 @@ public:
     // Passing nullptr (the default) restores the identity fast-path.
     void setRemap(const OutputRemap* remap) { mRemap = remap; }
 
+    // ── Fix 1: Preallocate per-source onset-fade state ────────────────────
+    // MUST be called from the MAIN thread after Pose::loadScene() has
+    // established the source count, and BEFORE backend.start().
+    // Never call during playback — this method allocates.
+    //
+    // numSources should equal pose.numSources() (the size of the mPoses
+    // vector).  Using a stable, layout-order index (si in renderBlock())
+    // avoids any string-keyed lookup inside the audio callback.
+    void prepareForSources(size_t numSources) {
+        // All sources start "silent" so the very first block always triggers
+        // the fade-in ramp regardless of prior state.
+        mSourceWasSilent.assign(numSources, 1u);
+        std::cout << "[Spatializer] prepareForSources: " << numSources
+                  << " per-source onset-fade slots allocated." << std::endl;
+    }
+
     // ── Phase 6: Focus auto-compensation ─────────────────────────────────
     // THREADING: MAIN THREAD ONLY. Must NOT be called while the audio stream
     // is running. Reason: this method temporarily modifies mRenderIO (the
@@ -641,6 +695,17 @@ private:
     // artificially constrained after testing.
     static constexpr float kMinSpeakerDist = 0.15f;
 
+    // Fix 1 — Onset fade constants.
+    // kOnsetEnergyThreshold: sum-of-squares gate for the pre-allocated source
+    //   buffer.  getBlock() writes exact 0.0f on silence / past-EOF, so any
+    //   real signal will exceed this threshold immediately.
+    // kOnsetFadeSamples: linear ramp-in length applied only on the FIRST active
+    //   block after silence (~2.7 ms at 48 kHz). Short enough not to smear
+    //   transient attacks; long enough to suppress the low-end pop caused by
+    //   the abrupt step-from-zero at source onset.
+    static constexpr float        kOnsetEnergyThreshold = 1e-10f;
+    static constexpr unsigned int kOnsetFadeSamples     = 128u;
+
     // ── References ───────────────────────────────────────────────────────
     RealtimeConfig& mConfig;
     EngineState&    mState;
@@ -692,4 +757,14 @@ private:
     // focus change produces a smooth ramp rather than a step at the boundary.
     // Audio-thread-owned. See Fix 4.
     float                       mPrevFocus = 1.0f;
+
+    // ── Fix 1: Per-source silence-tracking state ──────────────────────────
+    // Indexed by stable pose order (si) — same slot each block.
+    // 1 = previous block was silent (or not yet initialized).
+    // 0 = previous block had signal energy above kOnsetEnergyThreshold.
+    // Allocated once by prepareForSources(); zero-size vector = guard
+    //   (si < mSourceWasSilent.size() check) keeps audio path safe if
+    //   prepareForSources() was never called.
+    // AUDIO-THREAD-OWNED after start().
+    std::vector<uint8_t>        mSourceWasSilent;
 };

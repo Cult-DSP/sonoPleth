@@ -334,6 +334,11 @@ int main(int argc, char* argv[]) {
               << " speakers, focus=" << config.dbapFocus.load() << "." << std::endl;
     std::cout << "[Main] Output channels (from layout): " << config.outputChannels << std::endl;
 
+    // Fix 1 — Preallocate per-source onset-fade state.
+    // Must run after pose.loadScene() (which sets the source count) and
+    // before backend.start(). Uses the same stable slot ordering as mPoses.
+    spatializer.prepareForSources(pose.numSources());
+
     // ── Phase 6: Compensation and Gain ───────────────────────────────────
     // If focus auto-compensation is enabled, compute the initial loudspeaker
     // mix trim for the current focus value now (on the main thread, before
