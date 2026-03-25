@@ -503,6 +503,16 @@ int main(int argc, char* argv[]) {
               << " sources → " << spatializer.numSpeakers()
               << " speakers. Press Ctrl+C to stop.\n" << std::endl;
 
+    // ── One-time device/channel info (printed before loop, static after init) ──
+    {
+        const int reqCh    = config.outputChannels;
+        const int actCh    = static_cast<int>(backend.audioIO().channelsOutDevice());
+        const int renderCh = static_cast<int>(spatializer.numRenderChannels());
+        std::cout << "[Diag] Channels — requested: " << reqCh
+                  << "  actual-device: " << actCh
+                  << "  render-bus: " << renderCh << std::endl;
+    }
+
     while (!config.shouldExit.load()) {
 
         // ── Consume pendingAutoComp on the MAIN thread ────────────────────
@@ -517,23 +527,57 @@ int main(int argc, char* argv[]) {
                       << " (" << (20.0f * std::log10(comp)) << " dB)" << std::flush;
         }
 
-        // Print status every ~500 ms
+        // ── Phase 14: one-shot relocation event detection ─────────────────
+        // Consume render-bus and device-output relocation latches. Printing
+        // both together lets the reader tell immediately whether the mask
+        // change occurred before the Phase 7 copy (render latch fires first)
+        // or only after it (only device latch fires).
         double timeSec = state.playbackTimeSec.load(std::memory_order_relaxed);
-        float  cpu     = state.cpuLoad.load(std::memory_order_relaxed);
-        bool   paused  = config.paused.load(std::memory_order_relaxed);
 
-        std::cout << "\r  Time: " << std::fixed;
+        if (state.renderRelocEvent.load(std::memory_order_relaxed)) {
+            uint64_t prev = state.renderRelocPrev.load(std::memory_order_relaxed);
+            uint64_t curr = state.renderRelocNext.load(std::memory_order_relaxed);
+            state.renderRelocEvent.store(false, std::memory_order_relaxed);
+            std::cout << "\n[RELOC-RENDER] t=" << std::fixed;
+            std::cout.precision(2);
+            std::cout << timeSec << "s  mask: 0x" << std::hex << prev
+                      << " → 0x" << curr << std::dec << std::endl;
+        }
+        if (state.deviceRelocEvent.load(std::memory_order_relaxed)) {
+            uint64_t prev = state.deviceRelocPrev.load(std::memory_order_relaxed);
+            uint64_t curr = state.deviceRelocNext.load(std::memory_order_relaxed);
+            state.deviceRelocEvent.store(false, std::memory_order_relaxed);
+            std::cout << "\n[RELOC-DEVICE] t=" << std::fixed;
+            std::cout.precision(2);
+            std::cout << timeSec << "s  mask: 0x" << std::hex << prev
+                      << " → 0x" << curr << std::dec << std::endl;
+        }
+
+        // ── Status line every ~500 ms ─────────────────────────────────────
+        float  cbCpu   = state.callbackCpuLoad.load(std::memory_order_relaxed);
+        bool   paused  = config.paused.load(std::memory_order_relaxed);
+        uint64_t rMask = state.renderActiveMask.load(std::memory_order_relaxed);
+        uint64_t dMask = state.deviceActiveMask.load(std::memory_order_relaxed);
+        float  mainRms = state.mainRmsTotal.load(std::memory_order_relaxed);
+        float  subRms  = state.subRmsTotal.load(std::memory_order_relaxed);
+
+        std::cout << "\r  t=";
+        std::cout << std::fixed;
         std::cout.precision(1);
         std::cout << timeSec << "s"
-                  << "  |  CPU: ";
+                  << "  CPU=" << std::fixed;
         std::cout.precision(1);
-        std::cout << (cpu * 100.0f) << "%"
-                  << "  |  Sources: " << state.numSources.load(std::memory_order_relaxed)
-                  << "  |  Frames: " << state.frameCounter.load(std::memory_order_relaxed)
-                  << "  |  Underruns: " << streaming.totalUnderruns()
-                  << "  |  NaN: " << state.nanGuardCount.load(std::memory_order_relaxed)
-                  << "  |  SpeakerGuard: " << state.speakerProximityCount.load(std::memory_order_relaxed)
-                  << "  |  " << (paused ? "PAUSED " : "PLAYING")
+        std::cout << (cbCpu * 100.0f) << "%"
+                  << "  rBus=0x" << std::hex << rMask
+                  << "  dev=0x"  << dMask << std::dec
+                  << "  mainRms=" << std::fixed;
+        std::cout.precision(4);
+        std::cout << mainRms
+                  << "  subRms=" << subRms
+                  << "  Xrun=" << streaming.totalUnderruns()
+                  << "  NaN=" << state.nanGuardCount.load(std::memory_order_relaxed)
+                  << "  SpkG=" << state.speakerProximityCount.load(std::memory_order_relaxed)
+                  << "  " << (paused ? "PAUSED " : "PLAYING")
                   << "     " << std::flush;
 
         std::this_thread::sleep_for(std::chrono::milliseconds(500));

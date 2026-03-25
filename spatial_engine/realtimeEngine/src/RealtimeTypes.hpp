@@ -245,5 +245,48 @@ struct EngineState {
     std::atomic<int>      numSources{0};    // Number of active audio sources
     std::atomic<int>      numSpeakers{0};   // Number of speakers in layout
     std::atomic<double>   sceneDuration{0.0}; // Total scene duration in seconds
+
+    // ── Channel relocation diagnostics (Phase 14) ─────────────────────────
+    //
+    // Two bitmasks are snapshotted per block on the audio thread and read by
+    // the main thread every 500 ms:
+    //
+    //   renderActiveMask  – channels with signal in mRenderIO, BEFORE the
+    //                       Phase 7 OutputRemap copy ("pre-copy").
+    //   deviceActiveMask  – channels with signal in io.outBuffer(), AFTER the
+    //                       Phase 7 copy ("post-copy").
+    //
+    // If renderActiveMask is stable but deviceActiveMask changes, relocation
+    // is occurring at the output/device layer only.
+    // If renderActiveMask itself changes, relocation is happening in mRenderIO
+    // (upstream of the copy — a more fundamental problem).
+    //
+    // One-shot relocation event latches: set by the audio thread when a mask
+    // changes materially, cleared by the main thread after printing. The Prev/
+    // Next pair captures the before and after masks at the moment of change.
+    //
+    // mainRmsTotal / subRmsTotal are sqrt(mean-square) sums across main and sub
+    // channels respectively in the render bus, latest block.
+    //
+    // callbackCpuLoad replaces the untrustworthy mAudioIO.cpu(): it is the
+    // ratio of wall-clock callback duration to the block budget (0.0–2.0+).
+    //
+    // All fields: single writer (audio thread), relaxed stores/loads acceptable
+    // (display lag of one block is fine, same contract as cpuLoad / xrunCount).
+
+    std::atomic<uint64_t> renderActiveMask{0};    // render-bus active channel bitmask
+    std::atomic<uint64_t> deviceActiveMask{0};    // device-output active channel bitmask
+
+    std::atomic<uint64_t> renderRelocPrev{0};     // render mask before most-recent change
+    std::atomic<uint64_t> renderRelocNext{0};     // render mask after most-recent change
+    std::atomic<bool>     renderRelocEvent{false};// latch: audio sets, main clears
+
+    std::atomic<uint64_t> deviceRelocPrev{0};
+    std::atomic<uint64_t> deviceRelocNext{0};
+    std::atomic<bool>     deviceRelocEvent{false};
+
+    std::atomic<float>    mainRmsTotal{0.0f};     // sqrt(sum of per-main-ch mean-square)
+    std::atomic<float>    subRmsTotal{0.0f};      // sqrt(sum of per-sub-ch mean-square)
+    std::atomic<float>    callbackCpuLoad{0.0f};  // wall-clock callback / block budget
 };
 

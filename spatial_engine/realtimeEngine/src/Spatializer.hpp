@@ -627,6 +627,47 @@ public:
             }
         }
 
+        // ── Phase 14 diagnostic: render-bus active-channel mask (pre-copy) ──
+        // Measured AFTER all rendering and NaN clamp, BEFORE the OutputRemap
+        // copy. A bitmask of channels whose block RMS exceeds the threshold is
+        // stored atomically for the main thread to read every 500 ms.
+        //
+        // The relocation latch fires when the active set changes between blocks,
+        // capturing old and new masks so the main thread can print the event
+        // immediately. If only deviceActiveMask changes (not renderActiveMask),
+        // relocation is happening at the output/device layer. If renderActiveMask
+        // itself changes, the problem is upstream in mRenderIO.
+        //
+        // kRmsThresh = 1e-8 ≈ mean-square of a -80 dBFS sine. Any non-zero
+        // render contribution will exceed this; floating-point zero-fill won't.
+        {
+            constexpr float kRmsThresh = 1e-8f;
+            uint64_t mask = 0;
+            float mainMs = 0.0f, subMs = 0.0f;
+            for (unsigned int ch = 0; ch < renderChannels && ch < 64u; ++ch) {
+                const float* buf = mRenderIO.outBuffer(ch);
+                float ss = 0.0f;
+                for (unsigned int f = 0; f < numFrames; ++f) ss += buf[f] * buf[f];
+                float ms = ss / static_cast<float>(numFrames);
+                if (ms > kRmsThresh) {
+                    mask |= (1ULL << ch);
+                    if (isSubwooferChannel(static_cast<int>(ch)))
+                        subMs += ms;
+                    else
+                        mainMs += ms;
+                }
+            }
+            uint64_t prevMask = mState.renderActiveMask.load(std::memory_order_relaxed);
+            if (mask != prevMask) {
+                mState.renderRelocPrev.store(prevMask, std::memory_order_relaxed);
+                mState.renderRelocNext.store(mask,     std::memory_order_relaxed);
+                mState.renderRelocEvent.store(true,    std::memory_order_relaxed);
+            }
+            mState.renderActiveMask.store(mask, std::memory_order_relaxed);
+            mState.mainRmsTotal.store(std::sqrt(mainMs), std::memory_order_relaxed);
+            mState.subRmsTotal.store(std::sqrt(subMs),   std::memory_order_relaxed);
+        }
+
         // ── Phase 7: Copy render buffer → real output via OutputRemap ────
         // If no remap is set (or remap is identity), use the direct-copy
         // fast path (same as pre-Phase-7 behaviour, bit-identical output).
@@ -665,11 +706,40 @@ public:
                 }
             }
         }
+
+        // ── Phase 14 diagnostic: device-output active-channel mask (post-copy) ─
+        // Measured immediately after the Phase 7 copy so io.outBuffer() contains
+        // the final per-device-channel output for this block. Comparing this mask
+        // to renderActiveMask (sampled just before the copy) lets the main thread
+        // determine whether relocation is occurring before or after the copy step.
+        {
+            constexpr float kRmsThresh = 1e-8f;
+            uint64_t mask = 0;
+            for (unsigned int ch = 0; ch < numOutputChannels && ch < 64u; ++ch) {
+                const float* buf = io.outBuffer(ch);
+                float ss = 0.0f;
+                for (unsigned int f = 0; f < numFrames; ++f) ss += buf[f] * buf[f];
+                if ((ss / static_cast<float>(numFrames)) > kRmsThresh)
+                    mask |= (1ULL << ch);
+            }
+            uint64_t prevMask = mState.deviceActiveMask.load(std::memory_order_relaxed);
+            if (mask != prevMask) {
+                mState.deviceRelocPrev.store(prevMask, std::memory_order_relaxed);
+                mState.deviceRelocNext.store(mask,     std::memory_order_relaxed);
+                mState.deviceRelocEvent.store(true,    std::memory_order_relaxed);
+            }
+            mState.deviceActiveMask.store(mask, std::memory_order_relaxed);
+        }
     }
 
     // ── Accessors ────────────────────────────────────────────────────────
     int numSpeakers() const { return mNumSpeakers; }
     bool isInitialized() const { return mInitialized; }
+    /// Number of channels in the internal render bus (layout-derived).
+    /// Safe to call from the main thread after init().
+    unsigned int numRenderChannels() const {
+        return static_cast<unsigned int>(mRenderIO.channelsOut());
+    }
 
     // ── Phase 7: Output Remap ─────────────────────────────────────────────
     // Call after init() and before the audio stream starts.

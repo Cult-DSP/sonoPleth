@@ -1040,4 +1040,157 @@ All fixes below are **in the codebase**. Do not re-implement or re-analyse them.
 - Do not reopen the broad device/output mismatch analysis — Fix 6 resolved the structural issue.
 - Do not add per-sample logging in the audio callback.
 - Do not modify `runPipeline.py` — it is deprecated. Use `runRealtime.py`.
+
+---
+
+## 2026-03-25 — Session 6: Phase 14 channel-relocation diagnostic
+
+### Context entering this session
+
+Post-Fix-2/5 listener tests across Sony 360RA, Swale, and Ascent showed channel relocation is still occurring at runtime, non-deterministically, with no consistent correlation to `SpeakerGuard`, `nanGuardCount`, or underruns. The existing monitoring counters are insufficient to locate the fault.
+
+The main open question is:
+
+> **Does channel relocation occur before or after the Phase 7 `OutputRemap` copy?**
+>
+> - Before = the active channel set is changing inside `mRenderIO` (a render-bus problem)
+> - After = the active channel set is stable in `mRenderIO` but changes in `io.outBuffer()` (a device/output-layer problem)
+
+No code-path changes. This session adds diagnostic instrumentation only.
+
+---
+
+### Phase 14: channel-relocation diagnostic — PATCHED (2026-03-25)
+
+#### Design
+
+Two measurement points are inserted in `Spatializer::renderBlock()`:
+
+**Point 1 — render-bus, pre-copy** (after Phase 11 NaN clamp, before Phase 7 OutputRemap copy):
+- Iterates `mRenderIO.outBuffer(ch)` for all render-bus channels
+- Sets bit `ch` in `renderActiveMask` if block mean-square > 1e-8 (≈ −80 dBFS)
+- Accumulates `mainRmsTotal` (main channels) and `subRmsTotal` (sub channels) as sqrt(mean-square)
+- If `renderActiveMask` differs from its value last block, fires the `renderRelocEvent` latch with before/after masks
+
+**Point 2 — device output, post-copy** (immediately after the Phase 7 copy, end of `renderBlock()`):
+- Same scan on `io.outBuffer(ch)` — the real hardware-facing buffer
+- Sets `deviceActiveMask`, fires `deviceRelocEvent` latch on change
+
+**CPU meter fix** — `RealtimeBackend::processBlock()`:
+- `std::chrono::steady_clock::now()` captured at the very top of the callback
+- `callbackCpuLoad = elapsed_µs / block_budget_µs` stored to `EngineState` at the bottom (and at the paused early-return)
+- Capped at 2.0 so overloads are visible; not clamped to 1.0 as the old `mAudioIO.cpu()` was
+- Legacy `cpuLoad` (AlloLib's `mAudioIO.cpu()`) is retained in `EngineState` alongside the new field for comparison
+
+**Main thread — monitoring loop** (`main.cpp`):
+- One-time print before the loop: `requested / actual-device / render-bus` channel counts
+- Each 500 ms: immediately prints any pending `[RELOC-RENDER]` or `[RELOC-DEVICE]` events with timestamp and hex masks, then prints the rolling status line including both masks, RMS totals, and `callbackCpuLoad`
+
+#### Diagnostic key
+
+| Observation | Conclusion |
+|---|---|
+| `[RELOC-RENDER]` fires | Relocation is happening **inside `mRenderIO`** — upstream of the copy |
+| `[RELOC-DEVICE]` fires, `[RELOC-RENDER]` does **not** | Relocation is **only in the device/output layer** (OutputRemap, channel-count mismatch, or AlloLib device copy) |
+| Both fire simultaneously | Render-bus change propagated through the copy (expected, consistent with render-layer origin) |
+| Neither fires, but audible relocation occurs | The relocation threshold (1e-8 mean-square) is too high, or the event is masked by the 500 ms polling interval |
+
+#### Files changed
+
+- `spatial_engine/realtimeEngine/src/RealtimeTypes.hpp`
+  - `EngineState`: added `renderActiveMask`, `deviceActiveMask` (`atomic<uint64_t>`); `renderRelocPrev/Next/Event`, `deviceRelocPrev/Next/Event` (relocation event latches); `mainRmsTotal`, `subRmsTotal` (`atomic<float>`); `callbackCpuLoad` (`atomic<float>`)
+
+- `spatial_engine/realtimeEngine/src/Spatializer.hpp`
+  - `renderBlock()`: pre-copy measurement block (after NaN clamp) and post-copy measurement block (after Phase 7 copy); both write to the new `EngineState` fields
+  - Added `numRenderChannels()` accessor (returns `mRenderIO.channelsOut()`) for main-thread device-info print
+
+- `spatial_engine/realtimeEngine/src/RealtimeBackend.hpp`
+  - Added `#include <chrono>`
+  - `processBlock()`: added `mCallbackStart` capture at top; added `callbackCpuLoad` store at Step 6 and at the paused early-return path
+  - Added `mCallbackStart` member (`std::chrono::steady_clock::time_point`)
+
+- `spatial_engine/realtimeEngine/src/main.cpp`
+  - Pre-loop: print `requested / actual-device / render-bus` channel counts
+  - Monitoring loop: consume and print relocation event latches; add `rBus=0x<hex>  dev=0x<hex>  mainRms=  subRms=  CPU=` to status line (replacing old `CPU=` and `Frames=` columns)
+
+#### RT-safety
+
+| Concern | Status |
+|---|---|
+| Pre-copy scan: `renderChannels × numFrames` multiply-accumulate | ~25,600 ops at 50 ch × 512 frames; runs at ~93 blocks/sec ≈ 2.4 M ops/sec — negligible |
+| Post-copy scan: same size, `io.outBuffer()` | Same cost, same conclusion |
+| Atomic stores (12 per block: 2 masks + 10 reloc/RMS fields) | All relaxed; no fence, no contention |
+| `std::chrono::steady_clock::now()` twice per block | On macOS: `mach_absolute_time()` — no syscall, safe in RT context |
+| Relocation latch: race between audio set and main clear | Benign: worst case is main reads stale mask and misses one event; no data corruption |
+
+#### What this does NOT change
+
+- No DBAP render path changes
+- No proximity guard changes
+- No channel count or routing changes
+- All diagnostic code is additive; removing it (setting fields to zero-init, deleting the measurement blocks) fully reverts to pre-Phase-14 behavior
+
+---
+
+### Updated status table (as of 2026-03-25)
+
+| Fix / Phase | Description | Status |
+|---|---|---|
+| Fix 1 | Onset fade | ✅ in code |
+| Fix 2 | Fast-mover sub-stepping | ✅ in code |
+| Fix 3 / Fix 6 | Post-open channel validation (correct accessor) | ✅ in code |
+| Fix 4 | GUI restart/reset | ✅ in code |
+| Fix 5 | Smoother pre-seeding | ✅ in code |
+| Phase 14 | Channel-relocation diagnostic + CPU meter fix | ✅ in code |
+| Channel relocation root cause | Pre-copy vs post-copy? | ⏳ pending listener test |
+
+### Agent context for new context windows
+
+> Copy this block into the opening message when starting a new session on this task.
+
+#### State of the engine (as of 2026-03-25)
+
+All fixes below are **in the codebase**. Do not re-implement or re-analyse them.
+
+| Fix | Description | Status |
+|---|---|---|
+| Fix 1 | Onset fade — 128-sample ramp at source activation | ✅ in code |
+| Fix 2 | Fast-mover sub-stepping — 4 sub-chunks, lerp + renorm + guard per chunk | ✅ in code |
+| Fix 3 | Post-open channel validation (device channel count check) | ✅ in code (via Fix 6) |
+| Fix 4 | GUI restart resets controls before re-launching engine | ✅ in code |
+| Fix 5 | Smoother pre-seeding from CLI config atomics | ✅ in code |
+| Fix 6 | Correct `channelsOutDevice()` accessor in `RealtimeBackend::init()` | ✅ in code |
+| Phase 14 | Channel-relocation diagnostic + corrected CPU meter | ✅ in code |
+
+#### Key diagnostic output to watch
+
+```
+[Diag] Channels — requested: N  actual-device: N  render-bus: N
+[RELOC-RENDER] t=12.34s  mask: 0xABC → 0xDEF
+[RELOC-DEVICE] t=12.34s  mask: 0xABC → 0xDEF
+  t=12.5s  CPU=23.1%  rBus=0x1FFFFFFFFFFFF  dev=0x1FFFFFFFFFFFF  mainRms=0.0312  subRms=0.0041  Xrun=0  NaN=0  SpkG=14  PLAYING
+```
+
+If `[RELOC-RENDER]` fires, the active channel set is changing inside `mRenderIO` (a render/DBAP layer problem).
+If only `[RELOC-DEVICE]` fires, the issue is in the output/device copy layer.
+
+#### Files most likely to need changes
+
+| File | Role |
+|---|---|
+| `spatial_engine/realtimeEngine/src/Spatializer.hpp` | DBAP render loop, guard, Phase 6 mix trims, Phase 7 copy, Phase 14 diagnostic measurement points |
+| `spatial_engine/realtimeEngine/src/Pose.hpp` | Keyframe interpolation, `SourcePose` struct, `computePositions()` |
+| `spatial_engine/realtimeEngine/src/RealtimeBackend.hpp` | Audio callback, smoother, pause fade, `processBlock()`, wall-clock CPU meter |
+| `spatial_engine/realtimeEngine/src/RealtimeTypes.hpp` | `RealtimeConfig` atomics, `EngineState` counters including Phase 14 diagnostic fields |
+| `spatial_engine/realtimeEngine/src/main.cpp` | CLI parsing, OSC parameter setup, monitoring loop with relocation event prints |
+| `gui/realtimeGUI/realtimeGUI.py` | GUI window, restart/reset wiring |
+
+#### What not to do
+
+- Do not redesign auto-compensation.
+- Do not reopen the broad device/output mismatch analysis — Fix 6 resolved the structural issue.
+- Do not add per-sample or per-source logging in the audio callback.
+- Do not modify `runPipeline.py` — it is deprecated. Use `runRealtime.py`.
+- Do not change DBAP render granularity.
+- Do not broaden to parity audits.
 - `realtime_master.md` has the full phase history; read it for architectural background but trust the audit file for current fix status.

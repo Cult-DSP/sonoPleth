@@ -1530,3 +1530,80 @@ root cause of the movement-click artifacts. The proximity guard coordinate fix
 |       | Position smoothing                                     | ⏸ Deferred                                        |
 |       | Scene loop / `resetForLoop()`                          | ⏸ Deferred                                        |
 |       | AutoComp redesign (correct ref position + power model) | ⏸ Deferred                                        |
+| 14    | **Channel Relocation Diagnostic**                      | ✅ Complete                                       |
+|       | Pre-copy render-bus active-channel mask                | ✅ `Spatializer.hpp` `renderBlock()` (before Ph 7)|
+|       | Post-copy device-output active-channel mask            | ✅ `Spatializer.hpp` `renderBlock()` (after Ph 7) |
+|       | Relocation event latches (render + device)             | ✅ `EngineState` + monitoring loop in `main.cpp`  |
+|       | Main/sub RMS totals                                    | ✅ `EngineState` `mainRmsTotal` / `subRmsTotal`   |
+|       | Corrected wall-clock CPU meter                         | ✅ `RealtimeBackend.hpp` `processBlock()`         |
+|       | Phase 14 channel-relocation root cause                 | ⏳ Pending listener test                           |
+
+---
+
+## Phase 14 — Channel Relocation Diagnostic
+
+**Date:** 2026-03-25
+
+**Goal:** Determine whether runtime channel relocation occurs before or after the Phase 7 `OutputRemap` copy, without adding per-sample or per-source logging to the audio callback.
+
+### Design
+
+Two lightweight measurement points are added in `Spatializer::renderBlock()`:
+
+**Point 1 — render-bus (pre-copy)** — inserted immediately after the Phase 11 NaN clamp pass, before the Phase 7 `OutputRemap` copy loop:
+
+- Scans `mRenderIO.outBuffer(ch)` for all render-bus channels
+- Computes block mean-square per channel; sets bit `ch` in `renderActiveMask` if mean-square > 1e-8
+- Accumulates `mainRmsTotal` / `subRmsTotal` across main / sub channels
+- If `renderActiveMask` differs from last block, stores old+new masks to `renderRelocPrev` / `renderRelocNext` and sets `renderRelocEvent` latch
+
+**Point 2 — device output (post-copy)** — inserted immediately after the Phase 7 copy:
+
+- Same scan on `io.outBuffer(ch)` (the real device buffer)
+- Sets `deviceActiveMask`, fires `deviceRelocEvent` latch on change
+
+**CPU meter fix** — `RealtimeBackend::processBlock()`:
+
+- `std::chrono::steady_clock::now()` captured at the very top of the callback (before all rendering)
+- `callbackCpuLoad = elapsed_µs / block_budget_µs` stored to `EngineState` at Step 6 and at the paused early-return
+- Capped at 2.0 (not 1.0) so overloads are visible
+- Legacy `mAudioIO.cpu()` still stored to `cpuLoad` for comparison
+
+**Monitoring loop** (`main.cpp`):
+
+- One-time pre-loop print: `requested / actual-device / render-bus` channel counts
+- Each 500 ms iteration: consumes `renderRelocEvent` / `deviceRelocEvent` latches and prints them immediately with timestamp and hex masks, then prints rolling status line with both masks, RMS totals, and `callbackCpuLoad`
+
+### Diagnostic key
+
+| Observation | Conclusion |
+|---|---|
+| `[RELOC-RENDER]` fires | Active channel set changing inside `mRenderIO` — render/DBAP layer origin |
+| `[RELOC-DEVICE]` fires, `[RELOC-RENDER]` does **not** | Device/output-layer origin only (OutputRemap, channel-count mismatch, AlloLib copy) |
+| Both fire | Render-bus change propagated through copy — consistent with render-layer origin |
+| Neither fires | Threshold 1e-8 too high, or event masked by 500 ms poll window |
+
+### New `EngineState` fields
+
+| Field | Type | Writer | Meaning |
+|---|---|---|---|
+| `renderActiveMask` | `atomic<uint64_t>` | audio | Bitmask of render-bus channels with signal, latest block |
+| `deviceActiveMask` | `atomic<uint64_t>` | audio | Bitmask of device-output channels with signal, latest block |
+| `renderRelocPrev/Next/Event` | `atomic<uint64_t/bool>` | audio (set) / main (clear) | One-shot latch: render mask before/after a change |
+| `deviceRelocPrev/Next/Event` | `atomic<uint64_t/bool>` | audio (set) / main (clear) | One-shot latch: device mask before/after a change |
+| `mainRmsTotal` | `atomic<float>` | audio | sqrt(mean-square sum across main channels), latest block |
+| `subRmsTotal` | `atomic<float>` | audio | sqrt(mean-square sum across sub channels), latest block |
+| `callbackCpuLoad` | `atomic<float>` | audio | Wall-clock callback duration / block budget |
+
+### Files changed
+
+| File | Change |
+|---|---|
+| `RealtimeTypes.hpp` | New `EngineState` fields above |
+| `Spatializer.hpp` | Pre-copy and post-copy measurement blocks; `numRenderChannels()` getter |
+| `RealtimeBackend.hpp` | `#include <chrono>`; `mCallbackStart` member; `callbackCpuLoad` store at Step 6 and paused path |
+| `main.cpp` | Pre-loop channel count print; relocation event consumption and print; updated status line |
+
+### Invariant 15 — Phase 14 diagnostic measurements are additive
+
+> The pre-copy and post-copy measurement blocks in `renderBlock()` shall not modify any audio data, any config atomic, or any render state. They shall only read from `mRenderIO.outBuffer()` / `io.outBuffer()` and write to `EngineState` diagnostic fields. Removing both blocks and the `EngineState` additions shall restore identical audio output (bit-for-bit) to the pre-Phase-14 build.

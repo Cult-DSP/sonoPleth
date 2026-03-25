@@ -42,6 +42,7 @@
 #pragma once
 
 #include <cmath>    // std::exp (used for per-block smoothing in processBlock)
+#include <chrono>   // std::chrono::steady_clock (wall-clock CPU meter)
 #include <iostream>
 #include <string>
 #include <functional>
@@ -282,6 +283,11 @@ private:
 
     void processBlock(al::AudioIOData& io) {
 
+        // ── Wall-clock timer: captured at the very top so the full callback
+        // cost — including all rendering and state updates — is measured.
+        // Stored as a member so it's accessible at the early-return paths too.
+        mCallbackStart = std::chrono::steady_clock::now();
+
         const unsigned int numFrames  = static_cast<unsigned int>(io.framesPerBuffer());
         const unsigned int numChannels= static_cast<unsigned int>(io.channelsOut());
         // Use mConfig.sampleRate (int) cast to double for per-block time math.
@@ -420,10 +426,15 @@ private:
         if (pausedNow && mPauseFadeFramesLeft == 0 && mPauseFade <= 0.0f) {
             for (unsigned int ch = 0; ch < numChannels; ++ch)
                 std::memset(io.outBuffer(ch), 0, numFrames * sizeof(float));
-            // Update only CPU load — do NOT advance frameCounter.
-            mState.cpuLoad.store(
-                std::max(0.0f, std::min(1.0f, static_cast<float>(mAudioIO.cpu()))),
-                std::memory_order_relaxed);
+            // Update CPU load even in paused state (paused overhead is still real).
+            {
+                auto t1 = std::chrono::steady_clock::now();
+                double us = std::chrono::duration<double, std::micro>(t1 - mCallbackStart).count();
+                double budget = (static_cast<double>(numFrames) / sampleRate) * 1e6;
+                mState.callbackCpuLoad.store(
+                    std::max(0.0f, static_cast<float>(us / budget)),
+                    std::memory_order_relaxed);
+            }
             return;
         }
 
@@ -435,6 +446,19 @@ private:
             static_cast<double>(newFrames) / sampleRate, std::memory_order_relaxed);
 
         // ── Step 6: CPU load monitoring ───────────────────────────────────────
+        // Wall-clock measurement: elapsed callback time / block budget.
+        // Values > 1.0 indicate overload (callback took longer than its budget).
+        // Capped at 2.0 to avoid absurd values from scheduler jitter on first block.
+        // The legacy mAudioIO.cpu() is left in mState.cpuLoad for comparison;
+        // the correct reading is mState.callbackCpuLoad.
+        {
+            auto t1 = std::chrono::steady_clock::now();
+            double us = std::chrono::duration<double, std::micro>(t1 - mCallbackStart).count();
+            double budget = (static_cast<double>(numFrames) / sampleRate) * 1e6;
+            mState.callbackCpuLoad.store(
+                std::max(0.0f, std::min(2.0f, static_cast<float>(us / budget))),
+                std::memory_order_relaxed);
+        }
         mState.cpuLoad.store(
             std::max(0.0f, std::min(1.0f, static_cast<float>(mAudioIO.cpu()))),
             std::memory_order_relaxed);
@@ -536,5 +560,13 @@ private:
 
     std::vector<float> mPrevChannelGains; // gains at start of current block (end of last block)
     std::vector<float> mNextChannelGains; // gains at end of current block (computed each block)
+
+    // ── Phase 14: wall-clock CPU meter ───────────────────────────────────────
+    // Captured at the very top of processBlock(); compared at the bottom (and
+    // at the paused early-return) to compute wall-clock callback duration / block
+    // budget. Stored as mState.callbackCpuLoad (0.0 = idle, 1.0 = full budget,
+    // >1.0 = overload). Replaces the untrustworthy mAudioIO.cpu() reading.
+    // THREADING: audio thread only.
+    std::chrono::steady_clock::time_point mCallbackStart;
 };
 
