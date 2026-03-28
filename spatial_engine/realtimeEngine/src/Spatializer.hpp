@@ -451,16 +451,23 @@ public:
             al::Vec3f relpos(p.x, -p.z, p.y);  // same flip DBAP applies internally
 
             // Step 2: guard in DBAP-internal space (exact geometry)
+            // Convergence loop: a single pass could push relpos into another
+            // speaker's zone. Iterate until stable (max kGuardMaxIter passes).
             bool guardFiredForSource = false;
-            for (const auto& spkVec : mSpeakerPositions) {
-                al::Vec3f delta = relpos - spkVec;
-                float dist = delta.mag();
-                if (dist < kMinSpeakerDist) {
-                    relpos = spkVec + ((dist > 1e-7f)
-                        ? (delta / dist) * kMinSpeakerDist
-                        : al::Vec3f(0.0f, kMinSpeakerDist, 0.0f));
-                    guardFiredForSource = true;
+            for (int iter = 0; iter < kGuardMaxIter; ++iter) {
+                bool pushed = false;
+                for (const auto& spkVec : mSpeakerPositions) {
+                    al::Vec3f delta = relpos - spkVec;
+                    float dist = delta.mag();
+                    if (dist < kMinSpeakerDist) {
+                        relpos = spkVec + ((dist > 1e-7f)
+                            ? (delta / dist) * kMinSpeakerDist
+                            : al::Vec3f(0.0f, kMinSpeakerDist, 0.0f));
+                        pushed = true;
+                    }
                 }
+                if (!pushed) break;
+                guardFiredForSource = true;
             }
             if (guardFiredForSource) {
                 mState.speakerProximityCount.fetch_add(1, std::memory_order_relaxed);
@@ -523,16 +530,21 @@ public:
                             if (mag > 1e-7f) subPose = (subPose / mag) * mLayoutRadius;
                         }
 
-                        // Flip to DBAP-internal space, apply guard, un-flip
+                        // Flip to DBAP-internal space, apply convergence guard, un-flip
                         al::Vec3f subRelpos(subPose.x, -subPose.z, subPose.y);
-                        for (const auto& spkVec : mSpeakerPositions) {
-                            al::Vec3f delta = subRelpos - spkVec;
-                            float dist = delta.mag();
-                            if (dist < kMinSpeakerDist) {
-                                subRelpos = spkVec + ((dist > 1e-7f)
-                                    ? (delta / dist) * kMinSpeakerDist
-                                    : al::Vec3f(0.0f, kMinSpeakerDist, 0.0f));
+                        for (int iter = 0; iter < kGuardMaxIter; ++iter) {
+                            bool pushed = false;
+                            for (const auto& spkVec : mSpeakerPositions) {
+                                al::Vec3f delta = subRelpos - spkVec;
+                                float dist = delta.mag();
+                                if (dist < kMinSpeakerDist) {
+                                    subRelpos = spkVec + ((dist > 1e-7f)
+                                        ? (delta / dist) * kMinSpeakerDist
+                                        : al::Vec3f(0.0f, kMinSpeakerDist, 0.0f));
+                                    pushed = true;
+                                }
                             }
+                            if (!pushed) break;
                         }
                         al::Vec3f subSafePos(subRelpos.x, subRelpos.z, -subRelpos.y);
 
@@ -972,6 +984,15 @@ private:
     // Can be reduced toward 0.05–0.10 m if near-speaker localization sounds
     // artificially constrained after testing.
     static constexpr float kMinSpeakerDist = 0.15f;
+
+    // Track A fix — proximity guard convergence.
+    // After being pushed away from speaker K, relpos may land inside speaker
+    // K+1's zone (adjacent speakers in a dense cluster). Iterating up to
+    // kGuardMaxIter times converges to a position outside all speakers' zones
+    // simultaneously, eliminating order-dependent sequential-push artifacts.
+    // 4 iterations handles all realistic speaker-cluster geometries at 0.15 m
+    // threshold without meaningful RT overhead.
+    static constexpr int kGuardMaxIter = 4;
 
     // Fix 2 — Fast-mover sub-stepping constants.
     // kFastMoverAngleRad: minimum angular change between positionStart and

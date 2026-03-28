@@ -179,7 +179,7 @@ int main(int argc, char* argv[]) {
     config.sourcesFolder = getArgString(argc, argv, "--sources");
     config.admFile       = getArgString(argc, argv, "--adm");
     config.sampleRate    = getArgInt(argc, argv, "--samplerate", 48000);
-    config.bufferSize    = getArgInt(argc, argv, "--buffersize", 512);
+    config.bufferSize    = getArgInt(argc, argv, "--buffersize", 512); // adjusting for debbugging: 512 was default, trying 128
     config.masterGain.store(getArgFloat(argc, argv, "--gain", 0.5f));
     // Phase 6: Compensation and Gain Agent
     float speakerMixDb = getArgFloat(argc, argv, "--speaker_mix", 0.0f);

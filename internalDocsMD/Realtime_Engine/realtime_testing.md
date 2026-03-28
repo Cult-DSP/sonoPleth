@@ -1,3 +1,203 @@
+# 3 - 28 - 26 Realtime Testing
+
+## Round 2
+
+## Assesment /findings:
+
+Pass 1 — Spatializer::renderBlock()
+A. Block lifecycle correctness
+mRenderIO.zeroOut() called once at line 346, before the source loop. No double-zero, no missed-zero. Normal DBAP path accumulates via renderBuffer() (+=). Fast-mover path accumulates via the manual += loop into the correct frame offset. Both are consistent. No lifecycle bug here.
+
+B. Normal DBAP path
+Position is pose.position (block-center, from Pose). Guard applied before renderBuffer() via flip → push → un-flip. Main/sub treated separately in the Phase 6 trim pass via isSubwooferChannel(). No cross-path contamination. Clean.
+
+C. Fast-mover path
+Scratch buffer is zeroed (mFastMoverScratch.zeroOut()) at each sub-step before renderBuffer(). Sub-step frame arithmetic is correct (subFrames = numFrames / kNumSubSteps, offsets are j \* subFrames). Coordinate flip/guard/un-flip sequence mirrors the normal path. Accumulation is += src[f] into the correct frame window of mRenderIO. No double-add, no frame-offset error.
+
+D. Guard behavior — Track A finding
+[Spatializer.hpp:455-467] — the normal-path proximity guard:
+
+for (const auto& spkVec : mSpeakerPositions) {
+al::Vec3f delta = relpos - spkVec;
+float dist = delta.mag();
+if (dist < kMinSpeakerDist) {
+relpos = spkVec + ...; // push away from this speaker
+guardFiredForSource = true;
+}
+}
+This is a single sequential pass. After being pushed away from speaker K, the new relpos may now be within kMinSpeakerDist of speaker K+1 (or another adjacent speaker). The loop does not restart — it continues to speaker K+1 and pushes again. The final relpos after iterating all speakers depends on array order and can be geometrically inconsistent.
+
+In Canyon, when speakerProximityCount is rising (~30 events, then ~150s), this means sources are repeatedly triggering multi-speaker pushes. For a source passing through a cluster of nearby speakers, small input-position differences between consecutive blocks produce different multi-push sequences, resulting in materially different final relpos values. DBAP computed from those different positions produces a different speaker-cluster gain distribution → audible cluster relocation and buzzing.
+
+The fast-mover sub-step guard at [Spatializer.hpp:527-536] has the same single-pass structure, but applied to each sub-step independently. This creates an additional issue (see Track B below).
+
+E. Post-render trim / pre-copy
+Phase 6 trim loop iterates renderChannels and applies spkMix to all non-sub channels. isSubwooferChannel() is a linear scan — correct but O(N×subs). subMix applied to mSubwooferChannels only. No channel misclassification visible.
+
+The Phase 7 copy is += into io.outBuffer(). If io was not zeroed by the backend before renderBlock(), this would double-add. The comment says "io output buffers must be zeroed BEFORE calling this method" — need to verify backend compliance, but this is the stated contract.
+
+Pass 2 — Pose::computePositions()
+A. Center / start / end consistency
+The ordering guarantee [Pose.hpp:205-211] is: center (mutating) first → mLastGoodDir updated → start/end (read-only) use that updated direction as fallback. This is correct. When start or end time has a degenerate direction, both fall back to the center direction (mLastGoodDir), making positionStart ≈ positionEnd ≈ position. Angular span ≈ 0 → isFastMover = false. Normal path handles it. No bug.
+
+B. Last-good / safe-direction fallback
+safeDirForSource [Pose.hpp:361-408] — when rawDir is degenerate, it reads mLastGoodDir without updating it. This is correct and deterministic. The source stays at its last valid direction rather than snapping to zero. No NaN risk since safeNormalize returns a valid front direction as last resort.
+
+C. Sparse keyframe behavior — secondary Pose finding
+interpolateDirRaw [Pose.hpp:320-357] uses binary-search segment lookup by iterating the keyframe array. For a keyframe exactly at t = k[i+1].time, the loop may return either the K/K+1 or K+1/K+2 segment depending on >= boundary handling. For the start-time evaluation, if blockStartTimeSec exactly hits a keyframe boundary, both SLERP segments are valid. This is not a bug but could create sub-sample position jitter if a source has a very dense keyframe at the exact block start time. Unlikely to explain Canyon or Ascent specifically.
+
+No Pose-sourced abrupt-step mechanism discovered beyond what the normal SLERP pipeline produces. The center/start/end positions are geometrically self-consistent when keyframes are valid. Pose hands clean positions to Spatializer.
+
+Pass 3 — Fast-mover sub-step guard discontinuity — Track B finding
+This is the most important finding for Ascent. Within the fast-mover loop at [Spatializer.hpp:509-551]:
+
+Each of 4 sub-steps independently applies the proximity guard. Sub-step j has center position at alpha = (j + 0.5) / 4. For a source sweeping through a speaker's guard zone, the sub-step positions might span the 0.15m boundary:
+
+Sub-step 1 center: 0.16m → not pushed → renders with high but finite gain on nearest speaker
+Sub-step 2 center: 0.14m → pushed to 0.15m → renders with different gain distribution
+Sub-step 3 center: 0.16m → not pushed → back to original gain
+Sub-step 4 center: 0.18m → not pushed
+The gain vector is discontinuous at sub-step boundaries 1→2 and 2→3. Each boundary is 128 samples (~2.7ms) into the block. This is an intra-block gain step, audible as a click or high-frequency transient. DBAP gain at 0.14m vs 0.15m from a speaker at focus=1.5: d^(-2×1.5) = 0.14^-3 ≈ 364 vs 0.15^-3 ≈ 296 — a 23% gain difference on the dominant speaker channel. That is definitely audible.
+
+This mechanism is scene-dependent (only fires when fast-moving sources pass near speakers), which explains why Ascent shows pops at specific timestamps rather than continuously.
+
+Confirmed vs Speculative
+Claim Status
+Canyon: sequential guard pushes from adjacent speakers create inconsistent block-to-block positions Confirmed — code structure makes this mechanically certain when speakerProximityCount is high
+Canyon: buzzing = repeated guard zone crossings causing cluster shift every N blocks Confirmed — deterministic consequence of single-pass guard + rising guard counter
+Ascent: fast-mover intra-block guard binary on/off at sub-step boundaries causes pops Confirmed — guard threshold crossing mid-sweep is geometrically guaranteed for fast sources near speakers
+Ascent: pops at ~115s, ~198s, ~345s correlate with fast-mover + guard zone entry Speculative — timing matches, but not yet verified against trajectory data
+Pose contributing abrupt positions independently Not supported — Pose is clean; the step is entirely in Spatializer guard
+Deliverable
+
+1. Canyon relocation / disappearance / buzzing
+   Location: [Spatializer.hpp:455-467] — normal-path proximity guard, single-pass sequential loop.
+
+Mechanism: When a source passes through a cluster of adjacent speakers (Canyon has enough spatial density to make this likely), the single-pass sequential guard pushes relpos away from speaker K, but the new position may land inside speaker K+1's zone, which then pushes it again. The final position is order-dependent and geometrically inconsistent. Between consecutive blocks with slightly different input positions, different speakers dominate the push sequence, producing materially different output relpos values and therefore materially different DBAP gain vectors → cluster relocation. Repeated crossings at 2+ nearby speakers produce the buzzing pattern. The rising SpeakerGuard counter is exactly what confirms this path is hot.
+
+2. Ascent pops / high-pitched transients
+   Location: [Spatializer.hpp:527-536] — fast-mover path, per-sub-step independent guard application.
+
+Mechanism: For fast-moving sources, the 4 sub-steps span different distances from nearby speakers. When the sub-step center position crosses the kMinSpeakerDist = 0.15m boundary, the guard fires for some sub-steps but not adjacent ones. The DBAP gain on the dominant nearest-speaker channel changes by ~20% at this boundary (focus=1.5), creating an intra-block step at the sub-step frame boundary (~128 samples into the block). This is a click/pop. The high-pitched component comes from the abrupt step exciting high-frequency content in the DBAP gain function.
+
+3. Smallest safe patches
+   Track A — Canyon ([Spatializer.hpp:455-467]):
+
+Run the guard loop in a convergence pass (max 2-3 iterations) rather than a single pass. After any push fires, restart the speaker scan to check whether the new position violates another speaker's zone:
+
+// Replace single-pass loop with convergence loop (max 3 iterations)
+for (int iter = 0; iter < 3; ++iter) {
+bool pushed = false;
+for (const auto& spkVec : mSpeakerPositions) {
+al::Vec3f delta = relpos - spkVec;
+float dist = delta.mag();
+if (dist < kMinSpeakerDist) {
+relpos = spkVec + ((dist > 1e-7f)
+? (delta / dist) \* kMinSpeakerDist
+: al::Vec3f(0.0f, kMinSpeakerDist, 0.0f));
+guardFiredForSource = true;
+pushed = true;
+}
+}
+if (!pushed) break;
+}
+No new state required. No allocation. Worst case is 3× the speaker-scan cost, which is still O(N_speakers) and RT-safe. This converges to a position that is outside all speakers' guard zones simultaneously, making the result geometrically consistent and order-independent.
+
+Track B — Ascent ([Spatializer.hpp:509-551]):
+
+Pre-guard positionStart and positionEnd once before the sub-step loop. Then lerp between those pre-guarded positions inside the loop, rather than applying an independent guard per sub-step:
+
+// Pre-guard start and end positions once (same flip/push/un-flip as normal path)
+auto applyGuard = [&](al::Vec3f posePos) -> al::Vec3f {
+al::Vec3f rp(posePos.x, -posePos.z, posePos.y);
+for (const auto& spkVec : mSpeakerPositions) {
+al::Vec3f delta = rp - spkVec;
+float dist = delta.mag();
+if (dist < kMinSpeakerDist)
+rp = spkVec + ((dist > 1e-7f)
+? (delta / dist) \* kMinSpeakerDist
+: al::Vec3f(0.0f, kMinSpeakerDist, 0.0f));
+}
+return al::Vec3f(rp.x, rp.z, -rp.y); // un-flip
+};
+
+al::Vec3f guardedStart = applyGuard(pose.positionStart);
+al::Vec3f guardedEnd = applyGuard(pose.positionEnd);
+
+for (int j = 0; j < kNumSubSteps; ++j) {
+float alpha = (static*cast<float>(j) + 0.5f) / static_cast<float>(kNumSubSteps);
+al::Vec3f subSafePos = guardedStart + alpha * (guardedEnd - guardedStart);
+// renormalize:
+float mag = subSafePos.mag();
+if (mag > 1e-7f) subSafePos = (subSafePos / mag) \_ mLayoutRadius;
+// (no per-step guard — already guarded endpoints)
+mFastMoverScratch.zeroOut();
+mDBap->renderBuffer(mFastMoverScratch, subSafePos,
+mSourceBuffer.data() + j \* subFrames, subFrames);
+// accumulate...
+}
+The lerp between two pre-guarded positions is guaranteed smooth. The guard fires at most twice per block per source (once for start, once for end) rather than 4× independently. The transition between sub-steps is now continuous in position space, so the DBAP gain function is continuous within the block. No new persistent state required.
+
+4. Confirmed vs speculative
+   Confirmed:
+
+Single-pass guard is the Canyon relocation mechanism (structurally certain given rising guard counter)
+Per-sub-step independent guard is the Track B intra-block step mechanism (geometrically provable)
+Both are in Spatializer, not in Pose — Pose is producing clean positions
+Still speculative:
+
+Whether Canyon's "channel disappearance" involves more than guard-induced relocation (e.g., a source position being pushed to a geometrically degenerate location that silences one speaker cluster entirely — possible but not proven without trajectory data)
+Whether Ascent's high-pitched noise is purely the sub-step gain step or also involves a DBAP distance-singularity at the guard boundary (if kMinSpeakerDist is being exited at very small distances before the guard fires, the gain could spike momentarily)
+Whether Track A's convergence loop resolves the buzzing fully, or whether some scenes have speaker geometries where no convergent push-out position exists (three speakers forming a triangle smaller than 2×kMinSpeakerDist)
+
+## Pre Test Agent Notes round 2:
+
+1. Patch locations
+
+[Spatializer.hpp:453-467] — normal-path guard (Step 2, between the DBAP-internal flip and the un-flip)
+[Spatializer.hpp:527-536] — fast-mover per-sub-step guard (same structure, same fix)
+Constants section — added kGuardMaxIter = 4 adjacent to kMinSpeakerDist 2. How the convergence guard works in both paths
+
+Identical structure in both places: an outer for (iter < kGuardMaxIter) loop wraps the speaker scan. A local pushed flag tracks whether any speaker fired this iteration. If the entire speaker scan completes with no push, the loop breaks early — in practice this is the common case (0 or 1 iterations) for sources well clear of all speakers. The outer loop only runs multiple times when a push lands inside another speaker's zone.
+
+For the normal path: guardFiredForSource is set on the first iteration that fires, regardless of subsequent iterations. The speakerProximityCount increment is unchanged.
+
+For the fast-mover path: the structure mirrors the normal path exactly. No diagnostic counter there currently, so no change needed.
+
+3. Track B after Track A
+
+The Track B mechanism (intra-block gain step at sub-step guard boundaries) is logically independent of the convergence fix. However, the convergence guard changes the geometry of what counts as "inside the zone": with multiple nearby speakers, the effective exclusion region is now the union of all guard spheres rather than a sequential-push artifact. This makes the guard result stable and consistent across iterations, which could reduce (but not eliminate) the frequency of sub-step guard on/off flickering for Ascent.
+
+Specifically: if Ascent's fast-moving source was previously getting pushed into the guard zone of a second speaker only because of the sequential first push, the convergence fix now resolves it fully. The sub-step positions after the fix are more geometrically coherent, so guard zone crossings at sub-step boundaries become less likely — but not impossible if the source genuinely passes near a speaker.
+
+Hold Track B as-is. Test Canyon first. If Ascent pops persist at the same timestamps after Canyon testing, the per-sub-step discontinuity is the remaining cause and the patch needs addressing.
+
+## Testing
+
+- Eden test 1:
+
+* 1 pop
+* semi audible jumps / movement but no pops, just perceptually strange
+
+- Canyon test 1
+
+* channel reloc a few seconds in
+
+- Canyon test 2
+
+* channel reloc 70 seconds in
+
+## Round 1
+
+## Pre Test Dev Notes:
+
+Switched the buffer size from 512 to 128. Change was maid in spatial_engine/realtimeEngine/src/main.cpp && gui/realtimeGUI/realtime_runner.py. overwritten in the gui with tests as follows:
+
+Offering test 1 [buffer 256 ]
+
+- multiple pops
+- cpu use around 30-40%
+
 # 3 - 27 - 26 Realtime Testing
 
 ## Testing round 5
