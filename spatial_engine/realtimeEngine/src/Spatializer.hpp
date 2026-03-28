@@ -491,11 +491,7 @@ public:
                 al::Vec3f d1 = pose.positionEnd.normalized();
                 float dotVal     = std::clamp(d0.dot(d1), -1.0f, 1.0f);
                 float angleDelta = std::acos(dotVal);
-                // TEST GATE: force single-position path to isolate Fix 2 as
-                // the cause of render-bus relocation events. If relocation
-                // largely disappears, re-enable and add hysteresis instead.
-                bool  isFastMover = false;
-                (void)angleDelta;
+                bool  isFastMover = (angleDelta > kFastMoverAngleRad);
 
                 if (!isFastMover) {
                     // ── Normal path ───────────────────────────────────────

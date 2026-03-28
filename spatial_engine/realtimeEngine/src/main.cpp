@@ -540,6 +540,12 @@ int main(int argc, char* argv[]) {
         // If DOM fires without RELOC, only the dominant cluster shifted (likely
         // audible). If only RELOC fires, it is probably a far-field bleed edge.
         double timeSec = state.playbackTimeSec.load(std::memory_order_relaxed);
+        // Read mainRms once here — used to gate DOM and CLUSTER event printing.
+        // RELOC events are not gated (useful for onset/offset tracking at any level).
+        // Threshold 0.005: suppresses near-silence churn (domMask→0x0 artifacts, low-level
+        // top-4 shuffling) while preserving events at any meaningfully audible signal level.
+        constexpr float kEventRmsGate = 0.005f;
+        float mainRmsGate = state.mainRmsTotal.load(std::memory_order_relaxed);
 
         if (state.renderRelocEvent.load(std::memory_order_relaxed)) {
             uint64_t prev = state.renderRelocPrev.load(std::memory_order_relaxed);
@@ -562,20 +568,24 @@ int main(int argc, char* argv[]) {
         if (state.renderDomRelocEvent.load(std::memory_order_relaxed)) {
             uint64_t prev = state.renderDomRelocPrev.load(std::memory_order_relaxed);
             uint64_t curr = state.renderDomRelocNext.load(std::memory_order_relaxed);
-            state.renderDomRelocEvent.store(false, std::memory_order_relaxed);
-            std::cout << "\n[DOM-RENDER]   t=" << std::fixed;
-            std::cout.precision(2);
-            std::cout << timeSec << "s  dom: 0x" << std::hex << prev
-                      << " → 0x" << curr << std::dec << std::endl;
+            state.renderDomRelocEvent.store(false, std::memory_order_relaxed);  // always clear
+            if (mainRmsGate > kEventRmsGate) {
+                std::cout << "\n[DOM-RENDER]   t=" << std::fixed;
+                std::cout.precision(2);
+                std::cout << timeSec << "s  dom: 0x" << std::hex << prev
+                          << " → 0x" << curr << std::dec << std::endl;
+            }
         }
         if (state.deviceDomRelocEvent.load(std::memory_order_relaxed)) {
             uint64_t prev = state.deviceDomRelocPrev.load(std::memory_order_relaxed);
             uint64_t curr = state.deviceDomRelocNext.load(std::memory_order_relaxed);
-            state.deviceDomRelocEvent.store(false, std::memory_order_relaxed);
-            std::cout << "\n[DOM-DEVICE]   t=" << std::fixed;
-            std::cout.precision(2);
-            std::cout << timeSec << "s  dom: 0x" << std::hex << prev
-                      << " → 0x" << curr << std::dec << std::endl;
+            state.deviceDomRelocEvent.store(false, std::memory_order_relaxed);  // always clear
+            if (mainRmsGate > kEventRmsGate) {
+                std::cout << "\n[DOM-DEVICE]   t=" << std::fixed;
+                std::cout.precision(2);
+                std::cout << timeSec << "s  dom: 0x" << std::hex << prev
+                          << " → 0x" << curr << std::dec << std::endl;
+            }
         }
         // [CLUSTER-RENDER] / [CLUSTER-DEVICE] — top-4 main-channel cluster shift.
         // Fires only when ≥2 of the 4 dominant mains changed. This is the tightest
@@ -584,20 +594,24 @@ int main(int argc, char* argv[]) {
         if (state.renderClusterEvent.load(std::memory_order_relaxed)) {
             uint64_t prev = state.renderClusterPrev.load(std::memory_order_relaxed);
             uint64_t curr = state.renderClusterNext.load(std::memory_order_relaxed);
-            state.renderClusterEvent.store(false, std::memory_order_relaxed);
-            std::cout << "\n[CLUSTER-RENDER] t=" << std::fixed;
-            std::cout.precision(2);
-            std::cout << timeSec << "s  top4: 0x" << std::hex << prev
-                      << " → 0x" << curr << std::dec << std::endl;
+            state.renderClusterEvent.store(false, std::memory_order_relaxed);  // always clear
+            if (mainRmsGate > kEventRmsGate) {
+                std::cout << "\n[CLUSTER-RENDER] t=" << std::fixed;
+                std::cout.precision(2);
+                std::cout << timeSec << "s  top4: 0x" << std::hex << prev
+                          << " → 0x" << curr << std::dec << std::endl;
+            }
         }
         if (state.deviceClusterEvent.load(std::memory_order_relaxed)) {
             uint64_t prev = state.deviceClusterPrev.load(std::memory_order_relaxed);
             uint64_t curr = state.deviceClusterNext.load(std::memory_order_relaxed);
-            state.deviceClusterEvent.store(false, std::memory_order_relaxed);
-            std::cout << "\n[CLUSTER-DEVICE] t=" << std::fixed;
-            std::cout.precision(2);
-            std::cout << timeSec << "s  top4: 0x" << std::hex << prev
-                      << " → 0x" << curr << std::dec << std::endl;
+            state.deviceClusterEvent.store(false, std::memory_order_relaxed);  // always clear
+            if (mainRmsGate > kEventRmsGate) {
+                std::cout << "\n[CLUSTER-DEVICE] t=" << std::fixed;
+                std::cout.precision(2);
+                std::cout << timeSec << "s  top4: 0x" << std::hex << prev
+                          << " → 0x" << curr << std::dec << std::endl;
+            }
         }
 
         // ── Status line every ~500 ms ─────────────────────────────────────

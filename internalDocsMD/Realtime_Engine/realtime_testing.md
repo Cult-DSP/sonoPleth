@@ -1,5 +1,40 @@
 # 3 - 27 - 26 Realtime Testing
 
+## Testing round 5
+
+## Pre agent test notes 5:
+
+RMS gate — main.cpp:542-617
+
+mainRmsGate is read once before all event blocks. All four DOM/CLUSTER blocks now: clear the latch unconditionally, then gate the print on mainRmsGate > 0.005f. RELOC blocks are untouched. No audio thread changes.
+
+Fix 2 re-enabled — Spatializer.hpp:494-498
+
+The test gate (isFastMover = false + (void)angleDelta) is replaced with the real comparison: isFastMover = (angleDelta > kFastMoverAngleRad). Fast-mover sub-stepping is now active for sources whose block-boundary angular step exceeds the threshold (~14.3°).
+
+What to watch for in the next two runs:
+
+Swale/Canyon (Track A — relocation):
+
+DOM and CLUSTER events will now only print when mainRms > 0.005 — the near-silence churn is suppressed
+Check whether CLUSTER prev/next bitmasks represent geometrically opposite speaker clusters (e.g. 0x00ff → 0xff00) or just adjacent shuffling
+Check whether render and device still track each other exactly in meaningful-signal windows
+Ascent re-run (Track B — pops, Fix 2 now active):
+
+If pops at the previously heard timestamps are reduced or gone → Fix 2 is addressing the mechanism (block-boundary DBAP weight step)
+If pops are unchanged → onset/offset or something else is the mechanism; Fix 2 is not the primary cause
+Watch SpkG — if it rises with Fix 2 active (more sub-steps hitting the guard), note whether that correlates with any remaining artifacts
+
+- canyon test 1
+
+* around when speaker guard hit 30 - some channels dissapeared, occasional pops, high pitched buzzinfg
+* around 150sec - many channels dissapeared, buzzing got worse
+* channels shifted again later on
+
+- ascent test 1
+
+* high pithced + channel reloc around 198 sec - give or take 5 seconds
+
 ## TESTING ROUND 4
 
 ## Pre agent test notes 4:
