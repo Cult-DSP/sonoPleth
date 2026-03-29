@@ -22,31 +22,40 @@ add_subdirectory(
 )
 
 # ── Executable ────────────────────────────────────────────────────────────
-# Phase 1: minimal main + shared utilities (JSONLoader, LayoutLoader, WavUtils)
-# These are the same files the offline renderer uses, shared from spatial_engine/src/
-add_executable(spatialroot_realtime
-    src/main.cpp
+# Core engine library
+add_library(EngineSessionCore
     src/EngineSession.cpp
     ../src/JSONLoader.cpp
     ../src/LayoutLoader.cpp
     ../src/WavUtils.cpp
 )
 
-# ── Include paths ─────────────────────────────────────────────────────────
-target_include_directories(spatialroot_realtime PRIVATE
-    # AlloLib headers
+target_include_directories(EngineSessionCore PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/../../thirdparty/allolib/include
-    # Shared spatial_engine/src headers (JSONLoader.hpp, LayoutLoader.hpp, WavUtils.hpp)
     ${CMAKE_CURRENT_SOURCE_DIR}/../src
-    # Offline renderer headers (SpatialRenderer.hpp) — referenced in comments only
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/renderer
-    # Realtime engine headers (RealtimeEngine.hpp, RealtimeTypes.hpp, etc.)
     ${CMAKE_CURRENT_SOURCE_DIR}/src
 )
 
-# ── Link libraries ────────────────────────────────────────────────────────
-# 'al' is the AlloLib target; 'Gamma' is the audio DSP library bundled with it
-target_link_libraries(spatialroot_realtime
+target_link_libraries(EngineSessionCore
     al
     Gamma
 )
+
+add_executable(spatialroot_realtime
+    src/main.cpp
+)
+
+target_link_libraries(spatialroot_realtime
+    EngineSessionCore
+)
+
+add_executable(internal_validation_runner
+    src/internal_validation_runner.cpp
+)
+
+target_link_libraries(internal_validation_runner
+    EngineSessionCore
+)
+
+# ── Executable ────────────────────────────────────────────────────────────

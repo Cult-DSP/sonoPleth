@@ -19,6 +19,7 @@
 
 - select output at run time - seems to work
 - limit buffer size selectiom - potentially dangerous / produce warnings
+- add render tab, dont bundle with transcoder
 
 # Transcoder
 

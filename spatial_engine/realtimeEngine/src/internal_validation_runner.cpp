@@ -5,10 +5,10 @@
 #include <chrono>
 
 int main() {
-    spatial::EngineSession session;
+    EngineSession session;
 
     // 1. Configure Engine Resource Allocation
-    spatial::EngineConfig eCfg;
+    EngineOptions eCfg;
     eCfg.sampleRate = 48000;
     eCfg.bufferSize = 512;
     if (!session.configureEngine(eCfg)) {
@@ -17,15 +17,18 @@ int main() {
     }
 
     // 2. Load Audio Scene
-    spatial::SceneConfig sCfg{"path/to/scene.lusid.json"};
+    SceneInput sCfg;
+    sCfg.scenePath = "/Users/lucian/projects/spatialroot/sourceData/lusid_package/scene.lusid.json";
+    sCfg.sourcesFolder = "/Users/lucian/projects/spatialroot/sourceData/lusid_package/";
     if (!session.loadScene(sCfg)) return 1;
 
     // 3. Apply Speaker Layout
-    spatial::LayoutConfig lCfg{"layout_7_1_4.json"};
+    LayoutInput lCfg;
+    lCfg.layoutPath = "/Users/lucian/projects/spatialroot/spatial_engine/speaker_layouts/stereo.json";
     if (!session.applyLayout(lCfg)) return 1;
 
     // 4. Bind Runtime/OSC
-    spatial::RuntimeConfig rCfg{ /* active port, telemetry toggles */ };
+    RuntimeParams rCfg;
     if (!session.configureRuntime(rCfg)) return 1;
 
     // 5. Ignite Backend
@@ -41,8 +44,8 @@ int main() {
         auto status = session.queryStatus();
         auto diagnostics = session.consumeDiagnostics();
         
-        for (const auto& msg : diagnostics) {
-            std::cout << "Engine Warning: " << msg.text << "\n";
+        if (diagnostics.renderRelocEvent) {
+            std::cout << "Engine Warning: Relocation Event\n";
         }
 
         // Test transport constraint
