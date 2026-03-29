@@ -36,8 +36,8 @@ The `EngineSession` constructor should instantiate the core member properties:
 2. **`loadScene`:** `JSONLoader::loadLusidScene(...)` and instantiate `Streaming`. Call `streaming->loadScene()` or `streaming->loadSceneFromADM()`.
 3. **`applyLayout`:** `LayoutLoader::loadLayout(...)`, instantiate `Pose`. `pose->loadScene(...)`, instantiate/initialize `Spatializer`. Set spatializer layout. Instantiate `mOutputRemap` and bind to spatializer. Call `spatializer->prepareForSources(...)`.
 4. **`configureRuntime`:** write atomic properties such as `masterGain`, `dbapFocus`. Explicitly calculate `spatializer->computeFocusCompensation()` directly (main thread safe).
-5. **`start`:** instantiate `al::ParameterServer`, link callbacks. Instantiate `RealtimeBackend`, assign its streams. `streaming->startLoader()` BEFORE `backend->start()`.
-6. **`shutdown`:** Must strictly process in order: `mParamServer->stopServer()` -> wait/halt parameters -> `mBackend->stop()` -> `mStreaming->shutdown()`.
+5. **start:** instantiate `al::ParameterServer`, link callbacks. Instantiate `RealtimeBackend`, assign its streams. `streaming->startLoader()` BEFORE `backend->start()`.
+6. **shutdown:** Must strictly process in order: `mParamServer->stopServer()` -> `mBackend->shutdown()` -> `mStreaming->shutdown()`.
 7. **Status polling (`queryStatus`):** Map read-only getters representing the event loops in `main.cpp` covering things like `nanGuardCount`, `renderRelocEvent`, `cpuLoad`, `timeSec`. Provide an easy way for the main event loop to reset latches (e.g. `consumeDiagnostics()`).
 
 ## What to Retain in `main.cpp` (Do NOT touch internal core mechanics)
@@ -45,7 +45,7 @@ The `EngineSession` constructor should instantiate the core member properties:
 - Retain argument parsing logic, `--help`, and argument constraints checking (`getArgString`, `getArgInt`).
 - Retain `--list-devices` which outputs `al::AudioDevice` loop.
 - Retain `std::signal` listening. When triggered, it flips an external conditional flag invoking `session.shutdown()` or exiting the main CLI polling loop.
-- The `while (!shouldExit)` UI polling that logs `[RELOC-OUTPUT]`, spatial info overrides, and outputs tracking frames.
+- The `while (!shouldExit)` UI polling that logs `[RELOC-OUTPUT]`, spatial info overrides, and outputs tracking frames. This loop explicitly owns the MAIN-thread duty to periodically call `EngineSession::update()`.
 
 ## Crucial Context (Findings from Code Inspection)
 

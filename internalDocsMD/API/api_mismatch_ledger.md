@@ -12,7 +12,7 @@ This ledger reconciles conflicts between the ideal `api_concept.md` design param
 
 **Concept Implication:** "avoid promising transport behavior that current code does not cleanly support, such as restartable stop/seek semantics".
 **Code Reality:** Confirmed. The `RealtimeTypes.hpp` outlines variables and threads explicitly built on real-time forwards progression. Audio streaming blocks use background `.wav` file workers (`Streaming::loaderWorker`) loading chunked double buffeting slots asynchronously. `stop` semantics fundamentally deallocate buffers and close backend endpoints. There is roughly no existing concept of sample-accurate seeking out-of-the-box or restarting.
-**Resolution:** Defer non-linear transport implementations. The singular allowed concept is "pause" (via `config.paused=true`), which simply zeros-out audio responses and silences `.processBlock` rendering, preventing progression implicitly but without safely clearing memory state caches to support a seek mechanic.
+**Resolution:** Defer non-linear transport implementations. `setPaused(bool)` is the canonical naming convention going forward. It serves as the sole supported transport state, preventing timeline progression implicitly without making guarantees about internal buffer clearing semantics, safely deferring any seek/restart mechanics.
 
 ## Mismatch 3: Ownership Boundaries Over OSC (GUI Server)
 
