@@ -1,5 +1,1787 @@
 # 3 - 28 - 26 Realtime Testing
 
+## Round 3
+
+## Assesment / findings:
+
+## v1
+
+1. Backend io zeroing contract
+   Verified safe.
+
+RealtimeBackend.hpp:364-366 — Step 1 unconditionally memsets all numChannels output channels to zero on every callback before renderBlock() is called at Step 3. There is no early-return path that bypasses Step 1 and reaches Step 3. The only early return is at line 426 (fully paused), which fires after Step 3 has already completed with zeroed buffers. The += in Phase 7 copy is safe on all paths.
+
+2. Soft-repulsion guard patch candidate
+   Diagnosis
+   The current guard (Spatializer.hpp:457-471, same structure at 527-548):
+
+if (dist < kMinSpeakerDist) { // kMinSpeakerDist = 0.15f
+relpos = spkVec + (delta/dist) \* kMinSpeakerDist; // hard snap
+The hard snap is the issue. A source at dist = 0.005m (1 cm from speaker) snaps to 0.15m — a 30× positional displacement in one block. DBAP gains are distance-dependent; that jump changes the panning cluster abruptly. The convergence patch only makes the snap geometrically stable, not perceptually smooth.
+
+Patch design
+Two-pass structure in place of the current single-loop guard. Pass 1 (soft zone, single scan, no convergence loop) and Pass 2 (hard floor, convergence loop, identical to current — preserves the safety guarantee):
+
+New constant (add at Spatializer.hpp:986 next to kMinSpeakerDist):
+
+static constexpr float kGuardSoftZone = 0.45f; // outer soft-repulsion boundary (3× hard floor)
+Replacement guard block — applies in both line 453 (normal path) and line 533 (fast-mover path):
+
+// Pass 1: Soft outer zone — single scan, no convergence loop needed.
+// Smoothly blends position toward kMinSpeakerDist as source approaches.
+// Sources near only one speaker need no iteration; the blend is applied once.
+for (const auto& spkVec : mSpeakerPositions) {
+al::Vec3f delta = relpos - spkVec;
+float dist = delta.mag();
+if (dist >= kMinSpeakerDist && dist < kGuardSoftZone && dist > 1e-7f) {
+// t=0 at outer boundary (no push), t=1 at kMinSpeakerDist (full push)
+float t = (kGuardSoftZone - dist) / (kGuardSoftZone - kMinSpeakerDist);
+float safeRadius = dist + t _ t _ (kMinSpeakerDist - dist); // quadratic ease-in
+relpos = spkVec + (delta / dist) \* safeRadius;
+}
+}
+
+// Pass 2: Hard inner floor — convergence loop unchanged.
+// Catches any source that Pass 1 pushed into another speaker's hard zone.
+bool guardFiredForSource = false;
+for (int iter = 0; iter < kGuardMaxIter; ++iter) {
+bool pushed = false;
+for (const auto& spkVec : mSpeakerPositions) {
+al::Vec3f delta = relpos - spkVec;
+float dist = delta.mag();
+if (dist < kMinSpeakerDist) {
+relpos = spkVec + ((dist > 1e-7f)
+? (delta / dist) \* kMinSpeakerDist
+: al::Vec3f(0.0f, kMinSpeakerDist, 0.0f));
+pushed = true;
+}
+}
+if (!pushed) break;
+guardFiredForSource = true;
+}
+Why this is safe: in the Allosphere layout (radius ~4.8m, speakers distributed over the sphere surface), inter-speaker distances are much larger than 0.45m. Pass 1 pushing a source toward one speaker's boundary will not enter another speaker's soft zone — so the single-pass is geometrically sufficient without iteration. Pass 2's convergence loop is unchanged and remains the safety net.
+
+The quadratic ease-in (t \* t) ensures the blend is C1-continuous at the outer boundary and steepens gradually toward the hard floor, avoiding a sudden-onset ramp feel.
+
+3. Streaming-side pop/noise mechanism
+   Streaming is unlikely to be the leading source of pops or high-pitched noise. Specific findings:
+
+Fix 1 (onset fade) scope: Correct and sufficient for the silence→active transition. The 128-sample ramp fires on the first active block. After that mSourceWasSilent[si] = 0 and no ramp is applied. The second active block has no inter-block gain ramp — but this is a DBAP/spatializer concern, not a streaming concern, because streaming just provides the sample data.
+
+Buffer switch mid-block (getBlock slow path): Streaming.hpp:716-720 — the per-sample fallback correctly handles buffer switches within a block via acquire/release atomics. The switch happens at the exact sample where the buffer boundary falls. There is no sample gap or duplication.
+
+Underrun path: Streaming.hpp:434-444 — returns 0.0f (not the last held sample) after fade. With 10s chunks and 75% preload threshold, structural underruns should not occur. Any underrun would be observable via underrunCount.
+
+The one genuine streaming risk: the hard-snap return of 0.0f (not mFadeGain \* lastSample) at the end of the underrun path means that if an underrun fires mid-playback in a signal with significant energy, it's a hard zero output rather than a fade. This is a theoretical pop path that would only appear in the log as a non-zero underrunCount. Not implicated in the current test results since no underrun data was reported.
+
+Conclusion: streaming does not currently look like the leading source for either Canyon or Ascent.
+
+4. Confirmed vs speculative
+   Canyon relocation / strange movement
+   Status Finding
+   Confirmed Output zeroing is safe — not the cause
+   Confirmed Convergence guard patch didn't eliminate relocation — order-dependence was not the root cause
+   Confirmed Hard positional snap is structural: sources near speakers jump to the 0.15m exclusion shell in one block, causing a discrete DBAP cluster change regardless of convergence iterations
+   Speculative Soft-repulsion patch will reduce or eliminate this for gradual approaches; whether Canyon's specific relocation events are at the guard boundary is unverified without position data at the relocation timestamps
+   Still open Whether the relocation is a guard-entry event (source crossing into 0.15m), a guard-exit event (source leaving 0.15m and resuming natural trajectory), or both
+   Ascent pops / high-pitched noise
+   Status Finding
+   Confirmed Streaming is not the leading cause
+   Confirmed Fix 1 onset fade protects first active block; subsequent blocks are unprotected by any gain ramp
+   Speculative (strong) Hard guard on/off transitions within the fast-mover path: a guard-entry event changes the sub-step position discontinuously between adjacent sub-chunks within the same block, which is not smoothed by the sub-stepping interpolation
+   Speculative Inter-block gain step between the last sub-step of block N and the first sub-step of block N+1 — there is no per-channel gain ramp across block boundaries (the mPrevChannelGains/mNextChannelGains mechanism in RealtimeBackend.hpp:354-362 is explicitly a placeholder/identity, not yet implemented)
+   Still open Whether pops are at guard-entry (source enters hard zone), guard-exit (leaves it), or at both transitions; confirmed fix requires soft-repulsion patch + post-fix Ascent test
+
+## v2
+
+1. Corrected soft-repulsion formula
+   The fix is a symmetric bump: normalize dist into u ∈ [0,1] across the soft zone (0 at the hard floor, 1 at the outer boundary), then apply a parabolic bump u\*(1−u) scaled by the zone width. The bump is strictly positive inside the zone and exactly zero at both endpoints. Since delta = relpos − spkVec points outward, scaling by (dist + push) moves the source away from the speaker.
+
+// Pass 1 — soft outer zone (single scan, no convergence loop)
+for (const auto& spkVec : mSpeakerPositions) {
+al::Vec3f delta = relpos - spkVec;
+float dist = delta.mag();
+if (dist > kMinSpeakerDist && dist < kGuardSoftZone && dist > 1e-7f) {
+// u = 0 at kMinSpeakerDist, u = 1 at kGuardSoftZone
+float u = (dist - kMinSpeakerDist) / (kGuardSoftZone - kMinSpeakerDist);
+float push = (kGuardSoftZone - kMinSpeakerDist) _ u _ (1.0f - u);
+relpos = spkVec + (delta / dist) \* (dist + push);
+}
+}
+Properties:
+
+dist = kGuardSoftZone: u=1, push=0 — no effect
+dist = kMinSpeakerDist: u=0, push=0 — no effect; Pass 2 hard floor takes over seamlessly
+dist = midpoint (0.30m with defaults): u=0.5, push = 0.30 \* 0.25 = 0.075m outward — peak bias
+newDist never exceeds kGuardSoftZone (maximum of 0.30 + 0.075 = 0.375m < 0.45m)
+Pass 2 (convergence loop over kMinSpeakerDist) is identical to the current code and unchanged.
+
+2. Exact patch locations
+   New constant — add adjacent to kMinSpeakerDist at Spatializer.hpp:986:
+
+static constexpr float kGuardSoftZone = 0.45f; // outer soft-repulsion boundary
+Normal path guard — replace the current convergence loop block at Spatializer.hpp:453–474 with Pass 1 (above) followed by the unchanged Pass 2.
+
+Fast-mover path guard — replace the identical structure at Spatializer.hpp:533–548 with the same two-pass replacement.
+
+The un-flip at line 479 (safePos) and the fast-mover equivalent at line 549 (subSafePos) are unchanged.
+
+3. Track B and test ordering
+   Yes, retest Ascent after Canyon confirms clean with the soft-guard patch — same reason as before, and now stronger: the soft-repulsion patch directly addresses the guard-entry position discontinuity that was the stated Track B trigger condition. If the patch smooths out the guard transition in both paths, the sub-step boundary gain step may no longer be large enough to pop. Splitting the work before seeing Canyon results would waste a test cycle and risk attributing a remaining Ascent pop to a cause the guard patch may have already resolved.
+
+Test order: Canyon first. If clean, Ascent. Only if Ascent pops persist at the same timestamps post-patch does Track B (intra-block gain ramp at sub-step guard boundaries) become the next active candidate.
+
+## Pre test agent notes:
+
+All three locations are correct. Summary of what changed:
+
+Spatializer.hpp:1021 — kGuardSoftZone = 0.45f added next to kMinSpeakerDist
+Spatializer.hpp:453–489 — normal-path guard replaced with Pass 1 (soft zone scan) + Pass 2 (unchanged hard-floor convergence loop)
+Spatializer.hpp:549–577 — fast-mover per-sub-step guard replaced with the same two-pass structure
+Nothing else was touched. Test with Canyon first.
+
+- Canyon Test 1:
+
+* speaker gaurds seem to be reduced
+* first half of track played with no issue
+* first channel reloc happened around 150 sec - only some channels not all
+* high pitched buzzing and more reloc around 175 sec - give or take a few sec.
+* log:
+  [CLUSTER-DEVICE] t=148.49s top4: 0x3028 → 0xf0
+
+t=148.5s CPU=34.9% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0228 subRms=0.0041 Xrun=0 NaN=0 SpkG=30 PLAYING
+
+[CLUSTER-RENDER] t=148.99s top4: 0x10d0 → 0x78
+
+[CLUSTER-DEVICE] t=148.99s top4: 0x10d0 → 0x78
+
+t=149.0s CPU=34.3% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0160 subRms=0.0024 Xrun=0 NaN=0 SpkG=30 PLAYING
+
+[CLUSTER-RENDER] t=149.49s top4: 0x78 → 0x5050
+
+[CLUSTER-DEVICE] t=149.49s top4: 0x78 → 0x5050
+
+t=149.5s CPU=34.4% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0220 subRms=0.0013 Xrun=0 NaN=0 SpkG=30 PLAYING
+
+[CLUSTER-RENDER] t=150.01s top4: 0x2e → 0xca
+
+[CLUSTER-DEVICE] t=150.01s top4: 0x2e → 0xca
+
+t=150.0s CPU=43.7% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0151 subRms=0.0012 Xrun=0 NaN=0 SpkG=30 PLAYING
+
+[CLUSTER-RENDER] t=150.51s top4: 0x80d0 → 0x804a
+
+[CLUSTER-DEVICE] t=150.51s top4: 0x80d0 → 0x804a
+
+t=150.5s CPU=34.2% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0150 subRms=0.0002 Xrun=0 NaN=0 SpkG=30 PLAYING
+
+[RELOC-RENDER] t=151.01s mask: 0x3ffff → 0xffff
+
+[RELOC-DEVICE] t=151.01s mask: 0x3ffff → 0xffff
+
+[CLUSTER-RENDER] t=151.01s top4: 0x78 → 0xc050
+
+[CLUSTER-DEVICE] t=151.01s top4: 0x78 → 0xc050
+
+t=151.0s CPU=34.4% rDom=0xffff dDom=0xffff rBus=0xffff dev=0xffff mainRms=0.0167 subRms=0.0000 Xrun=0 NaN=0 SpkG=30 PLAYING
+
+[RELOC-RENDER] t=151.52s mask: 0x3ffff → 0xffff
+
+[RELOC-DEVICE] t=151.52s mask: 0x3ffff → 0xffff
+
+[CLUSTER-RENDER] t=151.52s top4: 0x6a → 0x8e
+
+[CLUSTER-DEVICE] t=151.52s top4: 0x6a → 0x8e
+
+t=151.5s CPU=34.5% rDom=0xffff dDom=0xffff rBus=0xffff dev=0xffff mainRms=0.0131 subRms=0.0000 Xrun=0 NaN=0 SpkG=30 PLAYING
+
+[RELOC-RENDER] t=152.02s mask: 0x3ffff → 0xffff
+
+[RELOC-DEVICE] t=152.02s mask: 0x3ffff → 0xffff
+
+[CLUSTER-RENDER] t=152.02s top4: 0x800e → 0x6a
+
+[CLUSTER-DEVICE] t=152.02s top4: 0x800e → 0x6a
+
+t=152.0s CPU=34.4% rDom=0xffff dDom=0xffff rBus=0xffff dev=0xffff mainRms=0.0120 subRms=0.0000 Xrun=0 NaN=0 SpkG=30 PLAYING
+
+[CLUSTER-RENDER] t=152.52s top4: 0x802a → 0x9048
+
+[CLUSTER-DEVICE] t=152.52s top4: 0x802a → 0x9048
+
+t=152.5s CPU=34.6% rDom=0xffff dDom=0xffff rBus=0xffff dev=0xffff mainRms=0.0121 subRms=0.0000 Xrun=0 NaN=0 SpkG=30 PLAYING
+
+[CLUSTER-RENDER] t=153.02s top4: 0x8068 → 0x80d0
+
+[CLUSTER-DEVICE] t=153.02s top4: 0x8068 → 0x80d0
+
+t=153.0s CPU=34.3% rDom=0xffff dDom=0xffff rBus=0xffff dev=0xffff mainRms=0.0130 subRms=0.0000 Xrun=0 NaN=0 SpkG=30 PLAYING
+
+[CLUSTER-RENDER] t=153.53s top4: 0x6a → 0x800e
+
+[CLUSTER-DEVICE] t=153.53s top4: 0x6a → 0x800e
+
+t=153.5s CPU=34.2% rDom=0xffff dDom=0xffff rBus=0xffff dev=0xffff mainRms=0.0143 subRms=0.0000 Xrun=0 NaN=0 SpkG=30 PLAYING
+
+[CLUSTER-RENDER] t=154.03s top4: 0x802a → 0x80c2
+
+[CLUSTER-DEVICE] t=154.03s top4: 0x802a → 0x80c2
+
+t=154.0s CPU=34.5% rDom=0xffff dDom=0xffff rBus=0xffff dev=0xffff mainRms=0.0136 subRms=0.0000 Xrun=0 NaN=0 SpkG=30 PLAYING
+
+[CLUSTER-RENDER] t=154.53s top4: 0x8058 → 0x5050
+
+[CLUSTER-DEVICE] t=154.53s top4: 0x8058 → 0x5050
+
+t=154.5s CPU=34.9% rDom=0xffff dDom=0xffff rBus=0xffff dev=0xffff mainRms=0.0153 subRms=0.0000 Xrun=0 NaN=0 SpkG=30 PLAYING
+
+[CLUSTER-RENDER] t=155.04s top4: 0x8052 → 0xca
+
+[CLUSTER-DEVICE] t=155.04s top4: 0x8052 → 0xca
+
+t=155.0s CPU=34.4% rDom=0xffff dDom=0xffff rBus=0xffff dev=0xffff mainRms=0.0141 subRms=0.0000 Xrun=0 NaN=0 SpkG=30 PLAYING
+
+[CLUSTER-RENDER] t=155.54s top4: 0x804a → 0x78
+
+[CLUSTER-DEVICE] t=155.54s top4: 0x804a → 0x78
+
+t=155.5s CPU=34.5% rDom=0xffff dDom=0xffff rBus=0xffff dev=0xffff mainRms=0.0113 subRms=0.0000 Xrun=0 NaN=0 SpkG=30 PLAYING
+
+[CLUSTER-RENDER] t=156.04s top4: 0xd040 → 0xc028
+
+[CLUSTER-DEVICE] t=156.04s top4: 0xd040 → 0xc028
+
+t=156.0s CPU=34.5% rDom=0xffff dDom=0xffff rBus=0xffff dev=0xffff mainRms=0.0182 subRms=0.0000 Xrun=0 NaN=0 SpkG=30 PLAYING
+
+[CLUSTER-RENDER] t=156.54s top4: 0x4068 → 0xd040
+
+[CLUSTER-DEVICE] t=156.54s top4: 0x4068 → 0xd040
+
+t=156.5s CPU=34.7% rDom=0xffff dDom=0xffff rBus=0xffff dev=0xffff mainRms=0.0156 subRms=0.0000 Xrun=0 NaN=0 SpkG=30 PLAYING
+
+[CLUSTER-RENDER] t=157.05s top4: 0xe8 → 0x808a
+
+[CLUSTER-DEVICE] t=157.05s top4: 0xe8 → 0x808a
+
+t=157.0s CPU=34.4% rDom=0xffff dDom=0xffff rBus=0xffff dev=0xffff mainRms=0.0117 subRms=0.0000 Xrun=0 NaN=0 SpkG=30 PLAYING
+
+[CLUSTER-RENDER] t=157.55s top4: 0x8b → 0x78
+
+[CLUSTER-DEVICE] t=157.55s top4: 0x8b → 0x78
+
+t=157.5s CPU=34.8% rDom=0xffff dDom=0xffff rBus=0xffff dev=0xffff mainRms=0.0107 subRms=0.0000 Xrun=0 NaN=0 SpkG=30 PLAYING
+
+[CLUSTER-RENDER] t=158.05s top4: 0xd2 → 0x78
+
+[CLUSTER-DEVICE] t=158.05s top4: 0xd2 → 0x78
+
+t=158.0s CPU=35.0% rDom=0xffff dDom=0xffff rBus=0xffff dev=0xffff mainRms=0.0107 subRms=0.0000 Xrun=0 NaN=0 SpkG=30 PLAYING
+
+[CLUSTER-RENDER] t=158.56s top4: 0x6a → 0x800e
+
+[CLUSTER-DEVICE] t=158.56s top4: 0x6a → 0x800e
+
+t=158.6s CPU=34.7% rDom=0xffff dDom=0xffff rBus=0xffff dev=0xffff mainRms=0.0095 subRms=0.0000 Xrun=0 NaN=0 SpkG=30 PLAYING
+
+[CLUSTER-RENDER] t=159.06s top4: 0x78 → 0x804a
+
+[CLUSTER-DEVICE] t=159.06s top4: 0x78 → 0x804a
+
+t=159.1s CPU=34.5% rDom=0xffff dDom=0xffff rBus=0xffff dev=0xffff mainRms=0.0107 subRms=0.0000 Xrun=0 NaN=0 SpkG=30 PLAYING
+
+[CLUSTER-RENDER] t=159.56s top4: 0x808a → 0x2e
+
+[CLUSTER-DEVICE] t=159.56s top4: 0x808a → 0x2e
+
+t=159.6s CPU=36.3% rDom=0xffff dDom=0xffff rBus=0xffff dev=0xffff mainRms=0.0164 subRms=0.0000 Xrun=0 NaN=0 SpkG=30 PLAYING
+
+[CLUSTER-RENDER] t=160.06s top4: 0x78 → 0x40d0
+
+[CLUSTER-DEVICE] t=160.06s top4: 0x78 → 0x40d0
+
+t=160.1s CPU=34.6% rDom=0xffff dDom=0xffff rBus=0xffff dev=0xffff mainRms=0.0128 subRms=0.0000 Xrun=0 NaN=0 SpkG=30 PLAYING
+
+[CLUSTER-RENDER] t=160.58s top4: 0x5a → 0xc3
+
+[CLUSTER-DEVICE] t=160.58s top4: 0x5a → 0xc3
+
+t=160.6s CPU=35.1% rDom=0xffff dDom=0xffff rBus=0xffff dev=0xffff mainRms=0.0141 subRms=0.0000 Xrun=0 NaN=0 SpkG=30 PLAYING
+
+[CLUSTER-RENDER] t=161.08s top4: 0x1058 → 0x6a
+
+[CLUSTER-DEVICE] t=161.08s top4: 0x1058 → 0x6a
+
+t=161.1s CPU=34.1% rDom=0xffff dDom=0xffff rBus=0xffff dev=0xffff mainRms=0.0164 subRms=0.0000 Xrun=0 NaN=0 SpkG=30 PLAYING
+
+[CLUSTER-RENDER] t=161.58s top4: 0x104a → 0x78
+
+[CLUSTER-DEVICE] t=161.58s top4: 0x104a → 0x78
+
+t=161.6s CPU=34.7% rDom=0xffff dDom=0xffff rBus=0xffff dev=0xffff mainRms=0.0202 subRms=0.0000 Xrun=0 NaN=0 SpkG=30 PLAYING
+
+[RELOC-RENDER] t=162.08s mask: 0xffff → 0x3ffff
+
+[RELOC-DEVICE] t=162.08s mask: 0xffff → 0x3ffff
+
+[CLUSTER-RENDER] t=162.08s top4: 0xb8 → 0x10d0
+
+[CLUSTER-DEVICE] t=162.08s top4: 0xb8 → 0x10d0
+
+t=162.1s CPU=34.7% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0197 subRms=0.0075 Xrun=0 NaN=0 SpkG=30 PLAYING
+
+[CLUSTER-RENDER] t=162.58s top4: 0xaa → 0x10d0
+
+[CLUSTER-DEVICE] t=162.58s top4: 0xaa → 0x10d0
+
+t=162.6s CPU=35.1% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0320 subRms=0.0119 Xrun=0 NaN=0 SpkG=30 PLAYING
+
+[CLUSTER-RENDER] t=163.08s top4: 0x80d0 → 0x3090
+
+[CLUSTER-DEVICE] t=163.08s top4: 0x80d0 → 0x3090
+
+t=163.1s CPU=34.7% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0201 subRms=0.0027 Xrun=0 NaN=0 SpkG=30 PLAYING
+
+[CLUSTER-RENDER] t=163.58s top4: 0x9180 → 0x3090
+
+[CLUSTER-DEVICE] t=163.58s top4: 0x9180 → 0x3090
+
+t=163.6s CPU=34.9% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0333 subRms=0.0042 Xrun=0 NaN=0 SpkG=30 PLAYING
+
+[CLUSTER-RENDER] t=164.10s top4: 0x5050 → 0xc0c0
+
+[CLUSTER-DEVICE] t=164.10s top4: 0x5050 → 0xc0c0
+
+t=164.1s CPU=34.6% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0208 subRms=0.0040 Xrun=0 NaN=0 SpkG=30 PLAYING
+
+[CLUSTER-RENDER] t=164.60s top4: 0x4103 → 0x5140
+
+[CLUSTER-DEVICE] t=164.60s top4: 0x4103 → 0x5140
+
+t=164.6s CPU=34.7% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0179 subRms=0.0022 Xrun=0 NaN=0 SpkG=30 PLAYING
+
+[CLUSTER-RENDER] t=165.11s top4: 0x40c8 → 0x78
+
+[CLUSTER-DEVICE] t=165.11s top4: 0x40c8 → 0x78
+
+t=165.1s CPU=34.9% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0172 subRms=0.0021 Xrun=0 NaN=0 SpkG=30 PLAYING
+
+[CLUSTER-RENDER] t=165.61s top4: 0xc082 → 0x4068
+
+[CLUSTER-DEVICE] t=165.61s top4: 0xc082 → 0x4068
+
+t=165.6s CPU=35.1% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0170 subRms=0.0005 Xrun=0 NaN=0 SpkG=30 PLAYING
+
+[RELOC-RENDER] t=166.11s mask: 0xffff → 0x3ffff
+
+[RELOC-DEVICE] t=166.11s mask: 0xffff → 0x3ffff
+
+[CLUSTER-RENDER] t=166.11s top4: 0x4068 → 0x82a
+
+[CLUSTER-DEVICE] t=166.11s top4: 0x4068 → 0x82a
+
+t=166.1s CPU=35.0% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0239 subRms=0.0002 Xrun=0 NaN=0 SpkG=30 PLAYING
+
+[RELOC-RENDER] t=166.61s mask: 0xffff → 0x3ffff
+
+[RELOC-DEVICE] t=166.61s mask: 0xffff → 0x3ffff
+
+[CLUSTER-RENDER] t=166.61s top4: 0xd040 → 0x4058
+
+[CLUSTER-DEVICE] t=166.61s top4: 0xd040 → 0x4058
+
+t=166.6s CPU=35.4% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0135 subRms=0.0002 Xrun=0 NaN=0 SpkG=30 PLAYING
+
+[RELOC-RENDER] t=167.11s mask: 0x3ffff → 0xffff
+
+[RELOC-DEVICE] t=167.11s mask: 0x3ffff → 0xffff
+
+[CLUSTER-RENDER] t=167.11s top4: 0x4058 → 0xc140
+
+[CLUSTER-DEVICE] t=167.11s top4: 0x4058 → 0xc140
+
+t=167.1s CPU=35.1% rDom=0xffff dDom=0xffff rBus=0xffff dev=0xffff mainRms=0.0241 subRms=0.0000 Xrun=0 NaN=0 SpkG=30 PLAYING
+
+[CLUSTER-RENDER] t=167.62s top4: 0x2828 → 0x4068
+
+[CLUSTER-DEVICE] t=167.62s top4: 0x2828 → 0x4068
+
+t=167.6s CPU=35.3% rDom=0xffff dDom=0xffff rBus=0xffff dev=0xffff mainRms=0.0221 subRms=0.0000 Xrun=0 NaN=0 SpkG=30 PLAYING
+
+[CLUSTER-RENDER] t=168.12s top4: 0xd040 → 0x4058
+
+[CLUSTER-DEVICE] t=168.12s top4: 0xd040 → 0x4058
+
+t=168.1s CPU=35.3% rDom=0xffff dDom=0xffff rBus=0xffff dev=0xffff mainRms=0.0170 subRms=0.0000 Xrun=0 NaN=0 SpkG=30 PLAYING
+
+[CLUSTER-RENDER] t=168.63s top4: 0x4058 → 0xc140
+
+[CLUSTER-DEVICE] t=168.63s top4: 0x4058 → 0xc140
+
+t=168.6s CPU=35.2% rDom=0xffff dDom=0xffff rBus=0xffff dev=0xffff mainRms=0.0166 subRms=0.0000 Xrun=0 NaN=0 SpkG=30 PLAYING
+
+[CLUSTER-RENDER] t=169.13s top4: 0x408a → 0xc028
+
+[CLUSTER-DEVICE] t=169.13s top4: 0x408a → 0xc028
+
+t=169.1s CPU=34.7% rDom=0xffff dDom=0xffff rBus=0xffff dev=0xffff mainRms=0.0188 subRms=0.0000 Xrun=0 NaN=0 SpkG=30 PLAYING
+
+[CLUSTER-RENDER] t=169.63s top4: 0xd040 → 0x4058
+
+[CLUSTER-DEVICE] t=169.63s top4: 0xd040 → 0x4058
+
+t=169.6s CPU=34.9% rDom=0xffff dDom=0xffff rBus=0xffff dev=0xffff mainRms=0.0133 subRms=0.0000 Xrun=0 NaN=0 SpkG=30 PLAYING
+
+[RELOC-RENDER] t=170.13s mask: 0xffff → 0x3ffff
+
+[RELOC-DEVICE] t=170.13s mask: 0xffff → 0x3ffff
+
+[CLUSTER-RENDER] t=170.13s top4: 0x3090 → 0x5050
+
+[CLUSTER-DEVICE] t=170.13s top4: 0x3090 → 0x5050
+
+t=170.1s CPU=45.5% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0313 subRms=0.0100 Xrun=0 NaN=0 SpkG=30 PLAYING
+
+[CLUSTER-RENDER] t=170.65s top4: 0x3810 → 0x10d0
+
+[CLUSTER-DEVICE] t=170.65s top4: 0x3810 → 0x10d0
+
+t=170.6s CPU=35.0% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0388 subRms=0.0090 Xrun=0 NaN=0 SpkG=30 PLAYING
+
+[CLUSTER-RENDER] t=171.15s top4: 0x40d0 → 0x1070
+
+[CLUSTER-DEVICE] t=171.15s top4: 0x40d0 → 0x1070
+
+t=171.1s CPU=34.9% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0288 subRms=0.0073 Xrun=0 NaN=0 SpkG=30 PLAYING
+
+[CLUSTER-RENDER] t=171.65s top4: 0x40d0 → 0x408a
+
+[CLUSTER-DEVICE] t=171.65s top4: 0x40d0 → 0x408a
+
+t=171.6s CPU=35.2% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0156 subRms=0.0029 Xrun=0 NaN=0 SpkG=30 PLAYING
+
+[CLUSTER-RENDER] t=172.15s top4: 0xd2 → 0xc0c0
+
+[CLUSTER-DEVICE] t=172.15s top4: 0xd2 → 0xc0c0
+
+t=172.1s CPU=35.3% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0174 subRms=0.0028 Xrun=0 NaN=0 SpkG=30 PLAYING
+
+[CLUSTER-RENDER] t=172.65s top4: 0x40a8 → 0xc140
+
+[CLUSTER-DEVICE] t=172.65s top4: 0x40a8 → 0xc140
+
+t=172.7s CPU=35.1% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0191 subRms=0.0010 Xrun=0 NaN=0 SpkG=30 PLAYING
+
+[CLUSTER-RENDER] t=173.15s top4: 0x40d0 → 0x10b0
+
+[CLUSTER-DEVICE] t=173.15s top4: 0x40d0 → 0x10b0
+
+t=173.2s CPU=34.8% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0277 subRms=0.0052 Xrun=0 NaN=0 SpkG=30 PLAYING
+
+[CLUSTER-RENDER] t=173.66s top4: 0x183 → 0x8e
+
+[CLUSTER-DEVICE] t=173.66s top4: 0x183 → 0x8e
+
+t=173.7s CPU=35.0% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0296 subRms=0.0026 Xrun=0 NaN=0 SpkG=30 PLAYING
+
+[CLUSTER-RENDER] t=174.17s top4: 0x40c2 → 0x78
+
+[CLUSTER-DEVICE] t=174.17s top4: 0x40c2 → 0x78
+
+t=174.2s CPU=34.7% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0216 subRms=0.0010 Xrun=0 NaN=0 SpkG=30 PLAYING
+
+[CLUSTER-RENDER] t=174.67s top4: 0x40d0 → 0xc140
+
+[CLUSTER-DEVICE] t=174.67s top4: 0x40d0 → 0xc140
+
+t=174.7s CPU=34.8% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0154 subRms=0.0012 Xrun=0 NaN=0 SpkG=30 PLAYING
+
+[CLUSTER-RENDER] t=175.18s top4: 0xd8 → 0x6a
+
+[CLUSTER-DEVICE] t=175.18s top4: 0xd8 → 0x6a
+
+t=175.2s CPU=35.2% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0238 subRms=0.0007 Xrun=0 NaN=0 SpkG=30 PLAYING
+
+[RELOC-RENDER] t=175.68s mask: 0x3ffff → 0xffff
+
+[RELOC-DEVICE] t=175.68s mask: 0x3ffff → 0xffff
+
+[CLUSTER-RENDER] t=175.68s top4: 0x4052 → 0x40c8
+
+[CLUSTER-DEVICE] t=175.68s top4: 0x4052 → 0x40c8
+
+t=175.7s CPU=35.2% rDom=0xffff dDom=0xffff rBus=0xffff dev=0xffff mainRms=0.0153 subRms=0.0000 Xrun=0 NaN=0 SpkG=30 PLAYING
+
+[RELOC-RENDER] t=176.18s mask: 0x3ffff → 0xffff
+
+[RELOC-DEVICE] t=176.18s mask: 0x3ffff → 0xffff
+
+[CLUSTER-RENDER] t=176.18s top4: 0x4052 → 0x183
+
+[CLUSTER-DEVICE] t=176.18s top4: 0x4052 → 0x183
+
+t=176.2s CPU=35.4% rDom=0xffff dDom=0xffff rBus=0xffff dev=0xffff mainRms=0.0177 subRms=0.0000 Xrun=0 NaN=0 SpkG=30 PLAYING
+
+[RELOC-RENDER] t=176.68s mask: 0x3ffff → 0xffff
+
+[RELOC-DEVICE] t=176.68s mask: 0x3ffff → 0xffff
+
+[CLUSTER-RENDER] t=176.68s top4: 0x9a → 0x78
+
+[CLUSTER-DEVICE] t=176.68s top4: 0x9a → 0x78
+
+t=176.7s CPU=34.9% rDom=0xffff dDom=0xffff rBus=0xffff dev=0xffff mainRms=0.0152 subRms=0.0000 Xrun=0 NaN=0 SpkG=30 PLAYING
+
+[CLUSTER-RENDER] t=177.18s top4: 0x408a → 0x4052
+
+[CLUSTER-DEVICE] t=177.18s top4: 0x408a → 0x4052
+
+t=177.2s CPU=35.0% rDom=0xffff dDom=0xffff rBus=0xffff dev=0xffff mainRms=0.0169 subRms=0.0000 Xrun=0 NaN=0 SpkG=30 PLAYING
+
+[CLUSTER-RENDER] t=177.70s top4: 0xc090 → 0x4038
+
+[CLUSTER-DEVICE] t=177.70s top4: 0xc090 → 0x4038
+
+t=177.7s CPU=35.5% rDom=0xffff dDom=0xffff rBus=0xffff dev=0xffff mainRms=0.0117 subRms=0.0000 Xrun=0 NaN=0 SpkG=30 PLAYING
+
+[CLUSTER-RENDER] t=178.20s top4: 0x401a → 0x838
+
+[CLUSTER-DEVICE] t=178.20s top4: 0x401a → 0x838
+
+t=178.2s CPU=35.2% rDom=0xffff dDom=0xffff rBus=0xffff dev=0xffff mainRms=0.0147 subRms=0.0000 Xrun=0 NaN=0 SpkG=30 PLAYING
+
+[CLUSTER-RENDER] t=178.70s top4: 0xc090 → 0x4083
+
+[CLUSTER-DEVICE] t=178.70s top4: 0xc090 → 0x4083
+
+t=178.7s CPU=35.4% rDom=0xffff dDom=0xffff rBus=0xffff dev=0xffff mainRms=0.0169 subRms=0.0000 Xrun=0 NaN=0 SpkG=30 PLAYING
+
+[CLUSTER-RENDER] t=179.21s top4: 0x8b → 0x4098
+
+[CLUSTER-DEVICE] t=179.21s top4: 0x8b → 0x4098
+
+t=179.2s CPU=34.9% rDom=0xffff dDom=0xffff rBus=0xffff dev=0xffff mainRms=0.0155 subRms=0.0000 Xrun=0 NaN=0 SpkG=30 PLAYING
+
+[CLUSTER-RENDER] t=179.71s top4: 0xaa → 0x87
+
+- notes on this test ^ : wondering if the buffer wasnt totally cleared and thats things collapsed toward the end
+
+- Ascent test 1:
+
+* early pop around 30 secs
+* channel reloc around 94 sec
+* pop around 112 sec
+* more pops around 130
+* log:
+  [CLUSTER-DEVICE] t=22.15s top4: 0x87 → 0x55
+
+t=22.2s CPU=28.7% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0109 subRms=0.0016 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+t=22.7s CPU=30.7% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0121 subRms=0.0036 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+[CLUSTER-RENDER] t=23.16s top4: 0x95 → 0x47
+
+[CLUSTER-DEVICE] t=23.16s top4: 0x95 → 0x47
+
+t=23.2s CPU=30.5% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0115 subRms=0.0021 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+[CLUSTER-RENDER] t=23.66s top4: 0x87 → 0x56
+
+[CLUSTER-DEVICE] t=23.66s top4: 0x87 → 0x56
+
+t=23.7s CPU=30.4% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0113 subRms=0.0054 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+t=24.2s CPU=27.6% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0122 subRms=0.0021 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+t=24.7s CPU=30.7% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0112 subRms=0.0040 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+t=25.2s CPU=31.0% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0117 subRms=0.0019 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+[CLUSTER-RENDER] t=25.66s top4: 0x56 → 0xc5
+
+[CLUSTER-DEVICE] t=25.66s top4: 0x56 → 0xc5
+
+t=25.7s CPU=28.7% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0124 subRms=0.0035 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+t=26.2s CPU=20.1% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0118 subRms=0.0038 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+t=26.7s CPU=28.8% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0146 subRms=0.0063 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+t=27.2s CPU=30.9% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0109 subRms=0.0048 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+[CLUSTER-RENDER] t=27.68s top4: 0xd4 → 0x87
+
+[CLUSTER-DEVICE] t=27.68s top4: 0xd4 → 0x87
+
+t=27.7s CPU=20.1% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0150 subRms=0.0025 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+t=28.2s CPU=20.4% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0114 subRms=0.0057 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+t=28.7s CPU=20.4% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0142 subRms=0.0056 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+t=29.2s CPU=20.3% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0117 subRms=0.0027 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+t=29.7s CPU=20.1% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0136 subRms=0.0045 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+t=30.2s CPU=30.8% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0118 subRms=0.0026 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+t=30.7s CPU=22.7% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0145 subRms=0.0062 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+t=31.2s CPU=30.7% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0128 subRms=0.0016 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+t=31.7s CPU=30.4% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0116 subRms=0.0026 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+t=32.2s CPU=30.8% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0124 subRms=0.0038 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+[CLUSTER-RENDER] t=32.71s top4: 0xd4 → 0x8085
+
+[CLUSTER-DEVICE] t=32.71s top4: 0xd4 → 0x8085
+
+t=32.7s CPU=30.3% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0299 subRms=0.0014 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+[CLUSTER-RENDER] t=33.22s top4: 0xd4 → 0x87
+
+[CLUSTER-DEVICE] t=33.22s top4: 0xd4 → 0x87
+
+t=33.2s CPU=27.9% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0119 subRms=0.0016 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+[CLUSTER-RENDER] t=33.73s top4: 0x87 → 0xd4
+
+[CLUSTER-DEVICE] t=33.73s top4: 0x87 → 0xd4
+
+t=33.7s CPU=30.7% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0122 subRms=0.0053 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+t=34.2s CPU=27.4% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0121 subRms=0.0021 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+t=34.7s CPU=27.6% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0167 subRms=0.0073 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+[CLUSTER-RENDER] t=35.23s top4: 0x87 → 0x56
+
+[CLUSTER-DEVICE] t=35.23s top4: 0x87 → 0x56
+
+t=35.2s CPU=20.7% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0116 subRms=0.0022 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+[CLUSTER-RENDER] t=35.73s top4: 0x87 → 0xd4
+
+[CLUSTER-DEVICE] t=35.73s top4: 0x87 → 0xd4
+
+t=35.7s CPU=27.7% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0150 subRms=0.0058 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+[DOM-RENDER] t=36.25s dom: 0xffff → 0xefef
+
+[DOM-DEVICE] t=36.25s dom: 0xffff → 0xefef
+
+t=36.2s CPU=30.1% rDom=0xefef dDom=0xefef rBus=0x3ffff dev=0x3ffff mainRms=0.0091 subRms=0.0033 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+[DOM-RENDER] t=36.75s dom: 0xdfff → 0xffff
+
+[DOM-DEVICE] t=36.75s dom: 0xdfff → 0xffff
+
+t=36.7s CPU=28.7% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0114 subRms=0.0052 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+t=37.2s CPU=30.6% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0104 subRms=0.0018 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+[DOM-RENDER] t=37.76s dom: 0xffff → 0xafaf
+
+[DOM-DEVICE] t=37.76s dom: 0xffff → 0xafaf
+
+[CLUSTER-RENDER] t=37.76s top4: 0x486 → 0x207
+
+[CLUSTER-DEVICE] t=37.76s top4: 0x486 → 0x207
+
+t=37.8s CPU=20.1% rDom=0xafaf dDom=0xafaf rBus=0x3ffff dev=0x3ffff mainRms=0.0087 subRms=0.0022 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+[DOM-RENDER] t=38.26s dom: 0xefef → 0xffff
+
+[DOM-DEVICE] t=38.26s dom: 0xefef → 0xffff
+
+t=38.3s CPU=23.4% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0105 subRms=0.0028 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+[DOM-RENDER] t=38.76s dom: 0x57df → 0xffff
+
+[DOM-DEVICE] t=38.76s dom: 0x57df → 0xffff
+
+[CLUSTER-RENDER] t=38.76s top4: 0x87 → 0x56
+
+[CLUSTER-DEVICE] t=38.76s top4: 0x87 → 0x56
+
+t=38.8s CPU=31.1% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0135 subRms=0.0028 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+[DOM-RENDER] t=39.27s dom: 0xd7ff → 0xffff
+
+[DOM-DEVICE] t=39.27s dom: 0xd7ff → 0xffff
+
+t=39.3s CPU=30.5% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0113 subRms=0.0018 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+[DOM-RENDER] t=39.78s dom: 0xafff → 0xffff
+
+[DOM-DEVICE] t=39.78s dom: 0xafff → 0xffff
+
+t=39.8s CPU=28.7% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0160 subRms=0.0010 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+[DOM-RENDER] t=40.28s dom: 0x7eff → 0xffff
+
+[DOM-DEVICE] t=40.28s dom: 0x7eff → 0xffff
+
+[CLUSTER-RENDER] t=40.28s top4: 0x87 → 0x56
+
+[CLUSTER-DEVICE] t=40.28s top4: 0x87 → 0x56
+
+t=40.3s CPU=23.0% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0116 subRms=0.0037 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+[CLUSTER-RENDER] t=40.79s top4: 0x56 → 0xc5
+
+[CLUSTER-DEVICE] t=40.79s top4: 0x56 → 0xc5
+
+t=40.8s CPU=29.6% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0104 subRms=0.0014 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+[CLUSTER-RENDER] t=41.29s top4: 0xc3 → 0x56
+
+[CLUSTER-DEVICE] t=41.29s top4: 0xc3 → 0x56
+
+t=41.3s CPU=27.5% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0111 subRms=0.0036 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+[CLUSTER-RENDER] t=41.79s top4: 0x93 → 0xc6
+
+[CLUSTER-DEVICE] t=41.79s top4: 0x93 → 0xc6
+
+t=41.8s CPU=30.4% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0148 subRms=0.0035 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+[CLUSTER-RENDER] t=42.29s top4: 0x87 → 0xd4
+
+[CLUSTER-DEVICE] t=42.29s top4: 0x87 → 0xd4
+
+t=42.3s CPU=31.0% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0107 subRms=0.0033 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+t=42.8s CPU=26.7% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0104 subRms=0.0024 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+[CLUSTER-RENDER] t=43.31s top4: 0x56 → 0xd1
+
+[CLUSTER-DEVICE] t=43.31s top4: 0x56 → 0xd1
+
+t=43.3s CPU=20.3% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0127 subRms=0.0012 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+[CLUSTER-RENDER] t=43.81s top4: 0xd1 → 0xc6
+
+[CLUSTER-DEVICE] t=43.81s top4: 0xd1 → 0xc6
+
+t=43.8s CPU=20.1% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0105 subRms=0.0028 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+t=44.3s CPU=20.2% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0108 subRms=0.0019 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+t=44.8s CPU=30.5% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0099 subRms=0.0043 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+t=45.3s CPU=31.1% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0112 subRms=0.0020 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+[CLUSTER-RENDER] t=45.82s top4: 0x96 → 0xc3
+
+[CLUSTER-DEVICE] t=45.82s top4: 0x96 → 0xc3
+
+t=45.8s CPU=29.4% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0149 subRms=0.0011 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+t=46.3s CPU=30.4% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0114 subRms=0.0013 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+t=46.8s CPU=27.8% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0106 subRms=0.0024 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+t=47.3s CPU=30.8% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0116 subRms=0.0010 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+t=47.8s CPU=20.3% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0128 subRms=0.0050 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+t=48.3s CPU=26.6% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0137 subRms=0.0023 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+t=48.8s CPU=28.9% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0108 subRms=0.0009 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+[CLUSTER-RENDER] t=49.34s top4: 0xc5 → 0x96
+
+[CLUSTER-DEVICE] t=49.34s top4: 0xc5 → 0x96
+
+t=49.3s CPU=27.9% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0129 subRms=0.0042 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+[CLUSTER-RENDER] t=49.86s top4: 0x87 → 0x56
+
+[CLUSTER-DEVICE] t=49.86s top4: 0x87 → 0x56
+
+t=49.9s CPU=31.1% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0122 subRms=0.0025 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+t=50.4s CPU=31.4% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0131 subRms=0.0003 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+t=50.9s CPU=20.3% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0121 subRms=0.0025 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+t=51.4s CPU=23.0% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0111 subRms=0.0045 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+t=51.9s CPU=20.5% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0100 subRms=0.0039 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+t=52.4s CPU=28.8% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0118 subRms=0.0018 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+[CLUSTER-RENDER] t=52.87s top4: 0xd1 → 0x56
+
+[CLUSTER-DEVICE] t=52.87s top4: 0xd1 → 0x56
+
+t=52.9s CPU=23.1% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0108 subRms=0.0038 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+[CLUSTER-RENDER] t=53.39s top4: 0xc5 → 0xd2
+
+[CLUSTER-DEVICE] t=53.39s top4: 0xc5 → 0xd2
+
+t=53.4s CPU=20.1% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0113 subRms=0.0035 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+t=53.9s CPU=20.2% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0110 subRms=0.0019 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+t=54.4s CPU=30.5% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0132 subRms=0.0021 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+t=54.9s CPU=20.3% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0129 subRms=0.0022 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+t=55.4s CPU=30.9% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0142 subRms=0.0026 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+t=55.9s CPU=29.0% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0127 subRms=0.0030 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+t=56.4s CPU=20.4% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0129 subRms=0.0026 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+t=56.9s CPU=31.5% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0101 subRms=0.0031 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+t=57.4s CPU=31.1% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0122 subRms=0.0021 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+t=57.9s CPU=20.4% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0111 subRms=0.0070 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+t=58.4s CPU=30.9% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0120 subRms=0.0086 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+[CLUSTER-RENDER] t=58.91s top4: 0xd1 → 0x56
+
+[CLUSTER-DEVICE] t=58.91s top4: 0xd1 → 0x56
+
+t=58.9s CPU=30.9% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0133 subRms=0.0022 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+[CLUSTER-RENDER] t=59.41s top4: 0x56 → 0xd1
+
+[CLUSTER-DEVICE] t=59.41s top4: 0x56 → 0xd1
+
+t=59.4s CPU=31.4% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0279 subRms=0.0020 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+[CLUSTER-RENDER] t=59.91s top4: 0x56 → 0xc5
+
+[CLUSTER-DEVICE] t=59.91s top4: 0x56 → 0xc5
+
+t=59.9s CPU=20.5% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0157 subRms=0.0008 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+t=60.4s CPU=30.6% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0116 subRms=0.0014 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+t=60.9s CPU=30.4% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0104 subRms=0.0001 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+[RELOC-RENDER] t=61.43s mask: 0xffff → 0x3ffff
+
+[RELOC-DEVICE] t=61.43s mask: 0xffff → 0x3ffff
+
+[CLUSTER-RENDER] t=61.43s top4: 0xd1 → 0x56
+
+[CLUSTER-DEVICE] t=61.43s top4: 0xd1 → 0x56
+
+t=61.4s CPU=30.4% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0125 subRms=0.0045 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+t=61.9s CPU=30.7% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0119 subRms=0.0004 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+t=62.4s CPU=30.6% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0146 subRms=0.0027 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+t=62.9s CPU=28.6% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0152 subRms=0.0036 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+t=63.4s CPU=29.9% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0136 subRms=0.0010 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+t=63.9s CPU=30.0% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0115 subRms=0.0005 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+t=64.4s CPU=30.4% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0120 subRms=0.0062 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+[CLUSTER-RENDER] t=64.96s top4: 0x5050 → 0xd1
+
+[CLUSTER-DEVICE] t=64.96s top4: 0x5050 → 0xd1
+
+t=65.0s CPU=28.3% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0203 subRms=0.0041 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+[CLUSTER-RENDER] t=65.46s top4: 0xd1 → 0x8181
+
+[CLUSTER-DEVICE] t=65.46s top4: 0xd1 → 0x8181
+
+t=65.5s CPU=30.9% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0103 subRms=0.0052 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+[CLUSTER-RENDER] t=65.96s top4: 0x5050 → 0xd1
+
+[CLUSTER-DEVICE] t=65.96s top4: 0x5050 → 0xd1
+
+t=66.0s CPU=27.5% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0087 subRms=0.0021 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+[CLUSTER-RENDER] t=66.46s top4: 0x5050 → 0xd1
+
+[CLUSTER-DEVICE] t=66.46s top4: 0x5050 → 0xd1
+
+t=66.5s CPU=30.6% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0089 subRms=0.0041 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+[DOM-RENDER] t=66.97s dom: 0xf9fd → 0xffff
+
+[DOM-DEVICE] t=66.97s dom: 0xf9fd → 0xffff
+
+t=67.0s CPU=28.1% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0062 subRms=0.0013 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+t=67.5s CPU=30.7% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0055 subRms=0.0011 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+[DOM-RENDER] t=67.98s dom: 0xfdff → 0xffff
+
+[DOM-DEVICE] t=67.98s dom: 0xfdff → 0xffff
+
+t=68.0s CPU=20.6% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0069 subRms=0.0009 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+[DOM-RENDER] t=68.48s dom: 0xfdff → 0xffff
+
+[DOM-DEVICE] t=68.48s dom: 0xfdff → 0xffff
+
+t=68.5s CPU=29.2% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0128 subRms=0.0007 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+[DOM-RENDER] t=68.99s dom: 0xffff → 0xfdff
+
+[DOM-DEVICE] t=68.99s dom: 0xffff → 0xfdff
+
+t=69.0s CPU=28.2% rDom=0xfdff dDom=0xfdff rBus=0x3ffff dev=0x3ffff mainRms=0.0078 subRms=0.0009 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+[DOM-RENDER] t=69.49s dom: 0xfdff → 0xffff
+
+[DOM-DEVICE] t=69.49s dom: 0xfdff → 0xffff
+
+t=69.5s CPU=29.1% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0069 subRms=0.0006 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+[DOM-RENDER] t=69.98s dom: 0xfdff → 0xffff
+
+[DOM-DEVICE] t=69.98s dom: 0xfdff → 0xffff
+
+t=70.0s CPU=30.5% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0096 subRms=0.0012 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+[RELOC-RENDER] t=70.50s mask: 0xffff → 0x3ffff
+
+[RELOC-DEVICE] t=70.50s mask: 0xffff → 0x3ffff
+
+t=70.5s CPU=29.4% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0149 subRms=0.0003 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+[RELOC-RENDER] t=71.00s mask: 0xffff → 0x3ffff
+
+[RELOC-DEVICE] t=71.00s mask: 0xffff → 0x3ffff
+
+t=71.0s CPU=28.2% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0105 subRms=0.0060 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+[DOM-RENDER] t=71.50s dom: 0xfdff → 0xffff
+
+[DOM-DEVICE] t=71.50s dom: 0xfdff → 0xffff
+
+t=71.5s CPU=29.6% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0081 subRms=0.0020 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+[DOM-RENDER] t=72.00s dom: 0xffff → 0xfdff
+
+[DOM-DEVICE] t=72.00s dom: 0xffff → 0xfdff
+
+t=72.0s CPU=29.9% rDom=0xfdff dDom=0xfdff rBus=0x3ffff dev=0x3ffff mainRms=0.0099 subRms=0.0015 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+[DOM-RENDER] t=72.50s dom: 0xfdfd → 0xffff
+
+[DOM-DEVICE] t=72.50s dom: 0xfdfd → 0xffff
+
+[CLUSTER-RENDER] t=72.50s top4: 0x5050 → 0x8d0
+
+[CLUSTER-DEVICE] t=72.50s top4: 0x5050 → 0x8d0
+
+t=72.5s CPU=30.4% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0077 subRms=0.0015 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+[CLUSTER-RENDER] t=73.00s top4: 0x8d0 → 0x5050
+
+[CLUSTER-DEVICE] t=73.00s top4: 0x8d0 → 0x5050
+
+t=73.0s CPU=30.4% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0061 subRms=0.0017 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+[DOM-RENDER] t=73.50s dom: 0xfdff → 0xffff
+
+[DOM-DEVICE] t=73.50s dom: 0xfdff → 0xffff
+
+t=73.5s CPU=30.4% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0143 subRms=0.0007 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+[RELOC-RENDER] t=74.02s mask: 0xffff → 0x3ffff
+
+[RELOC-DEVICE] t=74.02s mask: 0xffff → 0x3ffff
+
+[CLUSTER-RENDER] t=74.02s top4: 0x8181 → 0xd1
+
+[CLUSTER-DEVICE] t=74.02s top4: 0x8181 → 0xd1
+
+t=74.0s CPU=26.2% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0086 subRms=0.0002 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+[RELOC-RENDER] t=74.52s mask: 0x3ffff → 0xffff
+
+[RELOC-DEVICE] t=74.52s mask: 0x3ffff → 0xffff
+
+[CLUSTER-RENDER] t=74.52s top4: 0x8d0 → 0x5050
+
+[CLUSTER-DEVICE] t=74.52s top4: 0x8d0 → 0x5050
+
+t=74.5s CPU=30.4% rDom=0xffff dDom=0xffff rBus=0xffff dev=0xffff mainRms=0.0096 subRms=0.0000 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+[RELOC-RENDER] t=75.02s mask: 0x3ffff → 0xffff
+
+[RELOC-DEVICE] t=75.02s mask: 0x3ffff → 0xffff
+
+t=75.0s CPU=27.3% rDom=0xffff dDom=0xffff rBus=0xffff dev=0xffff mainRms=0.0079 subRms=0.0000 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+[RELOC-RENDER] t=75.52s mask: 0xffff → 0x3ffff
+
+[RELOC-DEVICE] t=75.52s mask: 0xffff → 0x3ffff
+
+t=75.5s CPU=30.3% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0080 subRms=0.0029 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+[CLUSTER-RENDER] t=76.02s top4: 0x8d0 → 0x5050
+
+[CLUSTER-DEVICE] t=76.02s top4: 0x8d0 → 0x5050
+
+t=76.0s CPU=27.5% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0105 subRms=0.0023 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+[CLUSTER-RENDER] t=76.52s top4: 0x1850 → 0x40d0
+
+[CLUSTER-DEVICE] t=76.52s top4: 0x1850 → 0x40d0
+
+t=76.5s CPU=30.2% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0091 subRms=0.0013 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+t=77.0s CPU=30.4% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0107 subRms=0.0011 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+t=77.5s CPU=30.5% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0076 subRms=0.0011 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+t=78.0s CPU=20.0% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0106 subRms=0.0003 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+t=78.5s CPU=23.0% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0084 subRms=0.0055 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+t=79.0s CPU=30.6% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0115 subRms=0.0062 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+t=79.5s CPU=29.3% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0127 subRms=0.0026 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+t=80.1s CPU=26.1% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0084 subRms=0.0037 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+t=80.6s CPU=20.1% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0132 subRms=0.0023 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+t=81.1s CPU=30.4% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0107 subRms=0.0014 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+t=81.6s CPU=30.4% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0086 subRms=0.0006 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+t=82.1s CPU=27.5% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0109 subRms=0.0007 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+t=82.6s CPU=30.4% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0088 subRms=0.0028 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+[CLUSTER-RENDER] t=83.07s top4: 0x1850 → 0xd1
+
+[CLUSTER-DEVICE] t=83.07s top4: 0x1850 → 0xd1
+
+t=83.1s CPU=29.2% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0080 subRms=0.0030 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+[CLUSTER-RENDER] t=83.57s top4: 0x5050 → 0xd1
+
+[CLUSTER-DEVICE] t=83.57s top4: 0x5050 → 0xd1
+
+t=83.6s CPU=30.3% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0103 subRms=0.0037 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+[CLUSTER-RENDER] t=84.07s top4: 0x5050 → 0xd1
+
+[CLUSTER-DEVICE] t=84.07s top4: 0x5050 → 0xd1
+
+t=84.1s CPU=30.4% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0096 subRms=0.0021 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+t=84.6s CPU=29.9% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0114 subRms=0.0048 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+t=85.1s CPU=30.4% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0095 subRms=0.0034 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+[CLUSTER-RENDER] t=85.59s top4: 0x5050 → 0xd1
+
+[CLUSTER-DEVICE] t=85.59s top4: 0x5050 → 0xd1
+
+t=85.6s CPU=30.4% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0072 subRms=0.0030 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+t=86.1s CPU=20.4% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0106 subRms=0.0020 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+t=86.6s CPU=29.8% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0255 subRms=0.0013 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+[CLUSTER-RENDER] t=87.09s top4: 0x8181 → 0xd1
+
+[CLUSTER-DEVICE] t=87.09s top4: 0x8181 → 0xd1
+
+t=87.1s CPU=28.3% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0108 subRms=0.0025 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+[CLUSTER-RENDER] t=87.61s top4: 0x5050 → 0xd1
+
+[CLUSTER-DEVICE] t=87.61s top4: 0x5050 → 0xd1
+
+t=87.6s CPU=20.3% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0102 subRms=0.0027 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+[CLUSTER-RENDER] t=88.11s top4: 0x8d0 → 0x5050
+
+[CLUSTER-DEVICE] t=88.11s top4: 0x8d0 → 0x5050
+
+t=88.1s CPU=24.5% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0120 subRms=0.0006 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+t=88.6s CPU=30.4% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0117 subRms=0.0004 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+[RELOC-RENDER] t=89.11s mask: 0xffff → 0x3ffff
+
+[RELOC-DEVICE] t=89.11s mask: 0xffff → 0x3ffff
+
+t=89.1s CPU=28.3% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0121 subRms=0.0054 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+[CLUSTER-RENDER] t=89.61s top4: 0x5050 → 0xd1
+
+[CLUSTER-DEVICE] t=89.61s top4: 0x5050 → 0xd1
+
+t=89.6s CPU=30.4% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0109 subRms=0.0025 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+[CLUSTER-RENDER] t=90.12s top4: 0xd1 → 0x5050
+
+[CLUSTER-DEVICE] t=90.12s top4: 0xd1 → 0x5050
+
+t=90.1s CPU=30.3% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0103 subRms=0.0011 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+[DOM-RENDER] t=90.62s dom: 0xfdff → 0xffff
+
+[DOM-DEVICE] t=90.62s dom: 0xfdff → 0xffff
+
+t=90.6s CPU=29.8% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0100 subRms=0.0019 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+[DOM-RENDER] t=91.13s dom: 0xffff → 0xfbfb
+
+[DOM-DEVICE] t=91.13s dom: 0xffff → 0xfbfb
+
+[CLUSTER-RENDER] t=91.13s top4: 0xd1 → 0x5050
+
+[CLUSTER-DEVICE] t=91.13s top4: 0xd1 → 0x5050
+
+t=91.1s CPU=23.1% rDom=0xfbfb dDom=0xfbfb rBus=0x3ffff dev=0x3ffff mainRms=0.0076 subRms=0.0025 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+[DOM-RENDER] t=91.63s dom: 0xfbff → 0xffff
+
+[DOM-DEVICE] t=91.63s dom: 0xfbff → 0xffff
+
+t=91.6s CPU=30.9% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0094 subRms=0.0038 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+[DOM-RENDER] t=92.14s dom: 0xf9fd → 0xffff
+
+[DOM-DEVICE] t=92.14s dom: 0xf9fd → 0xffff
+
+[CLUSTER-RENDER] t=92.14s top4: 0xd1 → 0x5050
+
+[CLUSTER-DEVICE] t=92.14s top4: 0xd1 → 0x5050
+
+t=92.1s CPU=27.4% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0068 subRms=0.0024 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+[DOM-RENDER] t=92.64s dom: 0xfbff → 0xffff
+
+[DOM-DEVICE] t=92.64s dom: 0xfbff → 0xffff
+
+t=92.6s CPU=30.0% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0077 subRms=0.0055 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+[CLUSTER-RENDER] t=93.14s top4: 0x8181 → 0xd1
+
+[CLUSTER-DEVICE] t=93.14s top4: 0x8181 → 0xd1
+
+t=93.1s CPU=30.3% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0053 subRms=0.0023 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+[RELOC-RENDER] t=93.64s mask: 0xffff → 0x3ffff
+
+[RELOC-DEVICE] t=93.64s mask: 0xffff → 0x3ffff
+
+[DOM-RENDER] t=93.64s dom: 0xf9fd → 0xfdfd
+
+[DOM-DEVICE] t=93.64s dom: 0xf9fd → 0xfdfd
+
+[CLUSTER-RENDER] t=93.64s top4: 0xd1 → 0x5050
+
+[CLUSTER-DEVICE] t=93.64s top4: 0xd1 → 0x5050
+
+t=93.6s CPU=28.0% rDom=0xfdfd dDom=0xfdfd rBus=0x3ffff dev=0x3ffff mainRms=0.0067 subRms=0.0005 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+[RELOC-RENDER] t=94.15s mask: 0xffff → 0x3ffff
+
+[RELOC-DEVICE] t=94.15s mask: 0xffff → 0x3ffff
+
+[DOM-RENDER] t=94.15s dom: 0xf9f9 → 0xf9fd
+
+[DOM-DEVICE] t=94.15s dom: 0xf9f9 → 0xf9fd
+
+t=94.2s CPU=30.4% rDom=0xf9fd dDom=0xf9fd rBus=0x3ffff dev=0x3ffff mainRms=0.0088 subRms=0.0002 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+[RELOC-RENDER] t=94.66s mask: 0xffff → 0x3ffff
+
+[RELOC-DEVICE] t=94.66s mask: 0xffff → 0x3ffff
+
+[DOM-RENDER] t=94.66s dom: 0xd0f3 → 0xd0f1
+
+[DOM-DEVICE] t=94.66s dom: 0xd0f3 → 0xd0f1
+
+t=94.7s CPU=29.8% rDom=0xd0f1 dDom=0xd0f1 rBus=0x3ffff dev=0x3ffff mainRms=0.0157 subRms=0.0008 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+[RELOC-RENDER] t=95.16s mask: 0xffff → 0x3ffff
+
+[RELOC-DEVICE] t=95.16s mask: 0xffff → 0x3ffff
+
+[DOM-RENDER] t=95.16s dom: 0xfbff → 0xffff
+
+[DOM-DEVICE] t=95.16s dom: 0xfbff → 0xffff
+
+[CLUSTER-RENDER] t=95.16s top4: 0x5050 → 0x53
+
+[CLUSTER-DEVICE] t=95.16s top4: 0x5050 → 0x53
+
+t=95.2s CPU=30.4% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0164 subRms=0.0004 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+[CLUSTER-RENDER] t=95.66s top4: 0x53 → 0x303
+
+[CLUSTER-DEVICE] t=95.66s top4: 0x53 → 0x303
+
+t=95.7s CPU=30.4% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0226 subRms=0.0018 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+[RELOC-RENDER] t=96.17s mask: 0xffff → 0x3ffff
+
+[RELOC-DEVICE] t=96.17s mask: 0xffff → 0x3ffff
+
+[CLUSTER-RENDER] t=96.17s top4: 0x53 → 0x303
+
+[CLUSTER-DEVICE] t=96.17s top4: 0x53 → 0x303
+
+t=96.2s CPU=30.4% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0190 subRms=0.0002 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+[RELOC-RENDER] t=96.67s mask: 0xffff → 0x3ffff
+
+[RELOC-DEVICE] t=96.67s mask: 0xffff → 0x3ffff
+
+t=96.7s CPU=20.0% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0197 subRms=0.0006 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+[CLUSTER-RENDER] t=97.17s top4: 0x303 → 0x53
+
+[CLUSTER-DEVICE] t=97.17s top4: 0x303 → 0x53
+
+t=97.2s CPU=29.8% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0159 subRms=0.0027 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+[DOM-RENDER] t=97.67s dom: 0xdff7 → 0xffff
+
+[DOM-DEVICE] t=97.67s dom: 0xdff7 → 0xffff
+
+t=97.7s CPU=21.4% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0178 subRms=0.0045 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+[CLUSTER-RENDER] t=98.18s top4: 0x183 → 0x53
+
+[CLUSTER-DEVICE] t=98.18s top4: 0x183 → 0x53
+
+t=98.2s CPU=30.8% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0122 subRms=0.0017 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+[DOM-RENDER] t=98.68s dom: 0xffdf → 0xffff
+
+[DOM-DEVICE] t=98.68s dom: 0xffdf → 0xffff
+
+t=98.7s CPU=28.7% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0114 subRms=0.0012 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+[CLUSTER-RENDER] t=99.19s top4: 0x183 → 0x53
+
+[CLUSTER-DEVICE] t=99.19s top4: 0x183 → 0x53
+
+t=99.2s CPU=30.7% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0259 subRms=0.0033 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+[CLUSTER-RENDER] t=99.69s top4: 0x183 → 0x53
+
+[CLUSTER-DEVICE] t=99.69s top4: 0x183 → 0x53
+
+t=99.7s CPU=30.9% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0191 subRms=0.0044 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+[CLUSTER-RENDER] t=100.19s top4: 0x53 → 0x183
+
+[CLUSTER-DEVICE] t=100.19s top4: 0x53 → 0x183
+
+t=100.2s CPU=23.0% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0201 subRms=0.0026 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+[CLUSTER-RENDER] t=100.69s top4: 0x93 → 0x303
+
+[CLUSTER-DEVICE] t=100.69s top4: 0x93 → 0x303
+
+t=100.7s CPU=23.1% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0222 subRms=0.0019 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+[DOM-RENDER] t=101.21s dom: 0xdfdf → 0xffff
+
+[DOM-DEVICE] t=101.21s dom: 0xdfdf → 0xffff
+
+[CLUSTER-RENDER] t=101.21s top4: 0x303 → 0x53
+
+[CLUSTER-DEVICE] t=101.21s top4: 0x303 → 0x53
+
+t=101.2s CPU=29.4% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0209 subRms=0.0034 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+[CLUSTER-RENDER] t=101.71s top4: 0x183 → 0x53
+
+[CLUSTER-DEVICE] t=101.71s top4: 0x183 → 0x53
+
+t=101.7s CPU=29.0% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0320 subRms=0.0003 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+[CLUSTER-RENDER] t=102.21s top4: 0x53 → 0x183
+
+[CLUSTER-DEVICE] t=102.21s top4: 0x53 → 0x183
+
+t=102.2s CPU=30.6% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0224 subRms=0.0004 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+[DOM-RENDER] t=102.71s dom: 0xdfd7 → 0xffff
+
+[DOM-DEVICE] t=102.71s dom: 0xdfd7 → 0xffff
+
+[CLUSTER-RENDER] t=102.71s top4: 0xd1 → 0x8181
+
+[CLUSTER-DEVICE] t=102.71s top4: 0xd1 → 0x8181
+
+t=102.7s CPU=30.8% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0122 subRms=0.0023 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+t=103.2s CPU=31.4% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0101 subRms=0.0022 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+[DOM-RENDER] t=103.72s dom: 0xfdfd → 0xffff
+
+[DOM-DEVICE] t=103.72s dom: 0xfdfd → 0xffff
+
+[CLUSTER-RENDER] t=103.72s top4: 0xd1 → 0x8181
+
+[CLUSTER-DEVICE] t=103.72s top4: 0xd1 → 0x8181
+
+t=103.7s CPU=31.0% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0126 subRms=0.0025 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+[CLUSTER-RENDER] t=104.22s top4: 0xd1 → 0x5050
+
+[CLUSTER-DEVICE] t=104.22s top4: 0xd1 → 0x5050
+
+t=104.2s CPU=28.0% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0102 subRms=0.0037 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+[DOM-RENDER] t=104.74s dom: 0xfdf9 → 0xffff
+
+[DOM-DEVICE] t=104.74s dom: 0xfdf9 → 0xffff
+
+[CLUSTER-RENDER] t=104.74s top4: 0x8d0 → 0x5050
+
+[CLUSTER-DEVICE] t=104.74s top4: 0x8d0 → 0x5050
+
+t=104.7s CPU=30.9% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0090 subRms=0.0039 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+[CLUSTER-RENDER] t=105.24s top4: 0x5050 → 0xd1
+
+[CLUSTER-DEVICE] t=105.24s top4: 0x5050 → 0xd1
+
+t=105.2s CPU=30.8% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0066 subRms=0.0036 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+t=105.7s CPU=27.1% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0085 subRms=0.0026 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+[DOM-RENDER] t=106.24s dom: 0xf9f1 → 0xffff
+
+[DOM-DEVICE] t=106.24s dom: 0xf9f1 → 0xffff
+
+t=106.2s CPU=31.3% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0109 subRms=0.0029 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+[CLUSTER-RENDER] t=106.74s top4: 0x2881 → 0xd1
+
+[CLUSTER-DEVICE] t=106.74s top4: 0x2881 → 0xd1
+
+t=106.7s CPU=30.9% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0139 subRms=0.0059 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+t=107.2s CPU=30.4% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0077 subRms=0.0007 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+[RELOC-RENDER] t=107.75s mask: 0x3ffff → 0xffff
+
+[RELOC-DEVICE] t=107.75s mask: 0x3ffff → 0xffff
+
+[DOM-RENDER] t=107.75s dom: 0xfffd → 0xffff
+
+[DOM-DEVICE] t=107.75s dom: 0xfffd → 0xffff
+
+[CLUSTER-RENDER] t=107.75s top4: 0x8d0 → 0x3050
+
+[CLUSTER-DEVICE] t=107.75s top4: 0x8d0 → 0x3050
+
+t=107.8s CPU=20.4% rDom=0xffff dDom=0xffff rBus=0xffff dev=0xffff mainRms=0.0087 subRms=0.0000 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+[RELOC-RENDER] t=108.26s mask: 0xffff → 0x3ffff
+
+[RELOC-DEVICE] t=108.26s mask: 0xffff → 0x3ffff
+
+[CLUSTER-RENDER] t=108.26s top4: 0xd1 → 0x1850
+
+[CLUSTER-DEVICE] t=108.26s top4: 0xd1 → 0x1850
+
+t=108.3s CPU=30.8% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0099 subRms=0.0004 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+[RELOC-RENDER] t=108.76s mask: 0xffff → 0x3ffff
+
+[RELOC-DEVICE] t=108.76s mask: 0xffff → 0x3ffff
+
+[CLUSTER-RENDER] t=108.76s top4: 0x8d0 → 0x5050
+
+[CLUSTER-DEVICE] t=108.76s top4: 0x8d0 → 0x5050
+
+t=108.8s CPU=31.0% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0100 subRms=0.0017 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+[RELOC-RENDER] t=109.26s mask: 0xffff → 0x3ffff
+
+[RELOC-DEVICE] t=109.26s mask: 0xffff → 0x3ffff
+
+[CLUSTER-RENDER] t=109.26s top4: 0x5050 → 0x8d0
+
+[CLUSTER-DEVICE] t=109.26s top4: 0x5050 → 0x8d0
+
+t=109.3s CPU=28.3% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0093 subRms=0.0008 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+[RELOC-RENDER] t=109.77s mask: 0x3ffff → 0xffff
+
+[RELOC-DEVICE] t=109.77s mask: 0x3ffff → 0xffff
+
+[DOM-RENDER] t=109.77s dom: 0xfffd → 0xffff
+
+[DOM-DEVICE] t=109.77s dom: 0xfffd → 0xffff
+
+[CLUSTER-RENDER] t=109.77s top4: 0x5050 → 0x8d0
+
+[CLUSTER-DEVICE] t=109.77s top4: 0x5050 → 0x8d0
+
+t=109.8s CPU=30.5% rDom=0xffff dDom=0xffff rBus=0xffff dev=0xffff mainRms=0.0171 subRms=0.0000 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+[RELOC-RENDER] t=110.27s mask: 0xffff → 0x3ffff
+
+[RELOC-DEVICE] t=110.27s mask: 0xffff → 0x3ffff
+
+t=110.3s CPU=31.7% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0086 subRms=0.0016 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+t=110.8s CPU=30.9% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0149 subRms=0.0039 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+[RELOC-RENDER] t=111.27s mask: 0xffff → 0x3ffff
+
+[RELOC-DEVICE] t=111.27s mask: 0xffff → 0x3ffff
+
+[CLUSTER-RENDER] t=111.27s top4: 0x1850 → 0xd1
+
+[CLUSTER-DEVICE] t=111.27s top4: 0x1850 → 0xd1
+
+t=111.3s CPU=29.4% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0204 subRms=0.0003 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+[RELOC-RENDER] t=111.79s mask: 0xffff → 0x3ffff
+
+[RELOC-DEVICE] t=111.79s mask: 0xffff → 0x3ffff
+
+[DOM-RENDER] t=111.79s dom: 0xfdfd → 0xffff
+
+[DOM-DEVICE] t=111.79s dom: 0xfdfd → 0xffff
+
+[CLUSTER-RENDER] t=111.79s top4: 0xd1 → 0x1850
+
+[CLUSTER-DEVICE] t=111.79s top4: 0xd1 → 0x1850
+
+t=111.8s CPU=30.3% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0092 subRms=0.0016 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+[CLUSTER-RENDER] t=112.29s top4: 0x5050 → 0x8d0
+
+[CLUSTER-DEVICE] t=112.29s top4: 0x5050 → 0x8d0
+
+t=112.3s CPU=20.1% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0087 subRms=0.0015 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+[CLUSTER-RENDER] t=112.79s top4: 0x858 → 0xd1
+
+[CLUSTER-DEVICE] t=112.79s top4: 0x858 → 0xd1
+
+t=112.8s CPU=20.2% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0099 subRms=0.0038 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+[CLUSTER-RENDER] t=113.29s top4: 0x10d0 → 0x858
+
+[CLUSTER-DEVICE] t=113.29s top4: 0x10d0 → 0x858
+
+t=113.3s CPU=28.7% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0075 subRms=0.0020 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+[CLUSTER-RENDER] t=113.80s top4: 0xd1 → 0x858
+
+[CLUSTER-DEVICE] t=113.80s top4: 0xd1 → 0x858
+
+t=113.8s CPU=29.8% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0108 subRms=0.0036 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+t=114.3s CPU=30.6% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0091 subRms=0.0042 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+t=114.8s CPU=27.4% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0110 subRms=0.0019 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+[CLUSTER-RENDER] t=115.32s top4: 0x80b → 0x143
+
+[CLUSTER-DEVICE] t=115.32s top4: 0x80b → 0x143
+
+t=115.3s CPU=30.6% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0192 subRms=0.0021 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+[CLUSTER-RENDER] t=115.82s top4: 0x53 → 0x10b
+
+[CLUSTER-DEVICE] t=115.82s top4: 0x53 → 0x10b
+
+t=115.8s CPU=29.8% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0205 subRms=0.0012 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+[CLUSTER-RENDER] t=116.32s top4: 0x80b → 0x53
+
+[CLUSTER-DEVICE] t=116.32s top4: 0x80b → 0x53
+
+t=116.3s CPU=30.0% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0164 subRms=0.0019 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+[CLUSTER-RENDER] t=116.82s top4: 0x8b → 0xd1
+
+[CLUSTER-DEVICE] t=116.82s top4: 0x8b → 0xd1
+
+t=116.8s CPU=20.5% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0151 subRms=0.0023 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+[CLUSTER-RENDER] t=117.33s top4: 0x8b → 0xd1
+
+[CLUSTER-DEVICE] t=117.33s top4: 0x8b → 0xd1
+
+t=117.3s CPU=20.2% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0139 subRms=0.0015 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+[CLUSTER-RENDER] t=117.83s top4: 0x59 → 0x93
+
+[CLUSTER-DEVICE] t=117.83s top4: 0x59 → 0x93
+
+t=117.8s CPU=20.3% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0154 subRms=0.0041 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+[CLUSTER-RENDER] t=118.34s top4: 0x93 → 0x4b
+
+[CLUSTER-DEVICE] t=118.34s top4: 0x93 → 0x4b
+
+t=118.3s CPU=30.9% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0182 subRms=0.0027 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+[CLUSTER-RENDER] t=118.84s top4: 0x59 → 0xc3
+
+[CLUSTER-DEVICE] t=118.84s top4: 0x59 → 0xc3
+
+t=118.8s CPU=31.0% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0155 subRms=0.0021 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+[CLUSTER-RENDER] t=119.35s top4: 0xc9 → 0x1b
+
+[CLUSTER-DEVICE] t=119.35s top4: 0xc9 → 0x1b
+
+t=119.3s CPU=20.2% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0157 subRms=0.0038 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+[CLUSTER-RENDER] t=119.85s top4: 0x8b → 0x59
+
+[CLUSTER-DEVICE] t=119.85s top4: 0x8b → 0x59
+
+t=119.9s CPU=30.6% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0115 subRms=0.0056 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+[CLUSTER-RENDER] t=120.35s top4: 0xd1 → 0x183
+
+[CLUSTER-DEVICE] t=120.35s top4: 0xd1 → 0x183
+
+t=120.4s CPU=30.4% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0192 subRms=0.0050 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+[CLUSTER-RENDER] t=120.85s top4: 0x8b → 0xd1
+
+[CLUSTER-DEVICE] t=120.85s top4: 0x8b → 0xd1
+
+t=120.9s CPU=31.1% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0160 subRms=0.0029 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+[CLUSTER-RENDER] t=121.35s top4: 0x183 → 0xd1
+
+[CLUSTER-DEVICE] t=121.35s top4: 0x183 → 0xd1
+
+t=121.4s CPU=30.4% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0167 subRms=0.0019 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+[CLUSTER-RENDER] t=121.86s top4: 0xc9 → 0x2809
+
+[CLUSTER-DEVICE] t=121.86s top4: 0xc9 → 0x2809
+
+t=121.9s CPU=30.6% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0163 subRms=0.0057 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+t=122.4s CPU=30.6% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0128 subRms=0.0032 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+t=122.9s CPU=20.2% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0125 subRms=0.0020 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+[CLUSTER-RENDER] t=123.37s top4: 0xc9 → 0x858
+
+[CLUSTER-DEVICE] t=123.37s top4: 0xc9 → 0x858
+
+t=123.4s CPU=30.9% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0157 subRms=0.0017 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+t=123.9s CPU=20.3% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0159 subRms=0.0071 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+[CLUSTER-RENDER] t=124.37s top4: 0x858 → 0xc9
+
+[CLUSTER-DEVICE] t=124.37s top4: 0x858 → 0xc9
+
+t=124.4s CPU=20.3% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0103 subRms=0.0057 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+[CLUSTER-RENDER] t=124.87s top4: 0x858 → 0x53
+
+[CLUSTER-DEVICE] t=124.87s top4: 0x858 → 0x53
+
+t=124.9s CPU=27.8% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0123 subRms=0.0021 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+[CLUSTER-RENDER] t=125.38s top4: 0x889 → 0xd1
+
+[CLUSTER-DEVICE] t=125.38s top4: 0x889 → 0xd1
+
+t=125.4s CPU=30.4% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0102 subRms=0.0028 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+t=125.9s CPU=20.4% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0170 subRms=0.0015 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+t=126.4s CPU=20.6% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0143 subRms=0.0016 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+t=126.9s CPU=29.8% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0178 subRms=0.0042 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+t=127.4s CPU=20.1% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0195 subRms=0.0046 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+t=127.9s CPU=20.4% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0147 subRms=0.0048 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+[CLUSTER-RENDER] t=128.39s top4: 0x87 → 0x55
+
+[CLUSTER-DEVICE] t=128.39s top4: 0x87 → 0x55
+
+t=128.4s CPU=28.6% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0149 subRms=0.0042 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+t=128.9s CPU=20.1% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0137 subRms=0.0034 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+t=129.4s CPU=38.0% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0125 subRms=0.0044 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+[CLUSTER-RENDER] t=129.90s top4: 0x87 → 0x55
+
+[CLUSTER-DEVICE] t=129.90s top4: 0x87 → 0x55
+
+t=129.9s CPU=24.3% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0139 subRms=0.0037 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+t=130.4s CPU=31.1% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0126 subRms=0.0057 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+t=130.9s CPU=29.6% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0127 subRms=0.0013 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+t=131.4s CPU=31.0% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0154 subRms=0.0036 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+t=131.9s CPU=20.1% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0135 subRms=0.0066 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+[CLUSTER-RENDER] t=132.43s top4: 0x84c → 0x56
+
+[CLUSTER-DEVICE] t=132.43s top4: 0x84c → 0x56
+
+t=132.4s CPU=30.6% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0158 subRms=0.0065 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+[CLUSTER-RENDER] t=132.93s top4: 0x8e → 0x56
+
+[CLUSTER-DEVICE] t=132.93s top4: 0x8e → 0x56
+
+t=132.9s CPU=30.4% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0177 subRms=0.0070 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+[CLUSTER-RENDER] t=133.43s top4: 0x56 → 0xf
+
+[CLUSTER-DEVICE] t=133.43s top4: 0x56 → 0xf
+
+t=133.4s CPU=23.0% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0179 subRms=0.0057 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+[CLUSTER-RENDER] t=133.93s top4: 0x5c → 0x1b
+
+[CLUSTER-DEVICE] t=133.93s top4: 0x5c → 0x1b
+
+t=133.9s CPU=20.7% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0171 subRms=0.0018 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+[CLUSTER-RENDER] t=134.43s top4: 0x1d → 0x56
+
+[CLUSTER-DEVICE] t=134.43s top4: 0x1d → 0x56
+
+t=134.4s CPU=28.7% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0164 subRms=0.0017 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+[CLUSTER-RENDER] t=134.94s top4: 0x80e → 0x8d
+
+[CLUSTER-DEVICE] t=134.94s top4: 0x80e → 0x8d
+
+t=134.9s CPU=20.7% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0135 subRms=0.0053 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+[CLUSTER-RENDER] t=135.45s top4: 0x1e → 0x80d
+
+[CLUSTER-DEVICE] t=135.45s top4: 0x1e → 0x80d
+
+t=135.4s CPU=20.4% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0288 subRms=0.0032 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+t=135.9s CPU=20.2% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0290 subRms=0.0044 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+t=136.4s CPU=31.1% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0187 subRms=0.0066 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+t=137.0s CPU=29.8% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0185 subRms=0.0097 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+[CLUSTER-RENDER] t=137.46s top4: 0xf → 0x56
+
+[CLUSTER-DEVICE] t=137.46s top4: 0xf → 0x56
+
+t=137.5s CPU=20.2% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0168 subRms=0.0045 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+[CLUSTER-RENDER] t=137.96s top4: 0x4e → 0x17
+
+[CLUSTER-DEVICE] t=137.96s top4: 0x4e → 0x17
+
+t=138.0s CPU=20.1% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0143 subRms=0.0046 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+[CLUSTER-RENDER] t=138.47s top4: 0xf → 0x59
+
+[CLUSTER-DEVICE] t=138.47s top4: 0xf → 0x59
+
+t=138.5s CPU=20.4% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0148 subRms=0.0055 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+[CLUSTER-RENDER] t=138.98s top4: 0xf → 0x55
+
+[CLUSTER-DEVICE] t=138.98s top4: 0xf → 0x55
+
+t=139.0s CPU=20.6% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0139 subRms=0.0038 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+[CLUSTER-RENDER] t=139.48s top4: 0x1b → 0x47
+
+[CLUSTER-DEVICE] t=139.48s top4: 0x1b → 0x47
+
+t=139.5s CPU=30.2% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0143 subRms=0.0039 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+[CLUSTER-RENDER] t=139.98s top4: 0x53 → 0xf
+
+[CLUSTER-DEVICE] t=139.98s top4: 0x53 → 0xf
+
+t=140.0s CPU=26.8% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0239 subRms=0.0043 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+[CLUSTER-RENDER] t=140.48s top4: 0x1d → 0x53
+
+[CLUSTER-DEVICE] t=140.48s top4: 0x1d → 0x53
+
+t=140.5s CPU=20.3% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0186 subRms=0.0014 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+[CLUSTER-RENDER] t=140.99s top4: 0x53 → 0xf
+
+[CLUSTER-DEVICE] t=140.99s top4: 0x53 → 0xf
+
+t=141.0s CPU=20.4% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0218 subRms=0.0025 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+[CLUSTER-RENDER] t=141.49s top4: 0x87 → 0x55
+
+[CLUSTER-DEVICE] t=141.49s top4: 0x87 → 0x55
+
+t=141.5s CPU=31.0% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0189 subRms=0.0065 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+[CLUSTER-RENDER] t=141.99s top4: 0x55 → 0xf
+
+[CLUSTER-DEVICE] t=141.99s top4: 0x55 → 0xf
+
+t=142.0s CPU=20.4% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0196 subRms=0.0063 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+[CLUSTER-RENDER] t=142.51s top4: 0x1e → 0x55
+
+[CLUSTER-DEVICE] t=142.51s top4: 0x1e → 0x55
+
+t=142.5s CPU=29.0% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0185 subRms=0.0059 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+[CLUSTER-RENDER] t=143.01s top4: 0x47 → 0x5c
+
+[CLUSTER-DEVICE] t=143.01s top4: 0x47 → 0x5c
+
+t=143.0s CPU=27.9% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0125 subRms=0.0013 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+[CLUSTER-RENDER] t=143.51s top4: 0x87 → 0x55
+
+[CLUSTER-DEVICE] t=143.51s top4: 0x87 → 0x55
+
+t=143.5s CPU=20.2% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0138 subRms=0.0044 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+[CLUSTER-RENDER] t=144.01s top4: 0xf → 0x56
+
+[CLUSTER-DEVICE] t=144.01s top4: 0xf → 0x56
+
+t=144.0s CPU=22.9% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0138 subRms=0.0029 Xrun=0 NaN=0 SpkG=0 PLAYING
+
+[CLUSTER-RENDER] t=144.51s top4: 0x1d → 0x56
+
+[CLUSTER-DEVICE] t=144.51s top4: 0x1d → 0x56
+
+t=144.5s CPU=28.7% rDom=0xffff dDom=0xffff rBus=0x3ffff dev=0x3ffff mainRms=0.0170 subRms=0.0054 Xrun=0 NaN=0 SpkG=0 PLAYING
+
 ## Round 2
 
 ## Assesment /findings:

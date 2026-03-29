@@ -451,8 +451,24 @@ public:
             al::Vec3f relpos(p.x, -p.z, p.y);  // same flip DBAP applies internally
 
             // Step 2: guard in DBAP-internal space (exact geometry)
-            // Convergence loop: a single pass could push relpos into another
-            // speaker's zone. Iterate until stable (max kGuardMaxIter passes).
+            //
+            // Pass 1 — soft outer zone (single scan, no convergence loop).
+            // For sources in (kMinSpeakerDist, kGuardSoftZone), applies a
+            // smooth outward bias: zero effect at both zone boundaries,
+            // positive outward displacement in between. Prevents the hard-snap
+            // DBAP cluster change that occurred when sources crossed kMinSpeakerDist.
+            for (const auto& spkVec : mSpeakerPositions) {
+                al::Vec3f delta = relpos - spkVec;
+                float dist = delta.mag();
+                if (dist > kMinSpeakerDist && dist < kGuardSoftZone && dist > 1e-7f) {
+                    float u    = (dist - kMinSpeakerDist) / (kGuardSoftZone - kMinSpeakerDist);
+                    float push = (kGuardSoftZone - kMinSpeakerDist) * u * (1.0f - u);
+                    relpos = spkVec + (delta / dist) * (dist + push);
+                }
+            }
+            //
+            // Pass 2 — hard inner floor with convergence loop (unchanged).
+            // Catches any source still inside kMinSpeakerDist after Pass 1.
             bool guardFiredForSource = false;
             for (int iter = 0; iter < kGuardMaxIter; ++iter) {
                 bool pushed = false;
@@ -530,8 +546,19 @@ public:
                             if (mag > 1e-7f) subPose = (subPose / mag) * mLayoutRadius;
                         }
 
-                        // Flip to DBAP-internal space, apply convergence guard, un-flip
+                        // Flip to DBAP-internal space, apply two-pass guard, un-flip
                         al::Vec3f subRelpos(subPose.x, -subPose.z, subPose.y);
+                        // Pass 1 — soft outer zone (single scan, mirrors normal path)
+                        for (const auto& spkVec : mSpeakerPositions) {
+                            al::Vec3f delta = subRelpos - spkVec;
+                            float dist = delta.mag();
+                            if (dist > kMinSpeakerDist && dist < kGuardSoftZone && dist > 1e-7f) {
+                                float u    = (dist - kMinSpeakerDist) / (kGuardSoftZone - kMinSpeakerDist);
+                                float push = (kGuardSoftZone - kMinSpeakerDist) * u * (1.0f - u);
+                                subRelpos = spkVec + (delta / dist) * (dist + push);
+                            }
+                        }
+                        // Pass 2 — hard inner floor with convergence loop (unchanged)
                         for (int iter = 0; iter < kGuardMaxIter; ++iter) {
                             bool pushed = false;
                             for (const auto& spkVec : mSpeakerPositions) {
@@ -984,6 +1011,14 @@ private:
     // Can be reduced toward 0.05–0.10 m if near-speaker localization sounds
     // artificially constrained after testing.
     static constexpr float kMinSpeakerDist = 0.15f;
+
+    // Soft-repulsion outer boundary.
+    // Sources in (kMinSpeakerDist, kGuardSoftZone) receive a smooth outward
+    // bias (Pass 1) before the hard-floor convergence loop (Pass 2).
+    // The bump amplitude peaks at the zone midpoint (~0.075 m at defaults)
+    // and is exactly zero at both boundaries — no discontinuity at entry or
+    // at the kMinSpeakerDist handoff to the hard floor.
+    static constexpr float kGuardSoftZone = 0.45f;
 
     // Track A fix — proximity guard convergence.
     // After being pushed away from speaker K, relpos may land inside speaker
