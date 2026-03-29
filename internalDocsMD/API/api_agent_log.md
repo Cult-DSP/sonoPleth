@@ -28,7 +28,7 @@
 
 ## Phase 2: Struct Refactoring and Immutability (`api_derived_design.md` & `api_mismatch_ledger.md`)
 
-**Date:** [Current Date]
+**Date:** March 29, 2026
 
 **Objective:**
 Evolve the Phase 1 `EngineSession` API past `void` arguments, resolving "Mismatch 5: Error Handlers" and replacing mutable getters. Instead of leaking internal mutable atomic state (`session.config()`), use strict domain-driven structs: `EngineOptions`, `SceneInput`, `LayoutInput`, and `RuntimeParams`.
@@ -38,6 +38,7 @@ Evolve the Phase 1 `EngineSession` API past `void` arguments, resolving "Mismatc
 - `EngineSession.hpp`
 - `EngineSession.cpp`
 - `main.cpp`
+- `api_mismatch_ledger.md`
 
 **Key Changes:**
 
@@ -47,6 +48,8 @@ Evolve the Phase 1 `EngineSession` API past `void` arguments, resolving "Mismatc
    - `loadScene(const SceneInput& sceneIn)`
    - `applyLayout(const LayoutInput& layoutIn)`
    - `configureRuntime(const RuntimeParams& params)`
-3. **Error Handling Implementation:** Added `std::string getLastError() const` and `void setLastError(...)` for explicit string-based error handling instead of writing to stderr.
+3. **Error Handling Implementation:** Added `std::string getLastError() const` and `void setLastError(...)` for explicit string-based error handling instead of writing to stderr. Ensured all fatal failures, including inside `start()`, route through this mechanism.
 4. **`main.cpp` Mapping:** Removed all `session.config()` direct mutations. Documented inline how CLI arguments are grouped into struct blocks and passed collectively through the initialization chain.
 5. **State Safety:** Prevented leaking `std::atomic` references or implicit copy-constructors over the module boundary.
+6. **Transport Paradigm:** Replaced generic pausing ideas with strict `setPaused(bool)`.
+7. **Protected AlloLib Parameters (Mismatch 6):** Used an opaque pointer (Pimpl pattern) `struct OscParams;` in `EngineSession.hpp` with explicit declaration in `.cpp` to securely encapsulate `al::Parameter` objects and satisfy both API boundary hygiene and the background OSC threads requirement for pointer stability. Added this explicit workaround directly to `api_mismatch_ledger.md`.

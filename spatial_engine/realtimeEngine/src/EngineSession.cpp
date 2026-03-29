@@ -221,13 +221,13 @@ bool EngineSession::start()
                   << mOscParams->elevMode;
 
     if (!mParamServer->serverRunning()) {
-        std::cerr << "[EngineSession] FATAL: ParameterServer failed to start." << std::endl;
+        setLastError("ParameterServer failed to start.");
         return false;
     }
 
     mBackend = std::make_unique<RealtimeBackend>(mConfig, mState);
     if (!mBackend->init()) {
-        std::cerr << "[EngineSession] FATAL: Backend initialization failed." << std::endl;
+        setLastError("Backend initialization failed.");
         return false;
     }
 
@@ -239,7 +239,7 @@ bool EngineSession::start()
     mStreaming->startLoader();
 
     if (!mBackend->start()) {
-        std::cerr << "[EngineSession] FATAL: Backend failed to start." << std::endl;
+        setLastError("Backend failed to start.");
         mStreaming->shutdown();
         return false;
     }
