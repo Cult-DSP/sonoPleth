@@ -1,3 +1,16 @@
+# API Agent History & Rationale Log
+**Status:** Historical Log
+
+## Phase 2 -> Phase 3 Transition (March 2026)
+**Agent Action:** API Stabilization Pass
+**Goal:** Freeze the implemented `EngineSession` contract and align documentation.
+**Decisions:**
+1. Created `api_internal_contract.md` to stop future agents from hallucinating features based on aspirational Phase 1 texts.
+2. Formalized `setPaused(bool)` as the sole transport control. Abandoned `stop()` and `seek()` due to state-corruption risks identified in the mismatch ledger.
+3. Enforced `update()` as a required host-side main-thread tick. This was a critical compromise to get `computeFocusCompensation()` safely off the audio thread without requiring a complex internal worker pool.
+
+*(Below this line: Historical Phase 1 & 2 logs...)*
+
 # API Agent Implementation Log
 
 ## Session Architecture Extraction
