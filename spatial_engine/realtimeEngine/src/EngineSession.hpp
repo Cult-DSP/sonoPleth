@@ -11,6 +11,7 @@ class Pose;
 class Spatializer;
 class RealtimeBackend;
 class OutputRemap;
+struct SpatialData; // Forward declare Scene data container
 namespace al { class ParameterServer; }
 
 struct EngineStatus {
@@ -26,6 +27,7 @@ struct EngineStatus {
     uint64_t nanGuardCount;
     uint64_t speakerProximityCount;
     bool paused;
+    bool isExitRequested; // Added for main thread polling
 };
 
 struct DiagnosticEvents {
@@ -54,32 +56,61 @@ struct DiagnosticEvents {
     uint64_t deviceClusterNext;
 };
 
+// --- New Core API Typed Structs (per Design Doc) ---
+struct EngineOptions {
+    int sampleRate = 48000;
+    int bufferSize = 512;
+    std::string outputDeviceName;
+    int oscPort = 9009;
+    int elevationMode = 0; // 0=RescaleAtmosUp, 1=RescaleFullSphere, 2=Clamp
+};
+
+struct SceneInput {
+    std::string scenePath;
+    std::string sourcesFolder;
+    std::string admFile;
+};
+
+struct LayoutInput {
+    std::string layoutPath;
+    std::string remapCsvPath;
+};
+
+struct RuntimeParams {
+    float masterGain = 0.5f;
+    float dbapFocus = 1.5f;
+    float speakerMixDb = 0.0f;
+    float subMixDb = 0.0f;
+    bool autoCompensation = false;
+};
+
 class EngineSession {
 public:
     EngineSession();
     ~EngineSession();
 
-    bool configureEngine();
-    bool loadScene();
-    bool applyLayout();
-    bool configureRuntime(int oscPort, const std::string& remapCsv);
+    bool configureEngine(const EngineOptions& opts);
+    bool loadScene(const SceneInput& sceneIn);
+    bool applyLayout(const LayoutInput& layoutIn);
+    bool configureRuntime(const RuntimeParams& params);
     bool start();
     void shutdown();
 
+    void pause(bool isPaused); // Transport control API
     void update();
 
     EngineStatus queryStatus() const;
     DiagnosticEvents consumeDiagnostics();
-
-    RealtimeConfig& config() { return mConfig; }
-    const RealtimeConfig& config() const { return mConfig; }
-
-    EngineState& state() { return mState; }
-    const EngineState& state() const { return mState; }
+    std::string getLastError() const; // Standardized error access
 
 private:
+    void setLastError(const std::string& err);
+
     RealtimeConfig mConfig;
     EngineState mState;
+    std::string mLastError;
+
+    std::unique_ptr<SpatialData> mSceneData; // Held securely between loadScene and applyLayout
 
     std::unique_ptr<Streaming> mStreaming;
     std::unique_ptr<Pose> mPose;

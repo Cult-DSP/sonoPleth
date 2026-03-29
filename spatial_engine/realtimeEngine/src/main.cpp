@@ -130,36 +130,46 @@ int main(int argc, char* argv[]) {
     std::cout << "╚══════════════════════════════════════════════════════════╝\n" << std::endl;
 
     EngineSession session;
-    RealtimeConfig& config = session.config();
 
-    config.layoutPath    = getArgString(argc, argv, "--layout");
-    config.scenePath     = getArgString(argc, argv, "--scene");
-    config.sourcesFolder = getArgString(argc, argv, "--sources");
-    config.admFile       = getArgString(argc, argv, "--adm");
-    config.sampleRate    = getArgInt(argc, argv, "--samplerate", 48000);
-    config.bufferSize    = getArgInt(argc, argv, "--buffersize", 512); 
+    // --- PHASE 2 REFACTOR: NEW API CONCEPTS ---
+    // Instead of extracting a raw mutable RealtimeConfig structure like in Phase 1:
+    // RealtimeConfig& config = session.config();
+    // We now construct distinct data structures mapped directly to the business domain 
+    // of each initialization stage. This enforces chronological correctness and immutability.
+
+    // 1) Define engine parameters (audio stream characteristics).
+    EngineOptions opts;
+    opts.sampleRate    = getArgInt(argc, argv, "--samplerate", 48000);
+    opts.bufferSize    = getArgInt(argc, argv, "--buffersize", 512); 
+    opts.outputDeviceName = getArgString(argc, argv, "--device");
+    opts.oscPort       = getArgInt(argc, argv, "--osc_port", 9009);
     
-    config.masterGain.store(getArgFloat(argc, argv, "--gain", 0.5f));
-    float speakerMixDb = getArgFloat(argc, argv, "--speaker_mix", 0.0f);
-    config.loudspeakerMix.store(powf(10.0f, speakerMixDb / 20.0f));
-    float subMixDb = getArgFloat(argc, argv, "--sub_mix", 0.0f);
-    config.subMix.store(powf(10.0f, subMixDb / 20.0f));
-    config.focusAutoCompensation.store(hasArg(argc, argv, "--auto_compensation"));
-    
-    config.dbapFocus.store(getArgFloat(argc, argv, "--focus", 1.5f), std::memory_order_relaxed);
-    int oscPort = getArgInt(argc, argv, "--osc_port", 9009);
-
-    config.outputDeviceName = getArgString(argc, argv, "--device");
-    std::string remapCsv = getArgString(argc, argv, "--remap");
-
     int elModeInt = getArgInt(argc, argv, "--elevation_mode", 0);
-    elModeInt = std::max(0, std::min(2, elModeInt));
-    config.elevationMode.store(elModeInt, std::memory_order_relaxed);
+    opts.elevationMode = std::max(0, std::min(2, elModeInt));
 
-    bool useADM = !config.admFile.empty();
-    bool useMono = !config.sourcesFolder.empty();
+    // 2) Define scene configuration (LUSID metadata + media sources).
+    SceneInput sceneIn;
+    sceneIn.scenePath     = getArgString(argc, argv, "--scene");
+    sceneIn.sourcesFolder = getArgString(argc, argv, "--sources");
+    sceneIn.admFile       = getArgString(argc, argv, "--adm");
 
-    if (config.layoutPath.empty() || config.scenePath.empty() || (!useADM && !useMono) || (useADM && useMono)) {
+    // 3) Define layout mapping.
+    LayoutInput layoutIn;
+    layoutIn.layoutPath   = getArgString(argc, argv, "--layout");
+    layoutIn.remapCsvPath = getArgString(argc, argv, "--remap");
+
+    // 4) Define realtime DSP constants.
+    RuntimeParams rParams;
+    rParams.masterGain       = getArgFloat(argc, argv, "--gain", 0.5f);
+    rParams.dbapFocus        = getArgFloat(argc, argv, "--focus", 1.5f);
+    rParams.speakerMixDb     = getArgFloat(argc, argv, "--speaker_mix", 0.0f);
+    rParams.subMixDb         = getArgFloat(argc, argv, "--sub_mix", 0.0f);
+    rParams.autoCompensation = hasArg(argc, argv, "--auto_compensation");
+
+    // Validation (was previously scattered, now centralized on inputs):
+    bool useADM = !sceneIn.admFile.empty();
+    bool useMono = !sceneIn.sourcesFolder.empty();
+    if (layoutIn.layoutPath.empty() || sceneIn.scenePath.empty() || (!useADM && !useMono) || (useADM && useMono)) {
         std::cerr << "[Main] ERROR: Invalid arguments." << std::endl;
         printUsage(argv[0]);
         return 1;
@@ -168,19 +178,32 @@ int main(int argc, char* argv[]) {
     std::signal(SIGINT, signalHandler);
     std::signal(SIGTERM, signalHandler);
 
-    if (!session.configureEngine()) return 1;
-    if (!session.loadScene()) return 1;
-    if (!session.applyLayout()) return 1;
-    if (!session.configureRuntime(oscPort, remapCsv)) return 1;
-    if (!session.start()) return 1;
+    // Apply via formal Session API boundary
+    if (!session.configureEngine(opts)) {
+        std::cerr << "Engine config failed: " << session.getLastError() << std::endl; return 1;
+    }
+    if (!session.loadScene(sceneIn)) {
+        std::cerr << "Scene load failed: " << session.getLastError() << std::endl; return 1;
+    }
+    if (!session.applyLayout(layoutIn)) {
+        std::cerr << "Layout application failed: " << session.getLastError() << std::endl; return 1;
+    }
+    if (!session.configureRuntime(rParams)) {
+        std::cerr << "Runtime config failed: " << session.getLastError() << std::endl; return 1;
+    }
+
+    if (!session.start()) {
+        std::cerr << "Start failed: " << session.getLastError() << std::endl; return 1;
+    }
 
     std::cout << "[Main] Engine started successfully. Press Ctrl+C to stop.\n" << std::endl;
 
-    while (!g_shouldExit.load(std::memory_order_relaxed) && !session.config().shouldExit.load(std::memory_order_relaxed)) {
+    while (!g_shouldExit.load(std::memory_order_relaxed)) {
+        EngineStatus status = session.queryStatus();
+        if (status.isExitRequested) break;
         
         session.update(); // Consumes pending focus compensation properly on main thread
 
-        EngineStatus status = session.queryStatus();
         DiagnosticEvents ev = session.consumeDiagnostics();
 
         double timeSec = status.timeSec;

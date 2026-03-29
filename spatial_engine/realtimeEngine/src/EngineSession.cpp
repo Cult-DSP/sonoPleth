@@ -23,26 +23,45 @@ EngineSession::~EngineSession()
     shutdown();
 }
 
-bool EngineSession::configureEngine()
+void EngineSession::setLastError(const std::string& err)
 {
-    // currently populated by caller directly via config() or in initConfig
+    mLastError = err;
+}
+
+std::string EngineSession::getLastError() const
+{
+    return mLastError;
+}
+
+bool EngineSession::configureEngine(const EngineOptions& opts)
+{
+    mConfig.sampleRate = opts.sampleRate;
+    mConfig.bufferSize = opts.bufferSize;
+    mConfig.outputDeviceName = opts.outputDeviceName;
+    mOscPort = opts.oscPort;
+    mConfig.elevationMode.store(opts.elevationMode, std::memory_order_relaxed);
+    
     return true;
 }
 
-bool EngineSession::loadScene()
+bool EngineSession::loadScene(const SceneInput& sceneIn)
 {
+    mConfig.scenePath = sceneIn.scenePath;
+    mConfig.sourcesFolder = sceneIn.sourcesFolder;
+    mConfig.admFile = sceneIn.admFile;
+
     std::cout << "[EngineSession] Loading LUSID scene: " << mConfig.scenePath << std::endl;
-    SpatialData scene;
+    mSceneData = std::make_unique<SpatialData>();
     try {
-        scene = JSONLoader::loadLusidScene(mConfig.scenePath);
+        *mSceneData = JSONLoader::loadLusidScene(mConfig.scenePath);
     } catch (const std::exception& e) {
-        std::cerr << "[EngineSession] FATAL: Failed to load LUSID scene: " << e.what() << std::endl;
+        setLastError(std::string("Failed to load LUSID scene: ") + e.what());
         return false;
     }
     
-    std::cout << "[EngineSession] Scene loaded: " << scene.sources.size() << " sources";
-    if (scene.duration > 0) {
-        std::cout << ", duration: " << scene.duration << "s";
+    std::cout << "[EngineSession] Scene loaded: " << mSceneData->sources.size() << " sources";
+    if (mSceneData->duration > 0) {
+        std::cout << ", duration: " << mSceneData->duration << "s";
     }
     std::cout << "." << std::endl;
 
@@ -50,34 +69,45 @@ bool EngineSession::loadScene()
     bool useADM = !mConfig.admFile.empty();
 
     if (useADM) {
-        if (!mStreaming->loadSceneFromADM(scene, mConfig.admFile)) {
-            std::cerr << "[EngineSession] FATAL: No source channels could be loaded from ADM." << std::endl;
+        if (!mStreaming->loadSceneFromADM(*mSceneData, mConfig.admFile)) {
+            setLastError("No source channels could be loaded from ADM.");
             return false;
         }
     } else {
-        if (!mStreaming->loadScene(scene)) {
-            std::cerr << "[EngineSession] FATAL: No source files could be loaded." << std::endl;
+        if (!mStreaming->loadScene(*mSceneData)) {
+            setLastError("No source files could be loaded.");
             return false;
         }
     }
 
     std::cout << "[EngineSession] " << mStreaming->numSources() << " sources ready for streaming." << std::endl;
+    return true;
+}
 
-    // Load layot here so we can create pose agent
+bool EngineSession::applyLayout(const LayoutInput& layoutIn)
+{
+    if (!mSceneData) {
+        setLastError("loadScene must be called successfully before applyLayout.");
+        return false;
+    }
+
+    mConfig.layoutPath = layoutIn.layoutPath;
+    mRemapCsv = layoutIn.remapCsvPath;
+
     std::cout << "[EngineSession] Loading speaker layout: " << mConfig.layoutPath << std::endl;
     SpeakerLayoutData layout;
     try {
         layout = LayoutLoader::loadLayout(mConfig.layoutPath);
     } catch (const std::exception& e) {
-        std::cerr << "[EngineSession] FATAL: Failed to load speaker layout: " << e.what() << std::endl;
+        setLastError(std::string("Failed to load speaker layout: ") + e.what());
         return false;
     }
     std::cout << "[EngineSession] Layout loaded: " << layout.speakers.size()
               << " speakers, " << layout.subwoofers.size() << " subwoofers." << std::endl;
 
     mPose = std::make_unique<Pose>(mConfig, mState);
-    if (!mPose->loadScene(scene, layout)) {
-        std::cerr << "[EngineSession] FATAL: Pose agent failed to initialize." << std::endl;
+    if (!mPose->loadScene(*mSceneData, layout)) {
+        setLastError("Pose agent failed to initialize.");
         return false;
     }
     std::cout << "[EngineSession] Pose agent ready: " << mPose->numSources()
@@ -85,7 +115,7 @@ bool EngineSession::loadScene()
               
     mSpatializer = std::make_unique<Spatializer>(mConfig, mState);
     if (!mSpatializer->init(layout)) {
-        std::cerr << "[EngineSession] FATAL: Spatializer initialization failed." << std::endl;
+        setLastError("Spatializer initialization failed.");
         return false;
     }
     std::cout << "[EngineSession] Spatializer ready: DBAP with " << mSpatializer->numSpeakers()
@@ -97,16 +127,13 @@ bool EngineSession::loadScene()
     return true;
 }
 
-bool EngineSession::applyLayout()
+bool EngineSession::configureRuntime(const RuntimeParams& params)
 {
-    // Now done in loadScene as per Pose dependency
-    return true;
-}
-
-bool EngineSession::configureRuntime(int oscPort, const std::string& remapCsv)
-{
-    mOscPort = oscPort;
-    mRemapCsv = remapCsv;
+    mConfig.masterGain.store(params.masterGain, std::memory_order_relaxed);
+    mConfig.dbapFocus.store(params.dbapFocus, std::memory_order_relaxed);
+    mConfig.loudspeakerMix.store(powf(10.0f, params.speakerMixDb / 20.0f), std::memory_order_relaxed);
+    mConfig.subMix.store(powf(10.0f, params.subMixDb / 20.0f), std::memory_order_relaxed);
+    mConfig.focusAutoCompensation.store(params.autoCompensation, std::memory_order_relaxed);
 
     if (mConfig.focusAutoCompensation.load()) {
         std::cout << "[EngineSession] Focus auto-compensation ON - computing initial autoCompValue..." << std::endl;
@@ -120,7 +147,7 @@ bool EngineSession::configureRuntime(int oscPort, const std::string& remapCsv)
         std::cout << "[EngineSession] Loading output remap CSV: " << mRemapCsv << std::endl;
         bool remapOk = mOutputRemap->load(mRemapCsv, mConfig.outputChannels, mConfig.outputChannels);
         if (!remapOk) {
-            std::cout << "[EngineSession] Remap load failed or resulted in identity." << std::endl;
+            std::cout << "[EngineSession] Warning: Remap load failed or resulted in identity." << std::endl;
         }
         mSpatializer->setRemap(mOutputRemap.get());
     } else {
@@ -263,6 +290,7 @@ EngineStatus EngineSession::queryStatus() const
     st.nanGuardCount = mState.nanGuardCount.load(std::memory_order_relaxed);
     st.speakerProximityCount = mState.speakerProximityCount.load(std::memory_order_relaxed);
     st.paused = mConfig.paused.load(std::memory_order_relaxed);
+    st.isExitRequested = (mBackend && !mBackend->isRunning()); 
     return st;
 }
 
