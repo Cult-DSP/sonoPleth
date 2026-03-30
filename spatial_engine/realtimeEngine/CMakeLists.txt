@@ -69,7 +69,6 @@ include(GNUInstallDirs)
 
 install(TARGETS EngineSessionCore
     ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
-    EXPORT  EngineSessionCoreTargets
 )
 
 install(FILES
@@ -77,9 +76,7 @@ install(FILES
     src/RealtimeTypes.hpp
     DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/spatialroot
 )
-
-install(EXPORT EngineSessionCoreTargets
-    FILE        EngineSessionCoreTargets.cmake
-    NAMESPACE   spatialroot::
-    DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/spatialroot
-)
+# Note: exported CMake target (for find_package support with AlloLib include
+# path propagation) is Stage 2 task 2.2. Requires switching PUBLIC
+# target_include_directories to BUILD_INTERFACE/INSTALL_INTERFACE generator
+# expressions, and resolving the al target export dependency.

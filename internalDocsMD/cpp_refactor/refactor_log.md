@@ -40,8 +40,8 @@ See `refactor_planning.md` for stage-level status updates.
 ### [Stage 1 — EngineSessionCore install() targets]
 **Date:** 2026-03-29
 **Files changed:** `spatial_engine/realtimeEngine/CMakeLists.txt`
-**What was done:** Added CMake install() targets for EngineSessionCore static library, public headers (EngineSession.hpp, RealtimeTypes.hpp), and exported CMake target file (EngineSessionCoreTargets.cmake) under the spatialroot:: namespace.
-**Notes:** AlloLib headers are already exposed via PUBLIC target_include_directories — an embedding host inherits them automatically. Also renamed the first "── Executable ──" comment to "── Core engine library ──" to fix duplicate section heading that confused the edit.
+**What was done:** Added install() for EngineSessionCore static library archive and public headers (EngineSession.hpp, RealtimeTypes.hpp). Also renamed the first "── Executable ──" comment to "── Core engine library ──" to fix duplicate section heading.
+**Notes:** The full exported CMake target (EXPORT / install(EXPORT) / find_package support) was deferred to Stage 2 task 2.2. Two blockers: (1) PUBLIC target_include_directories use source-relative paths that CMake rejects in install-time exports — requires switching to BUILD_INTERFACE/INSTALL_INTERFACE generator expressions; (2) `al` (AlloLib) is not in an export set, so the export chain cannot be completed until the AlloLib include path strategy is resolved (Stage 2 task 2.2). Build verified working: init.sh + build.sh produce all three binaries from clean with no Python dependency.
 
 ---
 
