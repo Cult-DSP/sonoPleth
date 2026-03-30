@@ -1,4 +1,5 @@
 # Spatial Root — C++ Refactor Dev Plan
+
 **Date:** 2026-03-29
 **Source of truth:** `internalDocsMD/cpp_refactor/third_audit.md`
 **Scope:** Full refactor: build infrastructure, API hardening, Qt GUI replacement
@@ -9,11 +10,11 @@
 
 Three stages. Each stage gates on human review before the next begins. The agent working any stage should ask for clarification frequently rather than resolve ambiguities independently.
 
-| Stage | Name | Gate |
-|---|---|---|
-| 1 | Build infrastructure and docs | Human review of working build before any code changes |
-| 2 | `EngineSessionCore` hardening for Qt embedding | Human review of API before Qt GUI is built |
-| 3 | Qt GUI + Python removal | Human verification of visual parity before Python GUI deprecated |
+| Stage | Name                                           | Gate                                                             |
+| ----- | ---------------------------------------------- | ---------------------------------------------------------------- |
+| 1     | Build infrastructure and docs                  | Human review of working build before any code changes            |
+| 2     | `EngineSessionCore` hardening for Qt embedding | Human review of API before Qt GUI is built                       |
+| 3     | Qt GUI + Python removal                        | Human verification of visual parity before Python GUI deprecated |
 
 ---
 
@@ -45,6 +46,7 @@ Note: CULT source is not modified. `add_subdirectory(cult_transcoder)` builds th
 **`init.sh`** — runs once to fetch all dependencies and then calls `build.sh`.
 
 Responsibilities:
+
 - Initialize and update all git submodules (`thirdparty/allolib`, `thirdparty/libbw64`, `thirdparty/libadm`, `cult_transcoder/thirdparty/`)
 - Fetch Qt via CMake FetchContent or system `find_package(Qt6)` — investigate which is appropriate for this project's use pattern (see Discovery Task A below)
 - Call `build.sh` after dependency setup is complete
@@ -52,6 +54,7 @@ Responsibilities:
 **`build.sh`** — compiles targets. Can be called independently after `init.sh` has been run once.
 
 Responsibilities:
+
 - Run cmake configure + build on the root `CMakeLists.txt`
 - Accept optional arguments to restrict build: `--engine-only`, `--gui-only`, `--offline-only`, or default to all
 - These flags map to the CMake option flags above via `-D` arguments
@@ -64,6 +67,7 @@ Investigate whether Qt should be fetched via `FetchContent` in CMake or via a sy
 ### 1.3 CMake install() target for EngineSessionCore
 
 Add `install()` targets to `spatial_engine/realtimeEngine/CMakeLists.txt`:
+
 - `EngineSessionCore` static library
 - Public headers: `EngineSession.hpp`, `RealtimeTypes.hpp`
 - AlloLib include path must also be resolvable by the installing host — document what the embedding host needs to provide
@@ -83,6 +87,7 @@ Note: "build infrastructure" — this is a CMake change, not an audio engine sou
 ### 1.5 API.md — constraints and 64-channel limit
 
 Add a documented constraints section to `PUBLIC_DOCS/API.md` covering:
+
 - The staged setup sequence is non-negotiable
 - `shutdown()` is terminal — construct a new `EngineSession` to restart
 - OSC server ownership: `mParamServer` is internal, not shareable with the host
@@ -101,15 +106,15 @@ Add a documented constraints section to `PUBLIC_DOCS/API.md` covering:
 
 Add the following public methods to `EngineSession.hpp` and implement in `EngineSession.cpp`. These are V1.1 additions — update the "Out of Scope for V1" section in `API.md` accordingly.
 
-| Method | What it writes |
-|---|---|
-| `void setMasterGain(float gain)` | `mConfig.masterGain` (linear 0.0–1.0) |
-| `void setDbapFocus(float focus)` | `mConfig.dbapFocus` + sets `mPendingAutoComp` if auto-comp enabled |
-| `void setSpeakerMixDb(float dB)` | `mConfig.loudspeakerMix` (dB→linear: `powf(10.f, dB/20.f)`) |
-| `void setSubMixDb(float dB)` | `mConfig.subMix` (dB→linear: `powf(10.f, dB/20.f)`) |
-| `void setAutoCompensation(bool enable)` | `mConfig.focusAutoCompensation` + sets `mPendingAutoComp` if enabling |
-| `void setElevationMode(ElevationMode mode)` | `mConfig.elevationMode` (cast to int) |
-| `void setPaused(bool isPaused)` | already exists — no change |
+| Method                                      | What it writes                                                        |
+| ------------------------------------------- | --------------------------------------------------------------------- |
+| `void setMasterGain(float gain)`            | `mConfig.masterGain` (linear 0.0–1.0)                                 |
+| `void setDbapFocus(float focus)`            | `mConfig.dbapFocus` + sets `mPendingAutoComp` if auto-comp enabled    |
+| `void setSpeakerMixDb(float dB)`            | `mConfig.loudspeakerMix` (dB→linear: `powf(10.f, dB/20.f)`)           |
+| `void setSubMixDb(float dB)`                | `mConfig.subMix` (dB→linear: `powf(10.f, dB/20.f)`)                   |
+| `void setAutoCompensation(bool enable)`     | `mConfig.focusAutoCompensation` + sets `mPendingAutoComp` if enabling |
+| `void setElevationMode(ElevationMode mode)` | `mConfig.elevationMode` (cast to int)                                 |
+| `void setPaused(bool isPaused)`             | already exists — no change                                            |
 
 All writes use `std::memory_order_relaxed` — identical to the existing OSC callback implementations in `EngineSession.cpp`. The threading model does not change. `update()` already handles `mPendingAutoComp` recomputation from the main thread.
 
@@ -122,6 +127,7 @@ These methods are safe to call after `start()` and before `shutdown()`. Calling 
 **Discovery Task B:** Investigate whether `al::ParameterServer` on port 0 behaves as a no-op (no server started) or binds an OS-assigned ephemeral port. The current `start()` implementation unconditionally creates the `ParameterServer` regardless of `mOscPort`. `API.md` Quick Start already documents `oscPort = 0; // disable OSC` as the way to disable it — but the implementation may not honor this.
 
 If AlloLib does not handle port 0 as a no-op: add an explicit guard in `start()`:
+
 ```cpp
 if (mOscPort > 0) {
     // create and register ParameterServer
@@ -139,6 +145,7 @@ Update `API.md` table for `EngineOptions` accordingly.
 ### 2.4 API.md V1.1 additions
 
 Update `PUBLIC_DOCS/API.md`:
+
 - Remove runtime setters from the "Out of Scope for V1" list
 - Add a "Runtime Parameter Control" section documenting all setter methods with ranges matching the OSC param ranges in `OscParams` (gain: 0.1–3.0, focus: 0.2–5.0, speakerMixDb: ±10, subMixDb: ±10)
 - Document the `update()` / `QTimer` integration requirement for Qt hosts
@@ -152,6 +159,7 @@ Update `PUBLIC_DOCS/API.md`:
 **Goal:** Build the C++ Qt GUI as the replacement for the Python PySide6 GUI. After human verification of full feature parity, remove the Python GUI and all Python launch/build infrastructure.
 
 **Completion bar:**
+
 - Qt GUI launches, plays a scene, all parameters live-controllable without OSC
 - Human verifies visual similarity and full feature match against Python GUI
 - Python GUI and wrappers removed
@@ -163,6 +171,7 @@ Update `PUBLIC_DOCS/API.md`:
 Create `gui/qt/` as the new Qt application directory. Add to root `CMakeLists.txt` under `SPATIALROOT_BUILD_GUI`.
 
 **Architectural requirements (non-negotiable):**
+
 - Links `EngineSessionCore` as a static library
 - Uses the standard `EngineSession` lifecycle (configureEngine → loadScene → applyLayout → configureRuntime → start)
 - Runtime parameter control via Stage 2 setter methods only — no OSC dependency for local use
@@ -171,6 +180,7 @@ Create `gui/qt/` as the new Qt application directory. Add to root `CMakeLists.tx
 - Handles `isExitRequested` from `queryStatus()` to trigger clean shutdown on device loss
 
 **Feature parity target** (match the existing Python PySide6 GUI at `gui/realtimeGUI/`):
+
 - Scene file, layout file, ADM file selection
 - Audio device selection
 - Master gain, DBAP focus, speaker mix trim, sub mix trim controls
@@ -189,12 +199,14 @@ Create `gui/qt/` as the new Qt application directory. Add to root `CMakeLists.tx
 Remove in order:
 
 **Python entry points and GUI:**
+
 - `runRealtime.py`
 - `realtimeMain.py`
 - `gui/realtimeGUI/` (entire directory)
 - `src/config/configCPP*.py`, `configCPP_posix.py`, `configCPP_windows.py`
 
 **Python LUSID library and offline pipeline:**
+
 - `LUSID/src/`
 - `LUSID/tests/`
 - `src/analyzeADM/`
@@ -203,6 +215,7 @@ Remove in order:
 - `runPipeline.py`
 
 **Python runtime:**
+
 - `requirements.txt` — remove entirely
 - `spatialroot/` venv — remove entirely
 
@@ -218,31 +231,31 @@ Remove in order:
 
 ## What Does NOT Change in This Refactor
 
-| Component | Reason |
-|---|---|
-| `spatial_engine/realtimeEngine/src/` (all C++ except setter additions) | Core engine — no changes |
+| Component                                                                   | Reason                                         |
+| --------------------------------------------------------------------------- | ---------------------------------------------- |
+| `spatial_engine/realtimeEngine/src/` (all C++ except setter additions)      | Core engine — no changes                       |
 | `spatial_engine/src/` (JSONLoader, LayoutLoader, WavUtils, SpatialRenderer) | Shared loaders and offline renderer — retained |
-| `cult_transcoder/` source | Standalone submodule — not modified |
-| `spatial_engine/speaker_layouts/` | Layout JSON files — retained |
-| `thirdparty/allolib` | AlloLib dependency — retained |
-| `thirdparty/libbw64`, `thirdparty/libadm` | EBU submodules — retained |
-| `processedData/`, `sourceData/` | Test data — retained |
+| `cult_transcoder/` source                                                   | Standalone submodule — not modified            |
+| `spatial_engine/speaker_layouts/`                                           | Layout JSON files — retained                   |
+| `thirdparty/allolib`                                                        | AlloLib dependency — retained                  |
+| `thirdparty/libbw64`, `thirdparty/libadm`                                   | EBU submodules — retained                      |
+| `processedData/`, `sourceData/`                                             | Test data — retained                           |
 
 ---
 
 ## Key File Reference
 
-| Purpose | File |
-|---|---|
-| Refactor audit (source of truth) | `internalDocsMD/cpp_refactor/third_audit.md` |
-| Engine public API header | `spatial_engine/realtimeEngine/src/EngineSession.hpp` |
-| Engine implementation | `spatial_engine/realtimeEngine/src/EngineSession.cpp` |
-| Runtime config + threading model | `spatial_engine/realtimeEngine/src/RealtimeTypes.hpp` |
-| Engine API documentation | `PUBLIC_DOCS/API.md` |
-| Engine CMake | `spatial_engine/realtimeEngine/CMakeLists.txt` |
-| API constraint ledger | `internalDocsMD/API/api_mismatch_ledger.md` |
-| Current Python GUI (feature reference) | `gui/realtimeGUI/` |
-| Python build system (to be replaced) | `src/config/configCPP*.py` |
+| Purpose                                | File                                                  |
+| -------------------------------------- | ----------------------------------------------------- |
+| Refactor audit (source of truth)       | `internalDocsMD/cpp_refactor/third_audit.md`          |
+| Engine public API header               | `spatial_engine/realtimeEngine/src/EngineSession.hpp` |
+| Engine implementation                  | `spatial_engine/realtimeEngine/src/EngineSession.cpp` |
+| Runtime config + threading model       | `spatial_engine/realtimeEngine/src/RealtimeTypes.hpp` |
+| Engine API documentation               | `PUBLIC_DOCS/API.md`                                  |
+| Engine CMake                           | `spatial_engine/realtimeEngine/CMakeLists.txt`        |
+| API constraint ledger                  | `internalDocsMD/API/api_mismatch_ledger.md`           |
+| Current Python GUI (feature reference) | `gui/realtimeGUI/`                                    |
+| Python build system (to be replaced)   | `src/config/configCPP*.py`                            |
 
 ---
 
@@ -261,14 +274,16 @@ You are implementing the C++ refactor for Spatial Root, a spatial audio engine p
 
 Read these files first, in order, before doing anything else:
 
-1. internalDocsMD/cpp_refactor/third_audit.md   — architectural audit, resolved decisions
-2. internalDocsMD/cpp_refactor/refactor_planning.md   — this dev plan (staged tasks, completion bars)
-3. PUBLIC_DOCS/API.md   — current public API documentation
-4. spatial_engine/realtimeEngine/src/EngineSession.hpp   — current public API header
-5. spatial_engine/realtimeEngine/src/EngineSession.cpp   — current implementation
-6. spatial_engine/realtimeEngine/src/RealtimeTypes.hpp   — threading model and config types
+1. internalDocsMD/cpp_refactor/third_audit.md          — architectural audit, resolved decisions
+2. internalDocsMD/cpp_refactor/refactor_planning.md    — this dev plan (staged tasks, completion bars)
+3. PUBLIC_DOCS/API.md                                  — current public API documentation
+4. spatial_engine/realtimeEngine/src/EngineSession.hpp — current public API header
+5. spatial_engine/realtimeEngine/src/EngineSession.cpp — current implementation
+6. spatial_engine/realtimeEngine/src/RealtimeTypes.hpp — threading model and config types
+7. internalDocsMD/API/api_mismatch_ledger.md           — documented hard constraints on the API
+8. spatial_engine/realtimeEngine/src/main.cpp          — reference for lifecycle and polling loop usage
 
-Do not start work until you have read all six files.
+Do not start work until you have read all eight files.
 
 ## Architecture summary
 
@@ -309,6 +324,33 @@ Full task details for each stage are in refactor_planning.md.
 - When you complete a task within a stage, say so clearly so progress is trackable.
 - At the end of each stage, summarize what was done and what the human needs to verify before you proceed.
 
+## Progress documentation (required)
+
+Maintain two running documents as you work. Do not skip this — it is how the next context window picks up without re-auditing the repo.
+
+**internalDocsMD/cpp_refactor/refactor_log.md** — granular change log. After every discrete action (file created, file deleted, CMake target added, method implemented, doc updated), append an entry. Format:
+
+```
+
+### [Stage N — Task description]
+
+**Date:** MM-DD
+**Files changed:** list each file
+**What was done:** one or two sentences
+**Notes:** anything surprising, a decision made, or a constraint discovered
+
+```
+
+**internalDocsMD/cpp_refactor/refactor_planning.md** — high-level stage tracking. When a stage or major task is complete, update the relevant section to mark it done and note any decisions or deviations from the original plan. Do not rewrite the plan — append a short status block under the relevant stage heading, e.g.:
+
+```
+
+**Status:** Complete — [date]. [One sentence on outcome or any deviation.]
+
+```
+
+Both files should be updated before asking for human stage-gate review. The human will read them as part of the review.
+
 ## Discovery tasks (Stage 1 and 2)
 
 There are two open discovery tasks that require investigation before implementation:
@@ -333,11 +375,25 @@ Discovery Task B (Stage 2): Does al::ParameterServer on port 0 behave as a no-op
 - shutdown() is terminal — to restart, construct a new EngineSession
 - The Qt GUI lives at gui/qt/ and is added to the root CMakeLists.txt under the SPATIALROOT_BUILD_GUI option flag
 - Feature parity target is the existing Python PySide6 GUI at gui/realtimeGUI/ — read that directory to understand the required feature set before designing the Qt UI
+- Read main.cpp before writing the Qt GUI — it is the canonical reference for how update(), queryStatus(), consumeDiagnostics(), and the isExitRequested polling loop are used together in practice
+- Shutdown must be triggered explicitly: connect QMainWindow::closeEvent (or equivalent) to call session.shutdown(). The internal shutdown order (OSC server → audio backend → streaming) is handled by EngineSession::shutdown() — the Qt host just needs to call it before the process exits. Failing to call shutdown() before exit causes deadlock on macOS CoreAudio.
+
+## Stage 2 implementation notes
+
+These details are easy to miss when implementing the runtime setter methods. Read EngineSession.cpp lines 183–217 (the OSC callback block inside start()) — the setter implementations must mirror those callbacks exactly.
+
+Key implementation constraints:
+
+- setDbapFocus() and setAutoCompensation(): both must set mPendingAutoComp = true (via mPendingAutoComp.store(true, std::memory_order_relaxed)) when focusAutoCompensation is enabled. update() handles the recomputation from the main thread. Do not call computeFocusCompensation() directly from a setter — it is main-thread-only and must not be called while audio is streaming (see RealtimeTypes.hpp invariant 5).
+
+- setSpeakerMixDb() and setSubMixDb(): store the linear value, not the dB value. Convert before storing: powf(10.f, dB / 20.f). The same conversion is done in configureRuntime() and in the OSC spkMixDb/subMixDb callbacks — be consistent.
+
+- All stores use std::memory_order_relaxed. Do not use stronger ordering — the existing threading model is designed around relaxed loads/stores for these parameters (a one-buffer lag is inaudible and is not a data race).
 
 ## What you should do right now
 
-1. Read the six source-of-truth files listed above.
-2. Confirm you have read them by summarizing the current EngineSession public method surface and the three RealtimeConfig atomics that will be exposed as new setters.
+1. Read the eight source-of-truth files listed above.
+2. Confirm you have read them by summarizing: (a) the current EngineSession public method surface, (b) the RealtimeConfig atomics that will be exposed as new setters, and (c) the hard constraints from api_mismatch_ledger.md.
 3. Ask any clarifying questions before starting Stage 1.
 4. Begin Stage 1.
 ```
