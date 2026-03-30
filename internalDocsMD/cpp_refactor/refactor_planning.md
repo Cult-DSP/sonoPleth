@@ -115,7 +115,7 @@ Add a documented constraints section to `PUBLIC_DOCS/API.md` covering:
 
 ## Stage 2 — EngineSessionCore Hardening for Embedding
 
-**Status:** In progress — 2026-03-30. Task 2.3 (OSC port=0 guard) complete. Tasks 2.1, 2.2, 2.4, 2.5, and embedding test remain.
+**Status:** Complete (pending human review) — 2026-03-30. Tasks 2.1 (runtime setters), 2.3 (OSC port=0 guard), 2.4 (elevationMode type fix), embedding test (option A), and 2.5 (API.md) all done. Task 2.2 (full install export with EXPORT/find_package) deferred — the add_subdirectory path already propagates include dirs correctly for the embedding test use case.
 
 **GUI framework decision (replaces Qt):** Dear ImGui + GLFW. Qt cannot be used as a git submodule (multi-GB source, complex bootstrap). All dependencies must be open-source submodules. Dear ImGui (MIT, ~5MB) + GLFW (zlib, ~1MB) are the replacement. This changes Stage 3 from "Qt GUI" to "ImGui + GLFW GUI". The architectural requirements (link EngineSessionCore, staged lifecycle, runtime setters, update() via timer/loop, no OSC dependency) are unchanged.
 

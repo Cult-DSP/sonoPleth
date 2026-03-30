@@ -62,7 +62,7 @@ struct EngineOptions {
     int bufferSize = 512;
     std::string outputDeviceName;
     int oscPort = 9009;
-    int elevationMode = 0; // 0=RescaleAtmosUp, 1=RescaleFullSphere, 2=Clamp
+    ElevationMode elevationMode = ElevationMode::RescaleAtmosUp;
 };
 
 struct SceneInput {
@@ -97,6 +97,17 @@ public:
     void shutdown();
 
     void setPaused(bool isPaused); // Transport control API
+
+    // V1.1 runtime setter surface — safe to call after start(), before shutdown().
+    // All writes use std::memory_order_relaxed, identical to the OSC callback implementations.
+    // Calling before start() is harmless (writes the atomics) but has no effect on the engine.
+    void setMasterGain(float gain);
+    void setDbapFocus(float focus);
+    void setSpeakerMixDb(float dB);
+    void setSubMixDb(float dB);
+    void setAutoCompensation(bool enable);
+    void setElevationMode(ElevationMode mode);
+
     void update();
 
     EngineStatus queryStatus() const;

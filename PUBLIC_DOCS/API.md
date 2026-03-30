@@ -156,6 +156,42 @@ Pauses or resumes audio output without stopping the session. Safe to call while 
 
 ---
 
+### `void setMasterGain(float gain)`
+
+Sets the master output gain (linear, 0.0–1.0 recommended; OSC range 0.1–3.0). Safe to call after `start()`. Uses `std::memory_order_relaxed` — a one-buffer lag is inaudible and not a data race.
+
+---
+
+### `void setDbapFocus(float focus)`
+
+Sets the DBAP rolloff exponent (range 0.2–5.0). If auto-compensation is enabled, schedules a recomputation on the next `update()` call. Safe to call after `start()`.
+
+---
+
+### `void setSpeakerMixDb(float dB)`
+
+Sets the loudspeaker mix trim in dB (range ±10). The value is converted to linear scale before storage. Safe to call after `start()`.
+
+---
+
+### `void setSubMixDb(float dB)`
+
+Sets the subwoofer mix trim in dB (range ±10). The value is converted to linear scale before storage. Safe to call after `start()`.
+
+---
+
+### `void setAutoCompensation(bool enable)`
+
+Enables or disables automatic gain compensation as DBAP focus changes. When enabled, schedules a recomputation on the next `update()` call. Safe to call after `start()`.
+
+---
+
+### `void setElevationMode(ElevationMode mode)`
+
+Sets the elevation rescaling mode at runtime. Takes effect on the next audio block. Safe to call after `start()`.
+
+---
+
 ### `void update()`
 
 Processes deferred main-thread work, including auto-compensation state changes. Must be called regularly from the main thread while the session is running.
@@ -199,8 +235,8 @@ Passed to `configureEngine()`.
 | `sampleRate`       | `int`         | `48000` | Audio sample rate in Hz                                                             |
 | `bufferSize`       | `int`         | `512`   | Frames per audio callback                                                           |
 | `outputDeviceName` | `std::string` | `""`    | Exact device name to open. Empty selects the system default.                        |
-| `oscPort`          | `int`         | `9009`  | UDP port for OSC parameter control. Set to `0` to disable OSC.                      |
-| `elevationMode`    | `int`         | `0`     | Vertical rescaling mode: `0` = RescaleAtmosUp, `1` = RescaleFullSphere, `2` = Clamp |
+| `oscPort`          | `int`              | `9009`                        | UDP port for OSC parameter control. Set to `0` to disable OSC.          |
+| `elevationMode`    | `ElevationMode`    | `RescaleAtmosUp`              | Vertical rescaling mode (see `ElevationMode` enum in `RealtimeTypes.hpp`) |
 
 ---
 
@@ -284,12 +320,38 @@ Returned by `consumeDiagnostics()`. Each event field is `true` at most once per 
 
 ---
 
+## Runtime Parameter Control (V1.1)
+
+The following setter methods allow a host to update parameters while the engine is running. All setters use `std::memory_order_relaxed` — a one-audio-buffer lag is inaudible and these writes are not data races.
+
+**Contract:** Call these only after `start()` returns `true` and before `shutdown()`. Calling before `start()` writes the underlying atomics but has no effect on the engine since the audio thread is not yet running.
+
+| Method | Parameter | Range |
+|--------|-----------|-------|
+| `setMasterGain(float gain)` | Linear output gain | 0.1–3.0 (OSC range) |
+| `setDbapFocus(float focus)` | DBAP rolloff exponent | 0.2–5.0 |
+| `setSpeakerMixDb(float dB)` | Loudspeaker mix trim | ±10 dB |
+| `setSubMixDb(float dB)` | Subwoofer mix trim | ±10 dB |
+| `setAutoCompensation(bool enable)` | Auto gain compensation | — |
+| `setElevationMode(ElevationMode mode)` | Elevation rescaling | `ElevationMode` enum |
+
+`setDbapFocus()` and `setAutoCompensation(true)` both schedule a focus compensation recomputation. The recomputation runs on the next `update()` call from the main thread. Do not call `computeFocusCompensation()` directly while the engine is running — it is main-thread-only and not RT-safe.
+
+**`update()` / polling loop contract for GUI hosts:**
+
+A GUI host (e.g., Dear ImGui + GLFW) must drive `update()`, `queryStatus()`, and `consumeDiagnostics()` from the main thread at regular intervals — e.g., once per render loop iteration or via a timer. A 50 ms polling interval is typical. Failing to call `update()` while auto-compensation is pending will defer the recomputation indefinitely.
+
+**`oscPort = 0` behavior:**
+
+Setting `oscPort = 0` in `EngineOptions` disables the OSC server entirely — no `al::ParameterServer` is created. This is the correct setting for a GUI host that uses the direct setter surface. Without the guard, `al::ParameterServer` on port 0 would bind an OS-assigned ephemeral UDP port (not a no-op).
+
+---
+
 ## Out of Scope for V1
 
 The following are not part of this API:
 
 - `stop()` / `seek()` — restartable transport
-- Per-parameter runtime setters — use `configureRuntime()` before `start()` (planned for V1.1)
 - Audio device enumeration — handled at the CLI layer (`--list-devices` flag)
 - Direct access to internal DSP or streaming objects
 

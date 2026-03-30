@@ -21,6 +21,40 @@ See `refactor_planning.md` for stage-level status updates.
 
 <!-- Agent: append entries below this line. Do not edit above it. -->
 
+### [Stage 2 — Task 2.1: Runtime setter methods on EngineSession]
+
+**Date:** 03-30
+**Files changed:** `spatial_engine/realtimeEngine/src/EngineSession.hpp`, `spatial_engine/realtimeEngine/src/EngineSession.cpp`
+**What was done:** Added six V1.1 runtime setter method declarations to `EngineSession.hpp` and implementations to `EngineSession.cpp`: `setMasterGain`, `setDbapFocus`, `setSpeakerMixDb`, `setSubMixDb`, `setAutoCompensation`, `setElevationMode`. All implementations mirror the existing OSC callbacks in `start()` exactly, using `std::memory_order_relaxed` throughout. `setDbapFocus` and `setAutoCompensation(true)` set `mPendingAutoComp` for deferred main-thread recomputation via `update()`.
+**Notes:** Implementations verified against OSC callback block (lines 189–223 of `EngineSession.cpp`). `setSpeakerMixDb`/`setSubMixDb` apply the same `powf(10.0f, dB/20.0f)` conversion used in `configureRuntime()` and the OSC spkMixDb/subMixDb callbacks.
+
+---
+
+### [Stage 2 — Task 2.4: EngineOptions::elevationMode type fix]
+
+**Date:** 03-30
+**Files changed:** `spatial_engine/realtimeEngine/src/EngineSession.hpp`, `spatial_engine/realtimeEngine/src/EngineSession.cpp`, `spatial_engine/realtimeEngine/src/main.cpp`
+**What was done:** Changed `EngineOptions::elevationMode` from `int` to `ElevationMode` enum with default `ElevationMode::RescaleAtmosUp`. Updated `configureEngine()` in `EngineSession.cpp` to use `static_cast<int>(opts.elevationMode)` for the atomic store. Updated `main.cpp` to cast the parsed int to `ElevationMode` via `static_cast<ElevationMode>(std::max(0, std::min(2, elModeInt)))`.
+**Notes:** clangd reports C++11-extensions warnings for the default member initializer using the enum — these are false positives; the project builds as C++17. Same clangd limitation noted in Stage 1 log.
+
+---
+
+### [Stage 2 — Embedding test]
+
+**Date:** 03-30
+**Files changed:** `spatial_engine/realtimeEngine/src/embedding_test.cpp` (created), `spatial_engine/realtimeEngine/CMakeLists.txt`
+**What was done:** Wrote `embedding_test.cpp` (option A — compile+link verification, no test data required). The test calls `configureEngine()` with `oscPort=0`, expects `loadScene()` to fail gracefully with a non-existent path, calls all six V1.1 setter methods, calls `queryStatus()` and `consumeDiagnostics()`, then calls `shutdown()`. Added `embedding_test` executable target to `realtimeEngine/CMakeLists.txt` linking `EngineSessionCore`.
+**Notes:** Option A chosen per user decision — test data not required, primary value is compile+link verification of the full V1.1 API surface.
+
+---
+
+### [Stage 2 — Task 2.5: API.md V1.1 additions]
+
+**Date:** 03-30
+**Files changed:** `PUBLIC_DOCS/API.md`
+**What was done:** Removed runtime setters from "Out of Scope for V1". Added method documentation for all six setter methods. Added "Runtime Parameter Control (V1.1)" section with setter method table (ranges matching OSC param ranges), `update()` polling loop contract for GUI hosts, and `oscPort=0` behavior documentation. Updated `EngineOptions` table: `elevationMode` field now documents `ElevationMode` enum type instead of `int`.
+**Notes:** OSC param ranges from `OscParams` in `EngineSession.cpp`: gain 0.1–3.0, focus 0.2–5.0, spkMixDb/subMixDb ±10.
+
 ### [Stage 1 — Root CMakeLists.txt]
 
 **Date:** 2026-03-29

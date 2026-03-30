@@ -60,6 +60,17 @@ target_link_libraries(internal_validation_runner
     EngineSessionCore
 )
 
+# ── Stage 2 embedding test ────────────────────────────────────────────────
+# Verifies EngineSessionCore links and all V1.1 API methods are callable
+# without OSC (oscPort = 0). Does not require audio hardware or test data.
+add_executable(embedding_test
+    src/embedding_test.cpp
+)
+
+target_link_libraries(embedding_test
+    EngineSessionCore
+)
+
 # ── Install targets for EngineSessionCore (Task 1.3) ─────────────────────
 # Allows an embedding host to locate EngineSessionCore via cmake --install.
 # AlloLib headers are already transitively exposed via the PUBLIC

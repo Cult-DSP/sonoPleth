@@ -49,7 +49,7 @@ bool EngineSession::configureEngine(const EngineOptions& opts)
     mConfig.bufferSize = opts.bufferSize;
     mConfig.outputDeviceName = opts.outputDeviceName;
     mOscPort = opts.oscPort;
-    mConfig.elevationMode.store(opts.elevationMode, std::memory_order_relaxed);
+    mConfig.elevationMode.store(static_cast<int>(opts.elevationMode), std::memory_order_relaxed);
     
     return true;
 }
@@ -276,6 +276,40 @@ void EngineSession::shutdown()
 void EngineSession::setPaused(bool isPaused)
 {
     mConfig.paused.store(isPaused, std::memory_order_relaxed);
+}
+
+void EngineSession::setMasterGain(float gain)
+{
+    mConfig.masterGain.store(gain, std::memory_order_relaxed);
+}
+
+void EngineSession::setDbapFocus(float focus)
+{
+    mConfig.dbapFocus.store(focus, std::memory_order_relaxed);
+    if (mConfig.focusAutoCompensation.load(std::memory_order_relaxed)) {
+        mPendingAutoComp.store(true, std::memory_order_relaxed);
+    }
+}
+
+void EngineSession::setSpeakerMixDb(float dB)
+{
+    mConfig.loudspeakerMix.store(powf(10.0f, dB / 20.0f), std::memory_order_relaxed);
+}
+
+void EngineSession::setSubMixDb(float dB)
+{
+    mConfig.subMix.store(powf(10.0f, dB / 20.0f), std::memory_order_relaxed);
+}
+
+void EngineSession::setAutoCompensation(bool enable)
+{
+    mConfig.focusAutoCompensation.store(enable, std::memory_order_relaxed);
+    if (enable) mPendingAutoComp.store(true, std::memory_order_relaxed);
+}
+
+void EngineSession::setElevationMode(ElevationMode mode)
+{
+    mConfig.elevationMode.store(static_cast<int>(mode), std::memory_order_relaxed);
 }
 
 void EngineSession::update()

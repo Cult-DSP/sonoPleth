@@ -145,7 +145,7 @@ int main(int argc, char* argv[]) {
     opts.oscPort       = getArgInt(argc, argv, "--osc_port", 9009);
     
     int elModeInt = getArgInt(argc, argv, "--elevation_mode", 0);
-    opts.elevationMode = std::max(0, std::min(2, elModeInt));
+    opts.elevationMode = static_cast<ElevationMode>(std::max(0, std::min(2, elModeInt)));
 
     // 2) Define scene configuration (LUSID metadata + media sources).
     SceneInput sceneIn;
