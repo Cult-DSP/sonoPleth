@@ -28,6 +28,8 @@ Three stages. Each stage gates on human review before the next begins. The agent
 
 Create a root `CMakeLists.txt` that ties all components together via `add_subdirectory()` with option flags. Each component can still be built independently — this is a convenience wrapper for dev, not a structural dependency.
 
+The root `CMakeLists.txt` must declare `cmake_minimum_required(VERSION 3.16)` — required by Qt6. Verify the existing component CMakeLists files are compatible with this minimum; raise to 3.18+ if AlloLib or any submodule requires it.
+
 Option flags (all ON by default except GUI which requires Qt):
 
 ```cmake
@@ -41,25 +43,34 @@ option(SPATIALROOT_BUILD_GUI           "Build Qt desktop GUI"                  O
 
 Note: CULT source is not modified. `add_subdirectory(cult_transcoder)` builds the existing CLI binary only. This does not interfere with other projects embedding CULT independently.
 
-### 1.2 init.sh and build.sh
+### 1.2 init.sh / init.ps1 and build.sh / build.ps1
 
-**`init.sh`** — runs once to fetch all dependencies and then calls `build.sh`.
+The build system must support both macOS/Linux and Windows. Provide parallel scripts:
+
+| Script | Platform | Role |
+|---|---|---|
+| `init.sh` | macOS / Linux | Fetch deps, call `build.sh` |
+| `build.sh` | macOS / Linux | CMake configure + build |
+| `init.ps1` | Windows | Fetch deps, call `build.ps1` |
+| `build.ps1` | Windows | CMake configure + build |
+
+**`init.sh` / `init.ps1`** — runs once to fetch all dependencies and then calls the build script.
 
 Responsibilities:
-
 - Initialize and update all git submodules (`thirdparty/allolib`, `thirdparty/libbw64`, `thirdparty/libadm`, `cult_transcoder/thirdparty/`)
-- Fetch Qt via CMake FetchContent or system `find_package(Qt6)` — investigate which is appropriate for this project's use pattern (see Discovery Task A below)
-- Call `build.sh` after dependency setup is complete
+- Fetch Qt via CMake FetchContent or system `find_package(Qt6)` — investigate which is appropriate (see Discovery Task A below)
+- Call `build.sh` / `build.ps1` after dependency setup is complete
 
-**`build.sh`** — compiles targets. Can be called independently after `init.sh` has been run once.
+**`build.sh` / `build.ps1`** — compiles targets. Can be called independently after init has been run once.
 
 Responsibilities:
-
 - Run cmake configure + build on the root `CMakeLists.txt`
 - Accept optional arguments to restrict build: `--engine-only`, `--gui-only`, `--offline-only`, or default to all
 - These flags map to the CMake option flags above via `-D` arguments
 
-Both scripts replace `src/config/configCPP*.py`, `configCPP_posix.py`, `configCPP_windows.py`, and `configCPP.py`. Those Python files are removed in Stage 3.
+**Before writing the Windows scripts:** read `src/config/configCPP_windows.py` and audit what it does beyond invoking CMake. If it performs any Windows-specific setup (MSVC detection, environment variables, PATH manipulation), the PowerShell replacement must cover those steps.
+
+Both script pairs replace `src/config/configCPP*.py`, `configCPP_posix.py`, `configCPP_windows.py`, and `configCPP.py`. Those Python files are removed in Stage 3.
 
 **Discovery Task A — Qt fetch strategy:**
 Investigate whether Qt should be fetched via `FetchContent` in CMake or via a system `find_package(Qt6)` with installation instructions. Factors: Qt license, binary size, CI compatibility, developer machine assumptions. Flag findings to user before implementing.
@@ -70,11 +81,15 @@ Add `install()` targets to `spatial_engine/realtimeEngine/CMakeLists.txt`:
 
 - `EngineSessionCore` static library
 - Public headers: `EngineSession.hpp`, `RealtimeTypes.hpp`
-- AlloLib include path must also be resolvable by the installing host — document what the embedding host needs to provide
+- AlloLib include path exposed via an exported CMake target (see Stage 2 task 2.1 for implementation detail)
 
 Note: "build infrastructure" — this is a CMake change, not an audio engine source change.
 
-### 1.4 README.md rewrite
+### 1.4a engine.sh — keep as-is
+
+`engine.sh` is a fast dev script for clean rebuilds of the realtime engine only (`rm -rf build/` → cmake → make). It is separate from `build.sh` and is intentionally kept. Do not modify or remove it.
+
+### 1.5 README.md rewrite
 
 - Document `spatialroot_realtime` as the primary CLI surface with its actual flags
 - Document `init.sh` + `build.sh` as the build path, replacing all references to Python build scripts
@@ -84,7 +99,7 @@ Note: "build infrastructure" — this is a CMake change, not an audio engine sou
 - Note that a C++ Qt GUI is in development as the replacement for the Python GUI
 - Do not remove references to the Python GUI yet — that happens in Stage 3
 
-### 1.5 API.md — constraints and 64-channel limit
+### 1.6 API.md — constraints and 64-channel limit
 
 Add a documented constraints section to `PUBLIC_DOCS/API.md` covering:
 
@@ -122,7 +137,25 @@ These methods are safe to call after `start()` and before `shutdown()`. Calling 
 
 **Qt host contract (required integration note):** The Qt host must call `update()` regularly from the main thread while the session is running. This should be driven by a `QTimer` with an appropriate polling interval (e.g. 50ms). `queryStatus()` and `consumeDiagnostics()` should also be called in the same timer callback. The Qt host must use the standard staged lifecycle: `configureEngine()` → `loadScene()` → `applyLayout()` → `configureRuntime()` → `start()`, with runtime setters used only after successful `start()`.
 
-### 2.2 OSC port = 0 guard
+### 2.2 AlloLib include path via exported CMake target
+
+`EngineSession.hpp` includes AlloLib headers at include time. Any host that links `EngineSessionCore` — including the Stage 3 Qt GUI and the Stage 2 embedding test — must also resolve AlloLib's include path.
+
+Solve this by exporting AlloLib's include path through the `EngineSessionCore` CMake target using `target_include_directories` with `PUBLIC` or `INTERFACE` scope. A host that does `target_link_libraries(myapp EngineSessionCore)` should automatically inherit the AlloLib include paths with no additional CMake configuration required.
+
+In practice this means adding something like:
+
+```cmake
+target_include_directories(EngineSessionCore
+    PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${allolib_INCLUDE_DIRS}   # or the AlloLib CMake target interface
+)
+```
+
+Investigate the exact AlloLib CMake target name and include interface before implementing — AlloLib may already export a target that can be linked transitively. Flag to user if the AlloLib CMake structure makes this non-trivial.
+
+### 2.3 OSC port = 0 guard
 
 **Discovery Task B:** Investigate whether `al::ParameterServer` on port 0 behaves as a no-op (no server started) or binds an OS-assigned ephemeral port. The current `start()` implementation unconditionally creates the `ParameterServer` regardless of `mOscPort`. `API.md` Quick Start already documents `oscPort = 0; // disable OSC` as the way to disable it — but the implementation may not honor this.
 
@@ -136,13 +169,13 @@ if (mOscPort > 0) {
 
 This task must be resolved before Stage 2 is marked complete, since the Qt embedding test should be runnable with `oscPort = 0`.
 
-### 2.3 EngineOptions::elevationMode type fix
+### 2.4 EngineOptions::elevationMode type fix
 
 Change `EngineOptions::elevationMode` from `int` to `ElevationMode` enum (defined in `RealtimeTypes.hpp`). This is a small breaking API change — do it before the Qt GUI is written so the GUI can use the typed enum directly.
 
 Update `API.md` table for `EngineOptions` accordingly.
 
-### 2.4 API.md V1.1 additions
+### 2.5 API.md V1.1 additions
 
 Update `PUBLIC_DOCS/API.md`:
 
@@ -288,7 +321,7 @@ Do not start work until you have read all eight files.
 ## Architecture summary
 
 Spatial Root is a C++ spatial audio engine. The refactor goal is to:
-- Replace the Python build system with init.sh + build.sh + a root CMakeLists.txt
+- Replace the Python build system with init.sh/init.ps1 + build.sh/build.ps1 + a root CMakeLists.txt (macOS/Linux and Windows both supported)
 - Harden EngineSessionCore for direct embedding by a Qt host
 - Add runtime setter methods to EngineSession so a Qt GUI can control live parameters without OSC
 - Build a C++ Qt desktop GUI that embeds EngineSessionCore directly (same process, direct API calls)
@@ -313,6 +346,10 @@ Full task details for each stage are in refactor_planning.md.
 - Stage 1 done when: init.sh + build.sh runs from clean, produces all binaries, no Python toolchain required. README.md reflects actual entry points.
 - Stage 2 done when: a minimal C++ embedding test compiles and links EngineSessionCore, calls the full lifecycle, sets runtime parameters via the new setter methods, reads queryStatus(), with oscPort = 0 (no OSC dependency).
 - Stage 3 done when: Qt GUI launches, plays a scene, all parameters are live-controllable. Human verifies full feature parity with the Python GUI. Python GUI and all Python infrastructure removed.
+
+## Git workflow
+
+All work is committed to the `cpp` branch. Do not create new branches. Commit after each stage completes and before requesting human review. Commit after any significant discrete task within a stage if it represents a stable checkpoint. Never force-push.
 
 ## How to work
 
