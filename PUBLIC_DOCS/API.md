@@ -1,138 +1,192 @@
-# Spatial Root Realtime Engine API V1
+# Spatial Root EngineSession API V1 Internal Implementation Spec
 
-This document provides external developers with a public-facing guide to embedding and interacting with the `EngineSession` API for the Spatial Root realtime engine.
+This document defines the intended V1 public C++ session API for the Spatial Root realtime engine. It is an internal implementation spec for extracting the current orchestration logic from main.cpp into an embeddable EngineSession layer. The goal is to make the CLI, GUI, and future embedding paths use the same runtime control surface.
 
 ## Overview
 
-The `EngineSession` class is a stable, embeddable C++ runtime abstraction. It removes the necessity of wrapping terminal execution, fully isolating the engine’s orchestration lifecycle, threading, and resource management into a linkable component (`EngineSessionCore`).
+EngineSession is the intended embeddable C++ runtime façade for the Spatial Root realtime engine. It should extract the orchestration currently implemented in main.cpp into a reusable session object while preserving existing startup, runtime, and shutdown behavior.
 
-### Key Capabilities:
+V1 goals:
 
-1. **Isolated Orchestration:** Initialization, starting, and strict teardown sequences are precisely defined to avoid audio thread blocking or dangling pointers.
-2. **Type Safety:** Typed struct configurations (`EngineOptions`, `SceneInput`, etc.) prevent leakage of internal parameters and ambiguous arguments.
-3. **Transport/UI Bindings:** Features like pausing (`setPaused()`) and robust metric polling (`queryStatus()`, `consumeDiagnostics()`) are completely thread-safe and non-mutating.
+- expose a typed C++ runtime API
+- keep CLI behavior functionally unchanged
+- preserve current backend wiring and shutdown ordering
+- keep OSC compatibility for the current GUI
+- avoid exposing debug-era diagnostics as part of the stable public API
 
-## Core API & Lifecycle
+## Core API and lifecycle
 
-To safely host the engine, you must transition state in a strict linear sequence from the **Main Thread**:
+The current runtime source of truth is main.cpp. The V1 EngineSession refactor should preserve this sequence:
 
-1. **`configureEngine`**: Allocates the audio backend and defines device requirements.
-2. **`loadScene`**: Parses architectural data (e.g., LUSID JSON or ADM files), stages media paths, and primes core engine tracks.
-3. **`applyLayout`**: Configures the logical speaker array, elevation rendering modes, and remaps signals.
-4. **`configureRuntime`**: Finalizes transport parameters (start volume, DBAP focus) and binds OSC parameters.
-5. **`start`**: Ignites the audio device and instantiates processing callbacks.
+- configure engine options
+- load LUSID scene and stage source input mode
+- construct and load Streaming
+- load speaker layout
+- construct and initialize Pose
+- construct and initialize Spatializer
+- prepare source state and optional output remap
+- optionally start OSC parameter handling
+- initialize backend
+- wire Streaming, Pose, and Spatializer into backend
+- start loader thread
+- start backend/audio
+- shut down in ordered sequence
 
-If an operation fails, calling `getLastError()` will provide a human-readable diagnosis of why the method returned `false`.
+## Ownership model
 
-### The Update (Tick) Loop
+EngineSession should own the runtime objects that are currently stack-allocated in main.cpp, including:
 
-Once started, the engine handles rendering on an isolated, high-priority audio thread. However, you must periodically tick the engine loop from your Application's Main Thread (or UI loop) using **`session.update()`**.
+- RealtimeConfig
+- EngineState
+- loaded SpatialData
+- loaded SpeakerLayoutData
+- Streaming
+- Pose
+- Spatializer
+- RealtimeBackend
+- optional OutputRemap
+- optional OSC parameter server state
 
-The `update()` method exists specifically to:
+RealtimeBackend should continue receiving raw pointers to Streaming, Pose, and Spatializer as it does now. The refactor should move ownership, not redesign callback wiring.
 
-1. Dispatch asynchronous structural updates safely (e.g., Spatializer Focus Compensation offsets).
-2. Avoid blocking the wait-free audio thread with generic compute work.
+## Intended V1 public API surface
+
+Required methods:
+
+- `bool configureEngine(const EngineOptions&)`
+- `bool loadScene(const SceneInput&)`
+- `bool applyLayout(const LayoutInput&)`
+- `bool configureRuntime(const RuntimeParams&)`
+- `bool start()`
+- `bool setPaused(bool)`
+- `bool shutdown()`
+- `EngineStatus status() const`
+- `std::string lastError() const`
+
+Runtime setters:
+
+- `setMasterGain(float)`
+- `setDbapFocus(float)`
+- `setSpeakerMixDb(float)`
+- `setSubMixDb(float)`
+- `setAutoCompensation(bool)`
+- `setElevationMode(ElevationMode)`
+
+Not part of V1 public API:
+
+- `update()`
+- `consumeDiagnostics()`
+- relocation-event reporting
+- CLI banner/help/device-list presentation
+- restartable stop()/seek() transport semantics unless the implementation explicitly supports them
+
+## Status surface
+
+V1 should expose a simple snapshot-style status() method returning current operational values such as:
+
+- running
+- paused
+- playback time
+- frame counter
+- callback CPU load
+- main RMS
+- sub RMS
+- underrun count
+- source count
+- speaker count
+- output channel count
 
 ## Quick Start Example
-
-This simplified lifecycle demonstrates minimal requirements to bootstrap, play, and gracefully bring down the audio context.
 
 ```cpp
 #include "EngineSession.hpp"
 #include <iostream>
-#include <thread>
-#include <chrono>
 
 int main() {
     EngineSession session;
 
-    // 1. Configure Engine Device Constraints
-    EngineOptions eCfg;
-    eCfg.sampleRate = 48000;
-    eCfg.bufferSize = 512;
-    if (!session.configureEngine(eCfg)) {
-        std::cerr << "Engine Fail: " << session.getLastError() << "\n";
+    EngineOptions engine;
+    engine.sampleRate = 48000;
+    engine.bufferSize = 512;
+    engine.enableOsc = false;
+
+    if (!session.configureEngine(engine)) {
+        std::cerr << session.lastError() << "\n";
         return 1;
     }
 
-    // 2. Load the Audio Scene Composition
-    SceneInput sCfg;
-    sCfg.scenePath = "scene.lusid.json";
-    sCfg.sourcesFolder = "/path/to/media/";
-    if (!session.loadScene(sCfg)) return 1;
+    SceneInput scene;
+    scene.scenePath = "scene.lusid.json";
+    scene.inputMode = InputMode::MonoSources;
+    scene.sourcesFolder = "/path/to/media";
 
-    // 3. Apply Target Output Format
-    LayoutInput lCfg;
-    lCfg.layoutPath = "stereo.json";
-    if (!session.applyLayout(lCfg)) return 1;
+    if (!session.loadScene(scene)) {
+        std::cerr << session.lastError() << "\n";
+        return 1;
+    }
 
-    // 4. Set Run-time Initial Parameters
-    RuntimeParams rCfg;
-    if (!session.configureRuntime(rCfg)) return 1;
+    LayoutInput layout;
+    layout.layoutPath = "layout.json";
 
-    // 5. Ignite Application Processing Callback
+    if (!session.applyLayout(layout)) {
+        std::cerr << session.lastError() << "\n";
+        return 1;
+    }
+
+    RuntimeParams runtime;
+    runtime.masterGain = 0.5f;
+    runtime.dbapFocus = 1.5f;
+
+    if (!session.configureRuntime(runtime)) {
+        std::cerr << session.lastError() << "\n";
+        return 1;
+    }
+
     if (!session.start()) {
-        std::cerr << "Start Fail: " << session.getLastError() << "\n";
+        std::cerr << session.lastError() << "\n";
         return 1;
     }
 
-    // Application Tick / Render Loop (e.g., 60 FPS)
-    while (application_is_running) {
+    session.setPaused(false);
 
-        // CRITICAL: process asynchronous engine tasks (Focus Compensation)
-        session.update();
+    EngineStatus s = session.status();
+    std::cout << "Running: " << s.running << "\n";
 
-        // Retrieve non-blocking operational snapshots
-        EngineStatus status = session.queryStatus();
-        DiagnosticEvents diags = session.consumeDiagnostics();
-
-        if (diags.renderRelocEvent) {
-            std::cout << "Warning: Relocation fault detected.\n";
-        }
-
-        std::this_thread::sleep_for(std::chrono::milliseconds(16));
-    }
-
-    // 6. Automatically resolves blocking threads and network I/O gracefully
     session.shutdown();
-
     return 0;
 }
 ```
 
-## Critical Notes & Constraints
+## Main-thread runtime work
 
-### Layout Hardware Dependencies
+The current engine performs some supervisory work on the main thread in main.cpp, including status polling and certain deferred operations. For V1, the API should not require a host-driven update() contract unless the implementation genuinely needs one after refactor. Avoid introducing update() into the public API unless it is necessary and clearly justified by the backend code.
 
-**Mismatched speaker counts generate a fatal fast-fail.**
-If your configured speaker layout file requires more output channels than your physical audio device permits (e.g., initializing a 7-channel layout on a 2-channel built-in output), the engine is intentionally designed to reject the `applyLayout()` layer to prevent index out-of-boundary faults in the callback. Ensure you employ a `stereo.json` layout fallback when working locally.
+## Device and channel-count behavior
 
-### Teardown Safety
+The layout determines the engine’s required output channel count. Physical device compatibility is ultimately validated when the backend opens the selected audio device. V1 should preserve the current behavior in which layout-derived channel count is established before backend startup, while device-opening failure is treated as a backend/start failure rather than a layout-parse failure.
 
-Always utilize `shutdown()` prior to the host application terminating or allowing the `EngineSession` pointer to go out of scope. This executes a strict order of operations:
+## Shutdown ordering
 
-1. Suspends OpenSoundControl (OSC) ingest servers.
-2. Flushes the audio-device callback.
-3. Stops streaming file I/O safely and unmaps memory.
+shutdown() must preserve the current runtime teardown order:
 
-## Building and Distributing with CMake
+- stop OSC server first
+- stop/shutdown backend second
+- shut down streaming last
 
-The audio engine has been deliberately containerized into the `EngineSessionCore` CMake target to facilitate embeddability.
+The agent must preserve this ordering while moving orchestration out of main.cpp.
 
-To consume `EngineSessionCore` inside a custom parent project:
+## Build integration note
 
-1. Bring the Spatial Root dependency tree into your repository (e.g. via git submodule).
-2. Configure your top-level `CMakeLists.txt` to include the library as a subdirectory.
+The V1 refactor should produce an embeddable library-facing API layer centered on EngineSession. Do not commit this document to a final CMake target name unless the build system is updated accordingly. The implementation should prefer a minimal extraction that allows the CLI target to call the same EngineSession logic used by host applications.
 
-```cmake
-# Adjust path to where your spatialroot relative path is stored
-add_subdirectory(thirdparty/spatialroot/spatial_engine/realtimeEngine)
+## Agent implementation constraints
 
-# Your host wrapper executable
-add_executable(MyHostApp src/main.cpp)
-
-# Link the exposed core framework (Note: This automatically chains AlloLib requirements)
-target_link_libraries(MyHostApp PRIVATE EngineSessionCore)
-```
-
-**Note:** Depending on your build environment, ensure that `C++17` is active, as `EngineSessionCore` leverages modern standard libraries heavily for parsing operations.
+- extract orchestration from main.cpp into EngineSession
+- keep core DSP and streaming classes intact unless changes are required for ownership/lifecycle
+- preserve current startup order
+- preserve current shutdown order
+- keep OSC compatibility for the current GUI path
+- do not make the public API shell out to the CLI
+- do not expose debug monitoring surfaces as stable public API
+- do not invent new public methods unless required by actual backend constraints
+- keep main.cpp as a thin CLI adapter after refactor
