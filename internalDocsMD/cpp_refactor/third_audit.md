@@ -230,11 +230,13 @@ Works correctly. Well-documented `--help` output. `--list-devices` is useful for
 
 **OSC:** Retained as an optional secondary control surface for remote/debug/network scenarios. Whether OSC is built by default or becomes a build-time/runtime option is an open question (Section 7).
 
+**Qt host contract:** The Qt host must use the same staged lifecycle as the CLI — `configureEngine()` → `loadScene()` → `applyLayout()` → `configureRuntime()` → `start()` — with runtime setters called only after successful `start()`. There is no separate GUI-only control model.
+
 **Runtime setter surface (required for Qt embedding):** The `RealtimeConfig` struct in `RealtimeTypes.hpp` already uses `std::atomic` for all runtime-controllable parameters, with relaxed ordering. The threading model is correct. What is needed is a set of public methods on `EngineSession` that write these atomics — the same operation the OSC listener thread already performs. At minimum:
 
 ```
 setMasterGain(float)
-setFocus(float)
+setDbapFocus(float)       // matches RuntimeParams::dbapFocus — note: audit previously used setFocus()
 setSpeakerMixDb(float)
 setSubMixDb(float)
 setAutoCompensation(bool)
@@ -286,13 +288,10 @@ Post-refactor options:
 - `./run.sh <args>` (shell script that invokes cult-transcoder then spatialroot_realtime)
 
 **3. How does the offline renderer get invoked post-refactor?**
-`SpatialRenderer.cpp` and `spatialroot_spatial_render` will be retained. The Python orchestration will be removed. A shell script or a new C++ CLI main for the offline path is needed. This is TBD.
+`SpatialRenderer.cpp` and `spatialroot_spatial_render` will be retained. The Python orchestration will be removed. A shell script or a new C++ CLI main for the offline path is needed. This is TBD — deferred until Python removal is complete.
 
 **4. Qt application structure**
 The exact structure of the Qt GUI (widget vs QML, CMake integration, AlloLib header exposure to the Qt project) is TBD. The architectural requirement is: Qt app links `EngineSessionCore`, calls the lifecycle API, uses runtime setters for live control, reads `queryStatus()` for display. The internal Qt design is out of scope for this audit.
-
-**5. Offline renderer invocation path**
-See item 3. Deferred until Python removal is complete.
 
 ---
 
@@ -364,7 +363,7 @@ The realtime engine currently uses DBAP only. VBAP and LBAP are implemented in t
 
 ## 10. Recommended Migration Sequence
 
-### Stage 1 — Build infrastructure and docs (no code changes)
+### Stage 1 — Build infrastructure and docs (no audio engine code changes)
 
 1. Write `build.sh` that runs cmake on all three C++ components in dependency order:
    - `cult_transcoder/` (CULT CLI binary)
@@ -388,7 +387,7 @@ The realtime engine currently uses DBAP only. VBAP and LBAP are implemented in t
 
 4. Add public runtime setter methods to `EngineSession`:
    - `setMasterGain(float)`
-   - `setFocus(float)`
+   - `setDbapFocus(float)`
    - `setSpeakerMixDb(float)`
    - `setSubMixDb(float)`
    - `setAutoCompensation(bool)`
@@ -407,19 +406,22 @@ The realtime engine currently uses DBAP only. VBAP and LBAP are implemented in t
 
 **Why before Stage 3:** The Qt GUI must be built against a stable, embeddable API. Hardening the API before writing the GUI avoids rework.
 
-### Stage 3 — Python removal and Qt GUI
+### Stage 3 — Qt GUI + Python removal
 
-7. Remove all Python entry points and GUI: `runRealtime.py`, `realtimeMain.py`, `gui/`, `src/config/`, `runPipeline.py`
-8. Remove all Python LUSID and offline pipeline code: `LUSID/src/`, `LUSID/tests/`, `src/analyzeADM/`, `src/packageADM/`, `src/analyzeRender.py`, `src/createRender.py`, `src/createFromLUSID.py`
-9. Remove `requirements.txt` and `spatialroot/` venv
-10. Build the C++ Qt GUI as the replacement for the Python GUI:
+7. Build the C++ Qt GUI (`gui/qt/`) as the replacement for the Python GUI:
     - Links `EngineSessionCore`
     - Calls the standard `EngineSession` lifecycle
     - Uses Stage 2 setter methods for live parameter control
     - Reads `queryStatus()` for status display
     - Does not use OSC for local control
 
-**Why this order:** Wait until `build.sh` is confirmed working (Stage 1) and the setter API is stable (Stage 2) before removing the Python build system and building the Qt GUI. Python removal and Qt GUI build can proceed in parallel once Stage 2 is complete.
+8. Human verifies full feature parity and visual similarity against the Python GUI. The Python GUI remains live during this verification step.
+
+9. After verification: remove all Python entry points and GUI: `runRealtime.py`, `realtimeMain.py`, `gui/realtimeGUI/`, `src/config/`, `runPipeline.py`
+10. Remove all Python LUSID and offline pipeline code: `LUSID/src/`, `LUSID/tests/`, `src/analyzeADM/`, `src/packageADM/`, `src/analyzeRender.py`, `src/createRender.py`, `src/createFromLUSID.py`
+11. Remove `requirements.txt` and `spatialroot/` venv
+
+**Why this order:** Build and verify the Qt GUI with the Python GUI still present, reducing rollback risk. Python removal happens only after the replacement is confirmed working by a human.
 
 ---
 

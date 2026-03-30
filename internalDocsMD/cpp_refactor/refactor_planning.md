@@ -1,0 +1,343 @@
+# Spatial Root — C++ Refactor Dev Plan
+**Date:** 2026-03-29
+**Source of truth:** `internalDocsMD/cpp_refactor/third_audit.md`
+**Scope:** Full refactor: build infrastructure, API hardening, Qt GUI replacement
+
+---
+
+## Overview
+
+Three stages. Each stage gates on human review before the next begins. The agent working any stage should ask for clarification frequently rather than resolve ambiguities independently.
+
+| Stage | Name | Gate |
+|---|---|---|
+| 1 | Build infrastructure and docs | Human review of working build before any code changes |
+| 2 | `EngineSessionCore` hardening for Qt embedding | Human review of API before Qt GUI is built |
+| 3 | Qt GUI + Python removal | Human verification of visual parity before Python GUI deprecated |
+
+---
+
+## Stage 1 — Build Infrastructure and Docs
+
+**Goal:** Replace the Python build system with `init.sh` + `build.sh` + a root `CMakeLists.txt`. Update docs to reflect the C++ binary as the primary interface. No audio engine code changes.
+
+**Completion bar:** `init.sh` + `build.sh` runs from clean, produces all binaries, with no Python toolchain required. `README.md` reflects actual entry points.
+
+### 1.1 Root CMakeLists.txt
+
+Create a root `CMakeLists.txt` that ties all components together via `add_subdirectory()` with option flags. Each component can still be built independently — this is a convenience wrapper for dev, not a structural dependency.
+
+Option flags (all ON by default except GUI which requires Qt):
+
+```cmake
+option(SPATIALROOT_BUILD_ENGINE        "Build spatialroot_realtime engine"     ON)
+option(SPATIALROOT_BUILD_OFFLINE       "Build spatialroot_spatial_render"      ON)
+option(SPATIALROOT_BUILD_CULT          "Build cult-transcoder CLI"             ON)
+option(SPATIALROOT_BUILD_GUI           "Build Qt desktop GUI"                  OFF)
+```
+
+`SPATIALROOT_BUILD_GUI` is OFF by default until Qt is confirmed fetched. The agent implementing this should set it ON only after `init.sh` has fetched Qt successfully.
+
+Note: CULT source is not modified. `add_subdirectory(cult_transcoder)` builds the existing CLI binary only. This does not interfere with other projects embedding CULT independently.
+
+### 1.2 init.sh and build.sh
+
+**`init.sh`** — runs once to fetch all dependencies and then calls `build.sh`.
+
+Responsibilities:
+- Initialize and update all git submodules (`thirdparty/allolib`, `thirdparty/libbw64`, `thirdparty/libadm`, `cult_transcoder/thirdparty/`)
+- Fetch Qt via CMake FetchContent or system `find_package(Qt6)` — investigate which is appropriate for this project's use pattern (see Discovery Task A below)
+- Call `build.sh` after dependency setup is complete
+
+**`build.sh`** — compiles targets. Can be called independently after `init.sh` has been run once.
+
+Responsibilities:
+- Run cmake configure + build on the root `CMakeLists.txt`
+- Accept optional arguments to restrict build: `--engine-only`, `--gui-only`, `--offline-only`, or default to all
+- These flags map to the CMake option flags above via `-D` arguments
+
+Both scripts replace `src/config/configCPP*.py`, `configCPP_posix.py`, `configCPP_windows.py`, and `configCPP.py`. Those Python files are removed in Stage 3.
+
+**Discovery Task A — Qt fetch strategy:**
+Investigate whether Qt should be fetched via `FetchContent` in CMake or via a system `find_package(Qt6)` with installation instructions. Factors: Qt license, binary size, CI compatibility, developer machine assumptions. Flag findings to user before implementing.
+
+### 1.3 CMake install() target for EngineSessionCore
+
+Add `install()` targets to `spatial_engine/realtimeEngine/CMakeLists.txt`:
+- `EngineSessionCore` static library
+- Public headers: `EngineSession.hpp`, `RealtimeTypes.hpp`
+- AlloLib include path must also be resolvable by the installing host — document what the embedding host needs to provide
+
+Note: "build infrastructure" — this is a CMake change, not an audio engine source change.
+
+### 1.4 README.md rewrite
+
+- Document `spatialroot_realtime` as the primary CLI surface with its actual flags
+- Document `init.sh` + `build.sh` as the build path, replacing all references to Python build scripts
+- Remove references to `realtimeMain.py`, `runRealtime.py`, `runPipeline.py`
+- Fix OSC port: code uses 9009, README currently says 12345 — code is authoritative
+- Document the two-step ADM workflow: `cult-transcoder transcode ...` then `spatialroot_realtime ...`
+- Note that a C++ Qt GUI is in development as the replacement for the Python GUI
+- Do not remove references to the Python GUI yet — that happens in Stage 3
+
+### 1.5 API.md — constraints and 64-channel limit
+
+Add a documented constraints section to `PUBLIC_DOCS/API.md` covering:
+- The staged setup sequence is non-negotiable
+- `shutdown()` is terminal — construct a new `EngineSession` to restart
+- OSC server ownership: `mParamServer` is internal, not shareable with the host
+- Shutdown order: OSC server → audio backend → streaming (violating this causes deadlock on macOS CoreAudio)
+- The `uint64_t` bitmasks in `EngineStatus` implicitly cap the engine at 64 output channels
+
+---
+
+## Stage 2 — EngineSessionCore Hardening for Qt Embedding
+
+**Goal:** Expose a direct runtime setter surface on `EngineSession` so a Qt host can control live parameters without OSC. Fix the `oscPort = 0` guard. Fix the `elevationMode` type. Stabilize the public API surface for the Qt host.
+
+**Completion bar:** A minimal C++ embedding test (not the full Qt GUI) compiles, links `EngineSessionCore`, calls the full lifecycle, sets parameters at runtime, and reads `queryStatus()`. No OSC dependency in this test.
+
+### 2.1 Runtime setter methods on EngineSession
+
+Add the following public methods to `EngineSession.hpp` and implement in `EngineSession.cpp`. These are V1.1 additions — update the "Out of Scope for V1" section in `API.md` accordingly.
+
+| Method | What it writes |
+|---|---|
+| `void setMasterGain(float gain)` | `mConfig.masterGain` (linear 0.0–1.0) |
+| `void setDbapFocus(float focus)` | `mConfig.dbapFocus` + sets `mPendingAutoComp` if auto-comp enabled |
+| `void setSpeakerMixDb(float dB)` | `mConfig.loudspeakerMix` (dB→linear: `powf(10.f, dB/20.f)`) |
+| `void setSubMixDb(float dB)` | `mConfig.subMix` (dB→linear: `powf(10.f, dB/20.f)`) |
+| `void setAutoCompensation(bool enable)` | `mConfig.focusAutoCompensation` + sets `mPendingAutoComp` if enabling |
+| `void setElevationMode(ElevationMode mode)` | `mConfig.elevationMode` (cast to int) |
+| `void setPaused(bool isPaused)` | already exists — no change |
+
+All writes use `std::memory_order_relaxed` — identical to the existing OSC callback implementations in `EngineSession.cpp`. The threading model does not change. `update()` already handles `mPendingAutoComp` recomputation from the main thread.
+
+These methods are safe to call after `start()` and before `shutdown()`. Calling them before `start()` is a no-op on the atomics and harmless but has no effect on the engine — `configureRuntime()` remains the correct pre-start parameter path.
+
+**Qt host contract (required integration note):** The Qt host must call `update()` regularly from the main thread while the session is running. This should be driven by a `QTimer` with an appropriate polling interval (e.g. 50ms). `queryStatus()` and `consumeDiagnostics()` should also be called in the same timer callback. The Qt host must use the standard staged lifecycle: `configureEngine()` → `loadScene()` → `applyLayout()` → `configureRuntime()` → `start()`, with runtime setters used only after successful `start()`.
+
+### 2.2 OSC port = 0 guard
+
+**Discovery Task B:** Investigate whether `al::ParameterServer` on port 0 behaves as a no-op (no server started) or binds an OS-assigned ephemeral port. The current `start()` implementation unconditionally creates the `ParameterServer` regardless of `mOscPort`. `API.md` Quick Start already documents `oscPort = 0; // disable OSC` as the way to disable it — but the implementation may not honor this.
+
+If AlloLib does not handle port 0 as a no-op: add an explicit guard in `start()`:
+```cpp
+if (mOscPort > 0) {
+    // create and register ParameterServer
+}
+```
+
+This task must be resolved before Stage 2 is marked complete, since the Qt embedding test should be runnable with `oscPort = 0`.
+
+### 2.3 EngineOptions::elevationMode type fix
+
+Change `EngineOptions::elevationMode` from `int` to `ElevationMode` enum (defined in `RealtimeTypes.hpp`). This is a small breaking API change — do it before the Qt GUI is written so the GUI can use the typed enum directly.
+
+Update `API.md` table for `EngineOptions` accordingly.
+
+### 2.4 API.md V1.1 additions
+
+Update `PUBLIC_DOCS/API.md`:
+- Remove runtime setters from the "Out of Scope for V1" list
+- Add a "Runtime Parameter Control" section documenting all setter methods with ranges matching the OSC param ranges in `OscParams` (gain: 0.1–3.0, focus: 0.2–5.0, speakerMixDb: ±10, subMixDb: ±10)
+- Document the `update()` / `QTimer` integration requirement for Qt hosts
+- Document `oscPort = 0` behavior (once Discovery Task B is resolved)
+- Document embedding instructions: required include paths, CMake link target, AlloLib include path requirement
+
+---
+
+## Stage 3 — Qt GUI + Python Removal
+
+**Goal:** Build the C++ Qt GUI as the replacement for the Python PySide6 GUI. After human verification of full feature parity, remove the Python GUI and all Python launch/build infrastructure.
+
+**Completion bar:**
+- Qt GUI launches, plays a scene, all parameters live-controllable without OSC
+- Human verifies visual similarity and full feature match against Python GUI
+- Python GUI and wrappers removed
+- `spatialroot/` venv removed
+- Zero Python runtime dependency for the core engine
+
+### 3.1 Qt GUI — gui/qt/
+
+Create `gui/qt/` as the new Qt application directory. Add to root `CMakeLists.txt` under `SPATIALROOT_BUILD_GUI`.
+
+**Architectural requirements (non-negotiable):**
+- Links `EngineSessionCore` as a static library
+- Uses the standard `EngineSession` lifecycle (configureEngine → loadScene → applyLayout → configureRuntime → start)
+- Runtime parameter control via Stage 2 setter methods only — no OSC dependency for local use
+- Drives `update()`, `queryStatus()`, and `consumeDiagnostics()` via a `QTimer` from the main Qt thread
+- Does not share or expose `mParamServer` — OSC server is internal to `EngineSession`
+- Handles `isExitRequested` from `queryStatus()` to trigger clean shutdown on device loss
+
+**Feature parity target** (match the existing Python PySide6 GUI at `gui/realtimeGUI/`):
+- Scene file, layout file, ADM file selection
+- Audio device selection
+- Master gain, DBAP focus, speaker mix trim, sub mix trim controls
+- Auto-compensation toggle
+- Elevation mode selection
+- Pause / resume transport
+- Status display: playback time, CPU load, xrun count, RMS levels
+- Diagnostic event display
+
+**Internal Qt design** (e.g. widget vs QML, layout, visual design) is left to the implementing agent. Human visual similarity verification is the acceptance bar.
+
+**OSC in the Qt app:** The Qt app may pass `oscPort = 9009` (default) to keep OSC running for remote/debug use, or `oscPort = 0` to disable it. This is a runtime decision for the user — the GUI should expose an option or default to enabled. Flag to user for decision.
+
+### 3.2 Python removal (after Qt GUI verification)
+
+Remove in order:
+
+**Python entry points and GUI:**
+- `runRealtime.py`
+- `realtimeMain.py`
+- `gui/realtimeGUI/` (entire directory)
+- `src/config/configCPP*.py`, `configCPP_posix.py`, `configCPP_windows.py`
+
+**Python LUSID library and offline pipeline:**
+- `LUSID/src/`
+- `LUSID/tests/`
+- `src/analyzeADM/`
+- `src/packageADM/`
+- `src/analyzeRender.py`, `src/createRender.py`, `src/createFromLUSID.py`
+- `runPipeline.py`
+
+**Python runtime:**
+- `requirements.txt` — remove entirely
+- `spatialroot/` venv — remove entirely
+
+**After removal:** Verify `init.sh` + `build.sh` still works from clean. Verify `spatialroot_realtime` CLI still works directly.
+
+### 3.3 Remaining open questions for Stage 3
+
+- Should the Qt app expose an OSC enable/disable toggle in the UI, or always start with OSC enabled?
+- What is the post-refactor CLI entry point for a user who does not use the Qt GUI? (`build.sh --engine-only` + direct binary invocation, or a `run.sh` convenience wrapper)
+- Offline renderer invocation path post-refactor — TBD, deferred unless directly required
+
+---
+
+## What Does NOT Change in This Refactor
+
+| Component | Reason |
+|---|---|
+| `spatial_engine/realtimeEngine/src/` (all C++ except setter additions) | Core engine — no changes |
+| `spatial_engine/src/` (JSONLoader, LayoutLoader, WavUtils, SpatialRenderer) | Shared loaders and offline renderer — retained |
+| `cult_transcoder/` source | Standalone submodule — not modified |
+| `spatial_engine/speaker_layouts/` | Layout JSON files — retained |
+| `thirdparty/allolib` | AlloLib dependency — retained |
+| `thirdparty/libbw64`, `thirdparty/libadm` | EBU submodules — retained |
+| `processedData/`, `sourceData/` | Test data — retained |
+
+---
+
+## Key File Reference
+
+| Purpose | File |
+|---|---|
+| Refactor audit (source of truth) | `internalDocsMD/cpp_refactor/third_audit.md` |
+| Engine public API header | `spatial_engine/realtimeEngine/src/EngineSession.hpp` |
+| Engine implementation | `spatial_engine/realtimeEngine/src/EngineSession.cpp` |
+| Runtime config + threading model | `spatial_engine/realtimeEngine/src/RealtimeTypes.hpp` |
+| Engine API documentation | `PUBLIC_DOCS/API.md` |
+| Engine CMake | `spatial_engine/realtimeEngine/CMakeLists.txt` |
+| API constraint ledger | `internalDocsMD/API/api_mismatch_ledger.md` |
+| Current Python GUI (feature reference) | `gui/realtimeGUI/` |
+| Python build system (to be replaced) | `src/config/configCPP*.py` |
+
+---
+
+---
+
+# Agent Onboarding Prompt
+
+Copy this prompt into a new context window to hand off implementation.
+
+---
+
+```
+You are implementing the C++ refactor for Spatial Root, a spatial audio engine project.
+
+## Your primary source of truth
+
+Read these files first, in order, before doing anything else:
+
+1. internalDocsMD/cpp_refactor/third_audit.md   — architectural audit, resolved decisions
+2. internalDocsMD/cpp_refactor/refactor_planning.md   — this dev plan (staged tasks, completion bars)
+3. PUBLIC_DOCS/API.md   — current public API documentation
+4. spatial_engine/realtimeEngine/src/EngineSession.hpp   — current public API header
+5. spatial_engine/realtimeEngine/src/EngineSession.cpp   — current implementation
+6. spatial_engine/realtimeEngine/src/RealtimeTypes.hpp   — threading model and config types
+
+Do not start work until you have read all six files.
+
+## Architecture summary
+
+Spatial Root is a C++ spatial audio engine. The refactor goal is to:
+- Replace the Python build system with init.sh + build.sh + a root CMakeLists.txt
+- Harden EngineSessionCore for direct embedding by a Qt host
+- Add runtime setter methods to EngineSession so a Qt GUI can control live parameters without OSC
+- Build a C++ Qt desktop GUI that embeds EngineSessionCore directly (same process, direct API calls)
+- Remove all Python GUI, launch wrappers, and build infrastructure after Qt GUI reaches parity
+
+The chosen architecture: the Qt GUI links EngineSessionCore, calls the standard staged lifecycle, and uses direct C++ setter methods for runtime parameter control. OSC is demoted to an optional secondary surface. The engine's RealtimeConfig already uses std::atomic for all runtime-controllable parameters — adding setters is a thin API surface addition, not a redesign.
+
+CULT (cult_transcoder submodule) is NOT to be modified in this refactor.
+
+## Staged work
+
+The refactor has three stages. Complete one stage, then STOP and ask for human review before proceeding to the next. Do not combine stages.
+
+Stage 1 — Build infrastructure and docs
+Stage 2 — EngineSessionCore hardening for Qt embedding
+Stage 3 — Qt GUI + Python removal
+
+Full task details for each stage are in refactor_planning.md.
+
+## Stage completion bars
+
+- Stage 1 done when: init.sh + build.sh runs from clean, produces all binaries, no Python toolchain required. README.md reflects actual entry points.
+- Stage 2 done when: a minimal C++ embedding test compiles and links EngineSessionCore, calls the full lifecycle, sets runtime parameters via the new setter methods, reads queryStatus(), with oscPort = 0 (no OSC dependency).
+- Stage 3 done when: Qt GUI launches, plays a scene, all parameters are live-controllable. Human verifies full feature parity with the Python GUI. Python GUI and all Python infrastructure removed.
+
+## How to work
+
+- Ask for clarification frequently. When you hit an ambiguity that could affect architecture or file structure, stop and ask before proceeding. Do not resolve architectural ambiguities independently.
+- Before modifying any file, read it first.
+- Do not modify CULT source (cult_transcoder/).
+- Do not modify the audio engine's core DSP logic (Streaming, Pose, Spatializer, RealtimeBackend, OutputRemap). The only engine-side changes in Stage 2 are adding setter methods to EngineSession.hpp/.cpp and fixing the oscPort guard and elevationMode type.
+- Prefer editing existing files to creating new ones.
+- When you complete a task within a stage, say so clearly so progress is trackable.
+- At the end of each stage, summarize what was done and what the human needs to verify before you proceed.
+
+## Discovery tasks (Stage 1 and 2)
+
+There are two open discovery tasks that require investigation before implementation:
+
+Discovery Task A (Stage 1): How should Qt be fetched? Investigate whether FetchContent or find_package(Qt6) with installation instructions is the right approach given the project's existing dependency model (submodules + FetchContent via AlloLib). Report findings before implementing.
+
+Discovery Task B (Stage 2): Does al::ParameterServer on port 0 behave as a no-op, or does it bind an OS-assigned port? The API.md Quick Start documents oscPort = 0 as the way to disable OSC, but EngineSession::start() unconditionally creates the ParameterServer. Test and report before adding any guard.
+
+## Key naming conventions
+
+- Runtime setter names follow RuntimeParams field names: setMasterGain, setDbapFocus, setSpeakerMixDb, setSubMixDb, setAutoCompensation, setElevationMode
+- queryStatus() — not status()
+- dbapFocus — not focus
+- These are existing code names. Do not rename existing methods or fields.
+- The new setter methods are V1.1 additions to the API. Update the "Out of Scope for V1" section of API.md when adding them.
+
+## Qt GUI integration requirements (Stage 3)
+
+- Qt host must drive update(), queryStatus(), and consumeDiagnostics() via a QTimer from the main Qt thread (e.g. 50ms interval)
+- Runtime setters must only be called after successful start()
+- The standard staged lifecycle is non-negotiable: configureEngine → loadScene → applyLayout → configureRuntime → start
+- shutdown() is terminal — to restart, construct a new EngineSession
+- The Qt GUI lives at gui/qt/ and is added to the root CMakeLists.txt under the SPATIALROOT_BUILD_GUI option flag
+- Feature parity target is the existing Python PySide6 GUI at gui/realtimeGUI/ — read that directory to understand the required feature set before designing the Qt UI
+
+## What you should do right now
+
+1. Read the six source-of-truth files listed above.
+2. Confirm you have read them by summarizing the current EngineSession public method surface and the three RealtimeConfig atomics that will be exposed as new setters.
+3. Ask any clarifying questions before starting Stage 1.
+4. Begin Stage 1.
+```
