@@ -58,10 +58,12 @@ Required methods:
 - `bool applyLayout(const LayoutInput&)`
 - `bool configureRuntime(const RuntimeParams&)`
 - `bool start()`
-- `bool setPaused(bool)`
-- `bool shutdown()`
-- `EngineStatus status() const`
-- `std::string lastError() const`
+- `void setPaused(bool)`
+- `void shutdown()`
+- `void update()`
+- `EngineStatus queryStatus() const`
+- `DiagnosticEvents consumeDiagnostics()`
+- `std::string getLastError() const`
 
 ### Method preconditions
 
@@ -72,55 +74,31 @@ Required methods:
 - `start()` requires scene + layout + runtime config to be valid
 - `shutdown()` should be safe to call even after partial failure
 
-Runtime setters:
-
-- `setMasterGain(float)`
-- `setDbapFocus(float)`
-- `setSpeakerMixDb(float)`
-- `setSubMixDb(float)`
-- `setAutoCompensation(bool)`
-- `setElevationMode(ElevationMode)`
-
 Not part of V1 public API:
 
-- `update()`
-- `consumeDiagnostics()`
 - `stop()`
 - `seek()`
-- relocation-event reporting
 - CLI banner/help/device-list presentation
 - restartable transport semantics unless the implementation explicitly supports them
 
 ## Public types
 
-The API requires these configurations and return types. The exact field definitions must contain at least:
+The API requires these configurations and return types. Fields must map to the current backend requirements:
 
-- **EngineOptions**: `sampleRate` (int), `bufferSize` (int), `enableOsc` (bool)
-- **SceneInput**: `scenePath` (string), `inputMode` (enum `InputMode`), `sourcesFolder` (string)
-- **LayoutInput**: `layoutPath` (string)
-- **RuntimeParams**: `masterGain` (float), `dbapFocus` (float)
-- **ElevationMode**: Enum for vertical scaling behaviors (e.g., `RescaleAtmosUp`, `RescaleFullSphere`, `Clamp`)
-- **EngineStatus**: `running` (bool), `paused` (bool), `playbackTime` (double), `frameCounter` (uint64_t), `cpuLoad` (float), `mainRms` (float), `subRms` (float), `underrunCount` (size_t), `sourceCount` (size_t), `speakerCount` (size_t), `outputChannelCount` (size_t)
+- **EngineOptions**: `sampleRate` (int), `bufferSize` (int), `outputDeviceName` (string), `oscPort` (int), `elevationMode` (int)
+- **SceneInput**: `scenePath` (string), `sourcesFolder` (string), `admFile` (string)
+- **LayoutInput**: `layoutPath` (string), `remapCsvPath` (string)
+- **RuntimeParams**: `masterGain` (float), `dbapFocus` (float), `speakerMixDb` (float), `subMixDb` (float), `autoCompensation` (bool)
+- **EngineStatus**: `timeSec` (double), `cpuLoad` (float), `renderActiveMask` / `deviceActiveMask` / `renderDomMask` / `deviceDomMask` (uint64_t), `mainRms` / `subRms` (float), `xruns` (size_t), `nanGuardCount` / `speakerProximityCount` (uint64_t), `paused` (bool), `isExitRequested` (bool)
+- **DiagnosticEvents**: Contains relocation event polling metrics required by the CLI.
 
 ### OSC behavior
 
-If `enableOsc == true` in `EngineOptions`, OSC server startup happens inside `start()`. If `false`, no OSC objects are created.
+If `oscPort > 0` in `EngineOptions`, OSC server startup happens inside `start()`. If `0`, no OSC objects are created.
 
 ## Status surface
 
-V1 should expose a simple snapshot-style status() method returning current operational values such as:
-
-- running
-- paused
-- playback time
-- frame counter
-- callback CPU load
-- main RMS
-- sub RMS
-- underrun count
-- source count
-- speaker count
-- output channel count
+V1 should expose a simple snapshot-style `queryStatus()` method returning current operational values mapping to the fields described in the EngineStatus type above.
 
 ## Quick Start Example
 
@@ -134,20 +112,20 @@ int main() {
     EngineOptions engine;
     engine.sampleRate = 48000;
     engine.bufferSize = 512;
-    engine.enableOsc = false;
+    engine.oscPort = 0; // disable osc
+    engine.elevationMode = 0;
 
     if (!session.configureEngine(engine)) {
-        std::cerr << session.lastError() << "\n";
+        std::cerr << session.getLastError() << "\n";
         return 1;
     }
 
     SceneInput scene;
     scene.scenePath = "scene.lusid.json";
-    scene.inputMode = InputMode::MonoSources;
     scene.sourcesFolder = "/path/to/media";
 
     if (!session.loadScene(scene)) {
-        std::cerr << session.lastError() << "\n";
+        std::cerr << session.getLastError() << "\n";
         return 1;
     }
 
@@ -155,7 +133,7 @@ int main() {
     layout.layoutPath = "layout.json";
 
     if (!session.applyLayout(layout)) {
-        std::cerr << session.lastError() << "\n";
+        std::cerr << session.getLastError() << "\n";
         return 1;
     }
 
@@ -164,19 +142,19 @@ int main() {
     runtime.dbapFocus = 1.5f;
 
     if (!session.configureRuntime(runtime)) {
-        std::cerr << session.lastError() << "\n";
+        std::cerr << session.getLastError() << "\n";
         return 1;
     }
 
     if (!session.start()) {
-        std::cerr << session.lastError() << "\n";
+        std::cerr << session.getLastError() << "\n";
         return 1;
     }
 
     session.setPaused(false);
 
-    EngineStatus s = session.status();
-    std::cout << "Running: " << s.running << "\n";
+    EngineStatus s = session.queryStatus();
+    std::cout << "Paused: " << s.paused << "\n";
 
     session.shutdown();
     return 0;
@@ -185,7 +163,7 @@ int main() {
 
 ## Main-thread runtime work
 
-The current engine performs some supervisory work on the main thread in main.cpp, including status polling and certain deferred operations. For V1, the API should not require a host-driven update() contract unless the implementation genuinely needs one after refactor. Avoid introducing update() into the public API unless it is necessary and clearly justified by the backend code.
+The current engine performs supervisory work on the main thread in main.cpp, including status polling and deferred operations. For V1, the host must regularly call `update()` on the main thread to process auto-compensation state digestion, and `consumeDiagnostics()` for CLI relocation and clustering readouts.
 
 ## Device and channel-count behavior
 
