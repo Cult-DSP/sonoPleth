@@ -136,7 +136,7 @@ Converts ADM BW64 WAV files to the LUSID scene JSON format required by the engin
 
 ## Offline Renderer — `spatialroot_spatial_render`
 
-Batch multichannel WAV rendering from a LUSID scene. The Python pipeline (`runPipeline.py`) previously used to orchestrate this renderer is deprecated; direct binary invocation is the post-refactor path.
+Batch multichannel WAV rendering from a LUSID scene. Direct binary invocation is the post-refactor path.
 
 ```bash
 ./build/spatial_engine/spatialRender/spatialroot_spatial_render \
@@ -200,10 +200,6 @@ Each component can also be built standalone from its own CMakeLists.txt.
 
 Example ADM files: https://zenodo.org/records/15268471
 
-```bash
-python utils/getExamples.py   # Download example files (Python optional utility)
-```
-
 ---
 
 ## Public API
@@ -243,7 +239,6 @@ spatialroot/
 │   └── allolib/            # AlloLib (audio I/O, DBAP, OSC; git submodule)
 ├── gui/
 │   ├── imgui/              # C++ Dear ImGui + GLFW desktop GUI (primary)
-│   └── realtimeGUI/        # Legacy Python PySide6 GUI (to be removed)
 ├── PUBLIC_DOCS/API.md      # EngineSession C++ embedding API documentation
 ├── CMakeLists.txt          # Root build — all components
 ├── build.sh / init.sh      # macOS/Linux build scripts

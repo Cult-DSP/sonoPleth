@@ -88,7 +88,6 @@ Rules:
   - `thirdparty/libbw64` (EBU BW64/RF64 container I/O)
   - `thirdparty/libadm` (EBU ADM XML model + parser)
 - Keep changes minimal and compatible with the current pipeline and GUI, especially:
-  - `runPipeline.py` and `gui/pipeline_runner.py`
   - file outputs under `processedData/`
 
 ### Deliverable (Track A)
@@ -112,11 +111,8 @@ Rules:
 - Keep the output stable: `processedData/currentMetaData.xml` remains the same format (raw ADM XML string).
 
 3. Wire the pipeline to use the new tool (no semantic changes)
-   - Update `src/analyzeADM/extractMetadata.py` to use the embedded tool exclusively:
-
-- Run `spatialroot_adm_extract` to generate `processedData/currentMetaData.xml`.
-  - Raise `FileNotFoundError` with a clear message if the binary is not built.
-- Preserve current filenames and directories so everything downstream stays compatible.
+  - Update the C++ preprocessing/tooling path that generates `processedData/currentMetaData.xml` to use `spatialroot_adm_extract` exclusively.
+  - Preserve current filenames and directories so everything downstream stays compatible.
 
 4. Update `init.sh` to build the tool
    - `init.sh` should:
@@ -218,10 +214,9 @@ additional:
 - `RENDERING.md`: updated to document `0.5f`
 - **Resolution**: Default value standardized to `0.5` across all locations.
 
-**#5 — dbap_focus forwarded for all DBAP modes**
+**#5 — dbap_focus forwarded for all DBAP modes (Archived, pre-Phase 6)**
 
-- `runPipeline.py` now sends `--dbap_focus` for both `"dbap"` and `"dbapfocus"` modes.
-- **Resolution**: Ensures DBAP focus parameter is always respected.
+- Historical note from the legacy offline pipeline (removed in Phase 6).
 
 **#6 — master_gain exposed**
 
@@ -805,7 +800,7 @@ Build and run via `init.sh` / `build.sh` / `run.sh` and the C++ binaries.
 ### ADM Parsing
 
 **Issue:** `ModuleNotFoundError: No module named 'lxml'`  
-**Solution:** `lxml` is no longer required by the active pipeline. If you still see this, activate venv (`source activate.sh`) and ensure you're not running archived code from `old_XML_parse/`.
+**Solution:** `lxml` is no longer required by the active pipeline. If you still see this, you're running archived code; stop and use the current C++ toolchain.
 
 **Issue:** `spatialroot_adm_extract` binary not found
 **Solution:** Run `./init.sh` to build the embedded ADM extractor.

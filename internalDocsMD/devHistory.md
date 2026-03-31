@@ -25,7 +25,7 @@ In Phase 3 of the project (March 2026), the ADM extraction functionality was tra
 - **Advantages**:
   - Simplified pipeline with fewer dependencies.
   - Enhanced functionality beyond ADM extraction.
-  - Direct integration with the realtime workflow (at the time driven by `runRealtime.py`).
+  - Direct integration with the realtime workflow (historical; the Python launcher was removed in Phase 6).
 
 ### Documentation Updates
 
