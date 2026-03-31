@@ -8,6 +8,8 @@
 #include "FileDialog.hpp"
 #include "imgui_stdlib.h"    // ImGui::InputText with std::string
 
+#include <al/io/al_AudioIO.hpp>
+
 #include <filesystem>
 #include <algorithm>
 #include <cmath>
@@ -192,6 +194,13 @@ void App::renderEngineTab() {
 
     // Source path
     ImGui::TextDisabled("SOURCE");
+    if (mSourceIsAdm) {
+        ImGui::SameLine();
+        ImGui::TextColored({0.3f, 0.9f, 0.3f, 1.f}, "ADM");
+    } else if (mSourceIsLusid) {
+        ImGui::SameLine();
+        ImGui::TextColored({0.3f, 0.9f, 0.3f, 1.f}, "LUSID");
+    }
     ImGui::SameLine(120.f);
     ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 78.f);
     if (ImGui::InputText("##source", &mSourcePath)) detectSource();
@@ -199,14 +208,6 @@ void App::renderEngineTab() {
     if (ImGui::Button("Browse##src")) {
         std::string p = pickFileOrDirectory("Select Audio Source");
         if (!p.empty()) { mSourcePath = p; detectSource(); }
-    }
-    // Hint text (below source row)
-    if (!mSourceHint.empty()) {
-        ImVec4 hintCol = (mSourceIsAdm || mSourceIsLusid)
-            ? ImVec4{0.3f, 0.9f, 0.3f, 1.f}
-            : ImVec4{1.f, 0.4f, 0.4f, 1.f};
-        ImGui::SameLine(120.f);
-        ImGui::TextColored(hintCol, "%s", mSourceHint.c_str());
     }
 
     // Speaker layout
@@ -242,10 +243,17 @@ void App::renderEngineTab() {
     // Output device
     ImGui::TextDisabled("DEVICE");
     ImGui::SameLine(120.f);
-    ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 8.f);
-    ImGui::InputText("##device", &mDeviceName);
-    ImGui::SameLine(120.f);
-    ImGui::TextDisabled("(empty = system default; use --list-devices to enumerate)");
+    if (ImGui::Button("Scan##device")) scanDevices();
+    ImGui::SameLine();
+    if (mDeviceList.empty()) {
+        ImGui::TextDisabled("(click Scan to list output devices)");
+    } else {
+        std::vector<const char*> items;
+        for (const auto& d : mDeviceList) items.push_back(d.c_str());
+        ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 8.f);
+        if (ImGui::Combo("##device", &mDeviceIdx, items.data(), (int)items.size()))
+            mDeviceName = (mDeviceIdx == 0) ? "" : mDeviceList[mDeviceIdx];
+    }
 
     // Buffer size
     ImGui::TextDisabled("BUFFER");
@@ -733,6 +741,24 @@ void App::resetRuntimeToDefaults() {
     mSubMixDb      = 0.0f;
     mAutoComp      = false;
     mElevationMode = 0;
+}
+
+// ── Device scanning ───────────────────────────────────────────────────────────
+
+void App::scanDevices() {
+    mDeviceList.clear();
+    mDeviceList.push_back("(system default)");
+
+    int n = al::AudioDevice::numDevices();
+    for (int i = 0; i < n; ++i) {
+        al::AudioDevice dev(i);
+        if (dev.valid() && dev.hasOutput())
+            mDeviceList.push_back(std::string(dev.name()));
+    }
+
+    // Keep selection valid; reset to system default after each scan.
+    mDeviceIdx = 0;
+    mDeviceName = "";
 }
 
 // ── Source detection ──────────────────────────────────────────────────────────

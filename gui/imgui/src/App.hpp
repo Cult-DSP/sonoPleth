@@ -76,7 +76,9 @@ private:
     std::string mSourcePath;   // ADM WAV file or LUSID package directory
     std::string mLayoutPath;   // speaker layout JSON
     std::string mRemapPath;    // optional channel remap CSV
-    std::string mDeviceName;   // "" = system default
+    std::string              mDeviceName;   // "" = system default
+    std::vector<std::string> mDeviceList;  // populated by scanDevices(); [0] = system default
+    int                      mDeviceIdx = 0;
     int         mBufferSizeIdx = 3;   // index into kBufferSizes[]
     int         mLayoutPreset  = 0;   // index into kLayoutNames[]
 
@@ -163,6 +165,9 @@ private:
 
     // Source type detection (updates mSourceIsAdm, mSourceIsLusid, mSourceHint)
     void detectSource();
+
+    // Audio device enumeration (populates mDeviceList via al::AudioDevice)
+    void scanDevices();
 
     // Path helpers
     std::string resolveProjectPath(const std::string& relPath) const;
