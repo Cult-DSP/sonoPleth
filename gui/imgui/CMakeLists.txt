@@ -62,6 +62,8 @@ add_executable(spatialroot_gui
     ${IMGUI_SOURCES}
 )
 
+set_target_properties(spatialroot_gui PROPERTIES OUTPUT_NAME "Spatial Root")
+
 add_dependencies(spatialroot_gui miniLogo_embed)
 
 # macOS: OpenGL is deprecated (but fully functional on all current hardware).

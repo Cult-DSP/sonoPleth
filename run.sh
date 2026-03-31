@@ -12,10 +12,10 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-BINARY="${SCRIPT_DIR}/build/gui/imgui/spatialroot_gui"
+BINARY="${SCRIPT_DIR}/build/gui/imgui/Spatial Root"
 
 if [ ! -f "${BINARY}" ]; then
-    echo "Error: spatialroot_gui not found at:"
+    echo "Error: \"Spatial Root\" not found at:"
     echo "  ${BINARY}"
     echo ""
     echo "Build the GUI first:"
