@@ -120,6 +120,9 @@ private:
     std::mutex           mTcLogMutex;
     bool                 mTcLogAutoScroll = true;
 
+    // ── Logo texture (loaded once at startup; 0 = not loaded, ⊙ fallback used) ──
+    unsigned int mLogoTexId = 0;  // GLuint — avoids pulling GL headers into App.hpp
+
     // ── Static constants ─────────────────────────────────────────────────
     static constexpr int kBufferSizes[]      = {64, 128, 256, 512, 1024};
     static constexpr const char* kBufferSizeNames[] =

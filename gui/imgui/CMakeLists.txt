@@ -62,6 +62,7 @@ target_include_directories(spatialroot_gui PRIVATE
     ${IMGUI_DIR}/backends
     ${IMGUI_DIR}/misc/cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}/thirdparty/allolib/external/stb/stb  # stb_image.h for logo texture
 )
 
 # Threads: required by SubprocessRunner (std::thread background subprocess)

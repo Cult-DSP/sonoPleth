@@ -10,6 +10,9 @@
 
 #include <al/io/al_AudioIO.hpp>
 
+#include <GLFW/glfw3.h>
+#include "stb_image.h"
+
 #include <filesystem>
 #include <algorithm>
 #include <cmath>
@@ -40,10 +43,32 @@ App::App(std::string projectRoot)
     appendEngineLog("[GUI] Spatial Root — ImGui + GLFW GUI started.");
     appendEngineLog("[GUI] Project root: " + mProjectRoot);
     appendEngineLog("[GUI] Select a source and layout, then click START.");
+
+    // Load logo image as OpenGL texture (miniLogo.png beside the GUI sources).
+    // Requires an active GL context — guaranteed because App is constructed after
+    // glfwMakeContextCurrent() in main.cpp. Falls back to ⊙ symbol if not found.
+    std::string logoPath = (fs::path(mProjectRoot) / "gui/imgui/src/miniLogo.png").string();
+    int lw = 0, lh = 0, lch = 0;
+    unsigned char* logoData = stbi_load(logoPath.c_str(), &lw, &lh, &lch, 4);
+    if (logoData) {
+        glGenTextures(1, &mLogoTexId);
+        glBindTexture(GL_TEXTURE_2D, mLogoTexId);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, lw, lh, 0, GL_RGBA, GL_UNSIGNED_BYTE, logoData);
+        glBindTexture(GL_TEXTURE_2D, 0);
+        stbi_image_free(logoData);
+    }
 }
 
 App::~App() {
     requestShutdown();
+    if (mLogoTexId != 0) {
+        glDeleteTextures(1, &mLogoTexId);
+        mLogoTexId = 0;
+    }
 }
 
 // ── tick() — called once per render frame ─────────────────────────────────────
@@ -161,19 +186,27 @@ void App::renderUI() {
     // ── Header bar ────────────────────────────────────────────────────────
     ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 2.f);
 
-    // Logo symbol + app name (left)
-    ImGui::TextColored({0.60f, 0.57f, 0.52f, 1.f}, "⊙");
+    // Logo image (left) — ⊙ symbol fallback if texture failed to load
+    float logoH = ImGui::GetTextLineHeight();
+    if (mLogoTexId != 0) {
+        ImGui::Image((ImTextureID)(intptr_t)mLogoTexId, ImVec2(logoH, logoH));
+    } else {
+        ImGui::TextColored({0.60f, 0.57f, 0.52f, 1.f}, "⊙");
+    }
     ImGui::SameLine(0.f, 8.f);
     ImGui::Text("Spatial Root");
     ImGui::SameLine(0.f, 6.f);
     ImGui::TextDisabled("Real-Time Engine");
 
-    // Workflow breadcrumb (centre)
+    // Workflow breadcrumb (centre) — skip if window too narrow to avoid collision
+    float leftEnd = ImGui::GetItemRectMax().x;  // right edge of last left-side item
     const char* crumb = "ADM  →  LUSID  →  Spatial Render";
     float crumbW = ImGui::CalcTextSize(crumb).x;
     float crumbX = (ImGui::GetWindowWidth() - crumbW) * 0.5f;
-    ImGui::SameLine(crumbX);
-    ImGui::TextDisabled("%s", crumb);
+    if (crumbX > leftEnd + 8.f) {
+        ImGui::SameLine(crumbX);
+        ImGui::TextDisabled("%s", crumb);
+    }
 
     // State indicator (right)
     char stateBuf[64];
@@ -217,8 +250,8 @@ void App::renderEngineTab() {
     const ImVec4 kRed    = {0.72f, 0.18f, 0.15f, 1.f};
 
     // ── INPUT CONFIGURATION card ──────────────────────────────────────────
-    // 5 widget rows + card label + spacing ≈ 186px
-    if (ImGui::BeginChild("##inputcard", {0.f, 186.f}, true)) {
+    // 5 widget rows + card label + spacing + source hint line ≈ 206px
+    if (ImGui::BeginChild("##inputcard", {0.f, 206.f}, true)) {
         ImGui::TextDisabled("INPUT CONFIGURATION");
         ImGui::Spacing();
 
@@ -235,6 +268,13 @@ void App::renderEngineTab() {
         if (ImGui::Button("Browse##src")) {
             std::string p = pickFileOrDirectory("Select Audio Source");
             if (!p.empty()) { mSourcePath = p; detectSource(); }
+        }
+
+        // Source hint — feedback shown when mSourceHint is populated by detectSource()
+        if (!mSourceHint.empty()) {
+            bool isError = !mSourceIsAdm && !mSourceIsLusid;
+            ImGui::SetCursorPosX(120.f);
+            ImGui::TextColored(isError ? kRed : kGreen, "%s", mSourceHint.c_str());
         }
 
         // Speaker layout
@@ -264,8 +304,8 @@ void App::renderEngineTab() {
             std::string p = pickFile("Select Remap CSV", {"*.csv"}, "CSV files");
             if (!p.empty()) mRemapPath = p;
         }
-        ImGui::SameLine();
-        ImGui::TextDisabled("(optional)");
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("optional — leave blank to disable channel remapping");
 
         // Device
         ImGui::TextDisabled("DEVICE");
@@ -580,12 +620,17 @@ void App::renderTranscodeTab() {
         ImGui::TextDisabled("TRANSCODE LOG");
         ImGui::Spacing();
 
-        std::lock_guard<std::mutex> lock(mTcLogMutex);
+        // Copy log under lock so the background thread can append freely during render.
+        std::deque<LogEntry> tcLogSnapshot;
+        {
+            std::lock_guard<std::mutex> lock(mTcLogMutex);
+            tcLogSnapshot = mTcLog;
+        }
         if (ImGui::BeginChild("##tclog",
                 {0.f, ImGui::GetContentRegionAvail().y},
                 false,
                 ImGuiWindowFlags_HorizontalScrollbar)) {
-            for (const auto& entry : mTcLog) {
+            for (const auto& entry : tcLogSnapshot) {
                 ImGui::TextColored(entry.color, "%s", entry.text.c_str());
             }
             if (mTcLogAutoScroll &&
