@@ -29,44 +29,29 @@
 | `gui/imgui/CMakeLists.txt` | GUI build — includes xxd embed step for miniLogo.png |
 | `spatial_engine/realtimeEngine/src/EngineSession.hpp` | Engine public API — read before touching lifecycle code |
 
-### Three open issues (implement before parity verification)
+### Open issues status
 
-**Issue A — Engine does not restart cleanly (critical)**
+**Issue A — Engine restart ✅ FIXED (2026-03-31)**
 
-`EngineSession::shutdown()` is terminal. After calling it, you must construct a **new** `EngineSession` object before calling `configureEngine()` again. The current `App` class holds `EngineSession mSession` as a plain value member — constructed once at startup, never replaced. So after the first Stop, every subsequent Start calls `configureEngine()` on a dead instance. Symptoms: playback time continues from where it left off; second and subsequent tracks do not play.
-
-**Why this differs from the Python GUI:** The Python GUI (`gui/realtimeGUI/realtime_runner.py`) launched `spatialroot_realtime` as a separate OS process via `QProcess`. Each Start = a fresh process spawn. Each Stop = `SIGTERM → SIGKILL`. The OS cleaned everything up — no object reuse, no state leakage. The C++ GUI embeds `EngineSession` in-process, so "restart" must be explicit.
-
-**Fix:** Change `EngineSession mSession` → `std::unique_ptr<EngineSession> mSession` in `App.hpp`. Initialize with `std::make_unique<EngineSession>()` in the `App` constructor. At the top of `doLaunchEngine()`, before calling `configureEngine()`, add `mSession = std::make_unique<EngineSession>();` — this destroys the old (shut-down) instance and constructs a fresh one. Update all `mSession.` call sites to `mSession->` (use replace_all). The destructor and all other paths are unchanged.
+`mSession` changed to `std::unique_ptr<EngineSession>` in `App.hpp`. Initialized via `std::make_unique<EngineSession>()` in the `App` constructor. `doLaunchEngine()` resets it with `mSession = std::make_unique<EngineSession>()` before every launch. All call sites updated to `mSession->`.
 
 ---
 
-**Issue B — Executable name in desktop/Dock/Activity Monitor**
+**Issue B — Executable name ✅ FIXED (2026-03-31)**
 
-The binary is named `spatialroot_gui`. The user wants it to appear as `Spatial Root` in the macOS Dock, Activity Monitor, and Finder. Fix: add to `gui/imgui/CMakeLists.txt`:
-
-```cmake
-set_target_properties(spatialroot_gui PROPERTIES OUTPUT_NAME "Spatial Root")
-```
-
-Also update `run.sh` line 15: `BINARY="${SCRIPT_DIR}/build/gui/imgui/Spatial Root"` (quoted, since the name has a space).
+`set_target_properties(spatialroot_gui PROPERTIES OUTPUT_NAME "Spatial Root")` added to `gui/imgui/CMakeLists.txt`. `run.sh` and `run.ps1` updated to reference the new binary name (quoted). Binary confirmed named `Spatial Root` at link step.
 
 ---
 
-**Issue C — macOS Dock icon (partially implemented, still not working)**
+**Issue C — macOS Dock icon ⏭ DEFERRED to Phase 5**
 
-The infrastructure is in place: `miniLogo.png` is embedded as a C byte array at build time via `xxd -i` (CMake custom command → `miniLogo_data.h`). `setMacOSAppIconFromData()` in `FileDialog_macOS.mm` calls `[NSApp setApplicationIconImage:]` from embedded bytes after `glfwInit()`. The in-app header logo uses the same embedded data via `stbi_load_from_memory`. Builds and links cleanly.
-
-**Status:** Dock icon still does not appear on the executable on the desktop. Root cause not yet confirmed. Investigation angles:
-- `[NSApp setApplicationIconImage:]` sets the running Dock tile only — it does NOT set the Finder/desktop file icon. For a persistent file icon, the binary must be packaged as a `.app` bundle.
-- Try calling `setMacOSAppIconFromData` after `glfwCreateWindow()` instead of immediately after `glfwInit()` — GLFW may override the icon during window creation.
-- Long-term fix: add `MACOSX_BUNDLE` to CMake, provide `Info.plist`, convert `miniLogo.png` to `.icns`. This is the only reliable path to a persistent macOS desktop icon.
+The in-app Dock tile icon via `[NSApp setApplicationIconImage:]` works while running. The desktop/Finder file icon does not update — this requires packaging as a `.app` bundle. Deferred as a Phase 5 item. See Phase 5 future work below for investigation notes.
 
 ---
 
 ### What NOT to do
 
-- Do not start Python removal (Stage 3.2) until the human explicitly confirms feature parity after Issue A is fixed.
+- Do not start Python removal (Stage 3.2 / Stage 4.2) until the human explicitly confirms feature parity.
 - Do not modify `spatial_engine/realtimeEngine/src/` engine source — all changes are GUI-side only.
 - Do not rebuild the GUI from scratch — all changes are surgical edits to `App.cpp`, `App.hpp`, `main.cpp`, `FileDialog_macOS.mm`, and `CMakeLists.txt`.
 
@@ -398,6 +383,17 @@ Remove in order:
 - Should the Qt app expose an OSC enable/disable toggle in the UI, or always start with OSC enabled?
 - What is the post-refactor CLI entry point for a user who does not use the Qt GUI? (`build.sh --engine-only` + direct binary invocation, or a `run.sh` convenience wrapper)
 - Offline renderer invocation path post-refactor — TBD, deferred unless directly required
+
+---
+
+## Phase 5 — Future Work (not blocking parity or Python removal)
+
+| Item | Notes |
+|---|---|
+| **macOS `.app` bundle** | Add `MACOSX_BUNDLE` to `gui/imgui/CMakeLists.txt`, provide `Info.plist`, convert `miniLogo.png` to `.icns`. Required for a persistent Finder/desktop file icon. `[NSApp setApplicationIconImage:]` already sets the Dock tile while running — the bundle is only needed for the static file icon. Try calling `setMacOSAppIconFromData` after `glfwCreateWindow()` first (GLFW may reset the icon during window creation). |
+| **Dynamic GLFW window title** | Currently static `"Spatial Root — Real-Time Engine"`. Could reflect source filename or engine state. Minor QoL. |
+| **`allowedFileTypes` deprecation** | `pickFile` in `FileDialog_macOS.mm` uses deprecated `allowedFileTypes` (macOS 12+). `#pragma` suppressor in place. Future fix: `allowedContentTypes` with `UTType`. |
+| **OSC enable/disable toggle** | `oscPort=9009` always-on for V1. A UI toggle deferred — parity with Python GUI maintained. |
 
 ---
 
