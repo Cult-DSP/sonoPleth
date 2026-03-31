@@ -2,18 +2,13 @@
 
 ### engine notes:
 
-engine doesn't actually restart when stoped or source file is changed - time just continues from previous instance - needs a restart / kill button potentially like the python version - need to know what this actually does
+- engine doesn't actually restart when stoped or source file is changed - time just continues from previous instance - needs a restart / kill button potentially like the python version - need to know what this actually does
+- engine needs to be fully reset in between tracks - tracks dont play after the first track
+- executable should be named "Spatial Root" when it appears in the desktop
 
 ### other
 
 mostly good
-
-v1 functional notes:
-
-- source audio needs to prompt an os file selector
-- same with remap csv
-- layout needs to keep the drop down on the left but also provide an os file selector on the right
-- transcod tab also needs os file selector drop down menu
 
 v2:
 
@@ -24,7 +19,4 @@ I after i verify basic functionality
 
 aesthetic notes:
 
-- after these functional changes, i want to change the font and overall aesthetic to look professional, and like our old prototype, which I will provide an image of. it should like a native apple app.
-- can we give the application a logo in desktop: gui/imgui/src/miniLogo.png
-
-architectural: does it make sense to rewrite the app as an alloApp? it seems we have recreated our own app class with threading, but we could just use allolibs
+- could be sleeker

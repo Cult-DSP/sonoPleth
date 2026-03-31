@@ -23,6 +23,20 @@ endif()
 # OpenGL::GL → -framework OpenGL (macOS), opengl32 (Windows), -lGL (Linux)
 find_package(OpenGL REQUIRED)
 
+# ── Embed miniLogo.png as a C byte array (path-independent) ──────────────────
+# xxd -i generates miniLogo_png[] / miniLogo_png_len in miniLogo_data.h.
+# Used by App.cpp (GL texture via stbi_load_from_memory) and
+# FileDialog_macOS.mm (Dock icon via NSData). Avoids any runtime path lookup.
+set(MINILOGO_DATA_H "${CMAKE_CURRENT_BINARY_DIR}/miniLogo_data.h")
+add_custom_command(
+    OUTPUT  "${MINILOGO_DATA_H}"
+    COMMAND xxd -i miniLogo.png "${MINILOGO_DATA_H}"
+    WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/src"
+    DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/src/miniLogo.png"
+    COMMENT "Embedding miniLogo.png as C byte array"
+)
+add_custom_target(miniLogo_embed DEPENDS "${MINILOGO_DATA_H}")
+
 # ── Dear ImGui sources ────────────────────────────────────────────────────────
 # Core ImGui + GLFW/OpenGL3 backends + imgui_stdlib (std::string InputText)
 set(IMGUI_SOURCES
@@ -48,6 +62,8 @@ add_executable(spatialroot_gui
     ${IMGUI_SOURCES}
 )
 
+add_dependencies(spatialroot_gui miniLogo_embed)
+
 # macOS: OpenGL is deprecated (but fully functional on all current hardware).
 # GL_SILENCE_DEPRECATION suppresses the Xcode/compiler deprecation warnings.
 # AppKit is required for NSOpenPanel (FileDialog_macOS.mm).
@@ -63,6 +79,7 @@ target_include_directories(spatialroot_gui PRIVATE
     ${IMGUI_DIR}/misc/cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src
     ${CMAKE_SOURCE_DIR}/thirdparty/allolib/external/stb/stb  # stb_image.h for logo texture
+    ${CMAKE_CURRENT_BINARY_DIR}                               # miniLogo_data.h (generated)
 )
 
 # Threads: required by SubprocessRunner (std::thread background subprocess)

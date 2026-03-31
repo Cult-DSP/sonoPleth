@@ -6,6 +6,72 @@
 
 ---
 
+## Onboarding — Read This First (Context for New Agent)
+
+**Last updated: 2026-03-31.** Stages 1 and 2 are complete. Stage 3 GUI is built and verified working. Polish items are mostly done. The next human-gated action is feature parity verification, then Python removal. Three issues are open and must be resolved before that gate.
+
+### Where things stand right now
+
+**What is built and working:**
+- `init.sh` / `build.sh` replace the Python build system entirely.
+- `spatialroot_realtime` C++ binary is the primary engine CLI.
+- `EngineSessionCore` static library exposes the full V1.1 API (runtime setters, OSC port=0 guard, typed ElevationMode).
+- `spatialroot_gui` — Dear ImGui + GLFW desktop GUI — builds, launches, and is visually verified against the Python prototype. It links `EngineSessionCore` directly (no subprocess, no OSC dependency for local control).
+
+**Files that matter for the GUI:**
+
+| File | Role |
+|---|---|
+| `gui/imgui/src/App.hpp` | App class declaration — all state members |
+| `gui/imgui/src/App.cpp` | All UI rendering and engine lifecycle logic — read this first |
+| `gui/imgui/src/main.cpp` | GLFW setup, ImGui init, render loop |
+| `gui/imgui/src/FileDialog_macOS.mm` | NSOpenPanel file pickers + macOS Dock icon setter |
+| `gui/imgui/CMakeLists.txt` | GUI build — includes xxd embed step for miniLogo.png |
+| `spatial_engine/realtimeEngine/src/EngineSession.hpp` | Engine public API — read before touching lifecycle code |
+
+### Three open issues (implement before parity verification)
+
+**Issue A — Engine does not restart cleanly (critical)**
+
+`EngineSession::shutdown()` is terminal. After calling it, you must construct a **new** `EngineSession` object before calling `configureEngine()` again. The current `App` class holds `EngineSession mSession` as a plain value member — constructed once at startup, never replaced. So after the first Stop, every subsequent Start calls `configureEngine()` on a dead instance. Symptoms: playback time continues from where it left off; second and subsequent tracks do not play.
+
+**Why this differs from the Python GUI:** The Python GUI (`gui/realtimeGUI/realtime_runner.py`) launched `spatialroot_realtime` as a separate OS process via `QProcess`. Each Start = a fresh process spawn. Each Stop = `SIGTERM → SIGKILL`. The OS cleaned everything up — no object reuse, no state leakage. The C++ GUI embeds `EngineSession` in-process, so "restart" must be explicit.
+
+**Fix:** Change `EngineSession mSession` → `std::unique_ptr<EngineSession> mSession` in `App.hpp`. Initialize with `std::make_unique<EngineSession>()` in the `App` constructor. At the top of `doLaunchEngine()`, before calling `configureEngine()`, add `mSession = std::make_unique<EngineSession>();` — this destroys the old (shut-down) instance and constructs a fresh one. Update all `mSession.` call sites to `mSession->` (use replace_all). The destructor and all other paths are unchanged.
+
+---
+
+**Issue B — Executable name in desktop/Dock/Activity Monitor**
+
+The binary is named `spatialroot_gui`. The user wants it to appear as `Spatial Root` in the macOS Dock, Activity Monitor, and Finder. Fix: add to `gui/imgui/CMakeLists.txt`:
+
+```cmake
+set_target_properties(spatialroot_gui PROPERTIES OUTPUT_NAME "Spatial Root")
+```
+
+Also update `run.sh` line 15: `BINARY="${SCRIPT_DIR}/build/gui/imgui/Spatial Root"` (quoted, since the name has a space).
+
+---
+
+**Issue C — macOS Dock icon (partially implemented, still not working)**
+
+The infrastructure is in place: `miniLogo.png` is embedded as a C byte array at build time via `xxd -i` (CMake custom command → `miniLogo_data.h`). `setMacOSAppIconFromData()` in `FileDialog_macOS.mm` calls `[NSApp setApplicationIconImage:]` from embedded bytes after `glfwInit()`. The in-app header logo uses the same embedded data via `stbi_load_from_memory`. Builds and links cleanly.
+
+**Status:** Dock icon still does not appear on the executable on the desktop. Root cause not yet confirmed. Investigation angles:
+- `[NSApp setApplicationIconImage:]` sets the running Dock tile only — it does NOT set the Finder/desktop file icon. For a persistent file icon, the binary must be packaged as a `.app` bundle.
+- Try calling `setMacOSAppIconFromData` after `glfwCreateWindow()` instead of immediately after `glfwInit()` — GLFW may override the icon during window creation.
+- Long-term fix: add `MACOSX_BUNDLE` to CMake, provide `Info.plist`, convert `miniLogo.png` to `.icns`. This is the only reliable path to a persistent macOS desktop icon.
+
+---
+
+### What NOT to do
+
+- Do not start Python removal (Stage 3.2) until the human explicitly confirms feature parity after Issue A is fixed.
+- Do not modify `spatial_engine/realtimeEngine/src/` engine source — all changes are GUI-side only.
+- Do not rebuild the GUI from scratch — all changes are surgical edits to `App.cpp`, `App.hpp`, `main.cpp`, `FileDialog_macOS.mm`, and `CMakeLists.txt`.
+
+---
+
 ## Overview
 
 Three stages. Each stage gates on human review before the next begins. The agent working any stage should ask for clarification frequently rather than resolve ambiguities independently.
@@ -219,7 +285,7 @@ Update `PUBLIC_DOCS/API.md`:
 - [x] ImGui GUI implementation complete (all source files written)
 - [x] Native file dialogs, device scan, source detection, transport controls — human verified
 - [x] Aesthetic theme verified — builds and looks solid against reference prototype
-- [x] Polish refinements (section 3.0 backlog — items 1–6 done; 7/8/9 deferred to V1.1)
+- [x] Polish refinements (section 3.0 backlog — items 1–4, 6 done; item 5 partial — in-app logo done, dock icon unresolved; 7/8/9 deferred to V1.1)
 - [ ] Human confirms full feature parity with Python GUI (re-verify after polish)
 - [ ] Python GUI and wrappers removed
 - [ ] `spatialroot/` venv removed
@@ -241,7 +307,15 @@ After the initial aesthetic verification, the following refinements are recommen
 
 **Medium priority — polish: ✅ DONE (2026-03-31)**
 
-5. ✅ **Logo image.** `miniLogo.png` loaded via `stb_image` in `App::App()` as an OpenGL texture (`mLogoTexId`). Rendered in the header via `ImGui::Image()` at line height. `⊙` symbol remains as fallback if file not found. Texture released in destructor. stb include path added to `gui/imgui/CMakeLists.txt`. macOS Dock / app-switcher icon also set from the same PNG via `setMacOSAppIcon()` in `FileDialog_macOS.mm`, called from `main.cpp` after `glfwInit()`.
+5. ⚠️ **Logo image — partially done, macOS dock icon unresolved.**
+
+   **In-app header logo (App.cpp):** `miniLogo.png` embedded as a C byte array at build time via `xxd -i` (CMake custom command → `miniLogo_data.h` in the build directory — included only in `App.cpp` to avoid duplicate symbols; `main.cpp` uses `extern` declarations). `App::App()` uses `stbi_load_from_memory(miniLogo_png, miniLogo_png_len, ...)` and uploads as an OpenGL texture (`mLogoTexId`). Rendered via `ImGui::Image()` at text line height. `⊙` fallback if texture upload fails. Texture released in destructor. **Status: believed correct but not visually confirmed.**
+
+   **macOS Dock / app-switcher icon:** `setMacOSAppIconFromData(data, len)` added to `FileDialog_macOS.mm` — feeds embedded PNG bytes into `NSData → NSImage → [NSApp setApplicationIconImage:]`, called from `main.cpp` after `glfwInit()`. **Status: icon still does not appear on the executable on the desktop. Root cause unknown.** Possible angles to investigate next time:
+   - GLFW on macOS may be overriding the NSApplication delegate or resetting the icon after `glfwInit()` returns — try calling after `glfwCreateWindow()` instead.
+   - The app is not packaged as a `.app` bundle — macOS may require a bundle + `Info.plist` + `.icns` for a persistent Finder/desktop icon.
+   - `[NSApp setApplicationIconImage:]` affects the Dock tile while running but not the file icon in Finder — a `.app` bundle with `MACOSX_BUNDLE` in CMake and a proper `.icns` is needed for the latter.
+   - `miniLogo.png` may need to be converted to `.icns` (multi-resolution icon format) for best results.
 
 6. ✅ **Header breadcrumb collision fixed.** `ImGui::GetItemRectMax().x` captures the right edge of the last left-side header item. Breadcrumb is skipped (not rendered) if `crumbX ≤ leftEnd + 8px`. State badge always renders via its own `SameLine(absolute)` regardless.
 

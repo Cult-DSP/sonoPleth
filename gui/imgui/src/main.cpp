@@ -28,8 +28,12 @@
 #include <string>
 
 #ifdef __APPLE__
-// Defined in FileDialog_macOS.mm — sets the Dock/app-switcher icon from a PNG.
-void setMacOSAppIcon(const std::string& pngPath);
+// Defined in FileDialog_macOS.mm — sets the Dock/app-switcher icon from embedded bytes.
+void setMacOSAppIconFromData(const unsigned char* data, unsigned int len);
+// miniLogo_data.h is included (and thus defined) in App.cpp only.
+// Declare the symbols extern here to avoid duplicate definitions at link time.
+extern unsigned char miniLogo_png[];
+extern unsigned int  miniLogo_png_len;
 #endif
 
 // ── GLFW error callback ───────────────────────────────────────────────────────
@@ -73,9 +77,8 @@ int main(int argc, char* argv[]) {
     }
 
 #ifdef __APPLE__
-    // Set the Dock / app-switcher icon. Must be called after glfwInit() which
-    // initialises NSApplication. The icon is the same PNG used in the header bar.
-    setMacOSAppIcon(projectRoot + "/gui/imgui/src/miniLogo.png");
+    // Set the Dock / app-switcher icon from embedded bytes — no path lookup needed.
+    setMacOSAppIconFromData(miniLogo_png, miniLogo_png_len);
 #endif
 
     // OpenGL 3.3 Core Profile

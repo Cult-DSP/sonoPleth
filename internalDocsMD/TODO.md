@@ -1,5 +1,14 @@
 # TO DO
 
+## immediate
+
+- fix cpp gui session restarting issue and test
+- use refactor info to update realtime master md and agents.md
+- remove python bloat
+- get back to work on realtime engine fixes
+
+## tasks
+
 - use fork of allolib that only has necessary components
   - adjust main build to not use all of allolib build components
 - move entirely to cpp, figure how system / gui will be orchestrated. alloapp? external gui lib?
