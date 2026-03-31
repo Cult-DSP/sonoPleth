@@ -195,17 +195,33 @@ Update `PUBLIC_DOCS/API.md`:
 
 ## Stage 3 — ImGui + GLFW GUI + Python Removal
 
-**Status:** Scaffold complete (2026-03-30) — pending human build verification. All source files written. Binary has not yet been built or run. Deviations from original plan: (1) no native file dialog in V1 (tinyfiledialogs not yet a submodule — user types/drags paths); (2) no audio device enumeration dropdown in V1 (avoids PortAudio init at startup — user runs `--list-devices`); (3) OSC always-on (`oscPort=9009`) with DEV NOTE in `App.hpp` to evaluate a UI toggle in a future iteration. Stage 3.2 (Python removal) begins after human verifies full feature parity.
+**Status:** GUI implementation complete (2026-03-30) — pending human build + visual verification. All source files written and functional changes verified by user. Aesthetic overhaul (dark/cream theme, Menlo font, card layout) implemented but not yet built/verified. Stage 3.2 (Python removal) begins after human verifies full feature parity.
+
+**Implemented (human-verified):**
+- Native NSOpenPanel file dialogs (FileDialog_macOS.mm) for all browse buttons
+- SOURCE field accepts any file/directory, rejects incompatible with inline error
+- Inline "ADM" / "LUSID" green tag next to SOURCE label
+- Device dropdown with Scan button via `al::AudioDevice` enumeration
+- `run.sh` / `run.ps1` launch scripts
+
+**Implemented (pending visual verification):**
+- Dark background + warm cream card panels (StyleColorsLight base + full palette override)
+- Menlo 13.5px monospace font (falls back to ImGui default on non-macOS)
+- Header: logo symbol, app name, workflow breadcrumb (centred), state badge (right)
+- ENGINE tab: four bordered card sections (INPUT CONFIGURATION, TRANSPORT, RUNTIME CONTROLS, ENGINE LOG)
+- TRANSCODE tab: three bordered card sections (TRANSCODE CONFIGURATION, TRANSCODE CONTROL, TRANSCODE LOG)
 
 **Goal:** Build the C++ Dear ImGui + GLFW GUI as the replacement for the Python PySide6 GUI. After human verification of full feature parity, remove the Python GUI and all Python launch/build infrastructure.
 
 **Completion bar:**
 
-- Qt GUI launches, plays a scene, all parameters live-controllable without OSC
-- Human verifies visual similarity and full feature match against Python GUI
-- Python GUI and wrappers removed
-- `spatialroot/` venv removed
-- Zero Python runtime dependency for the core engine
+- [x] ImGui GUI implementation complete (all source files written)
+- [x] Native file dialogs, device scan, source detection, transport controls — human verified
+- [ ] Aesthetic theme verified against reference prototype
+- [ ] Human verifies full feature parity with Python GUI
+- [ ] Python GUI and wrappers removed
+- [ ] `spatialroot/` venv removed
+- [ ] Zero Python runtime dependency for the core engine
 
 ### 3.1 Qt GUI — gui/qt/
 

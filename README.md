@@ -5,7 +5,7 @@ Lead Developer: Lucian Parisi
 
 Spatial Root is a C++ spatial audio engine for decoding ADM BW64 files and rendering to multichannel speaker arrays using DBAP spatialization. It includes a real-time streaming engine, an offline batch renderer, and the CULT transcoder for ADM→LUSID scene conversion.
 
-A C++ Qt desktop GUI is in development as the replacement for the current Python GUI.
+A C++ Dear ImGui + GLFW desktop GUI (`gui/imgui/`) is the replacement for the current Python GUI.
 
 ---
 
@@ -161,6 +161,8 @@ The build system is CMake + shell scripts. No Python required.
 | `init.ps1` | Windows | Initialize submodules + call `build.ps1` |
 | `build.ps1` | Windows | CMake configure + build |
 | `engine.sh` | macOS / Linux | Fast clean rebuild of the realtime engine only |
+| `run.sh` | macOS / Linux | Launch the ImGui GUI (builds first if needed) |
+| `run.ps1` | Windows | Launch the ImGui GUI |
 
 The root `CMakeLists.txt` builds all components via option flags:
 
@@ -168,7 +170,7 @@ The root `CMakeLists.txt` builds all components via option flags:
 SPATIALROOT_BUILD_ENGINE   ON   # spatialroot_realtime
 SPATIALROOT_BUILD_OFFLINE  ON   # spatialroot_spatial_render
 SPATIALROOT_BUILD_CULT     ON   # cult-transcoder
-SPATIALROOT_BUILD_GUI      OFF  # Qt GUI (in development, Stage 3)
+SPATIALROOT_BUILD_GUI      OFF  # ImGui + GLFW GUI (gui/imgui/)
 ```
 
 Each component can also be built standalone from its own CMakeLists.txt.
@@ -210,11 +212,28 @@ The realtime engine exposes a C++ embedding API (`EngineSessionCore` static libr
 
 ---
 
-## Python GUI (current, to be replaced)
+## C++ GUI
 
-The current PySide6 GUI at `gui/realtimeGUI/` is the active GUI while the C++ Qt replacement is in development. It requires the Python venv from the legacy `init.sh` to be active. This GUI and all Python launch infrastructure will be removed once the Qt GUI reaches feature parity (Stage 3 of the C++ refactor).
+The Dear ImGui + GLFW desktop GUI at `gui/imgui/` is the primary GUI. Build it with:
 
-To use the current Python GUI during the transition period:
+```bash
+./build.sh --gui          # macOS / Linux
+.\build.ps1 -Gui          # Windows
+```
+
+Then launch from the project root:
+
+```bash
+./run.sh                  # macOS / Linux
+.\run.ps1                 # Windows
+```
+
+The GUI controls the spatial audio engine directly via the `EngineSessionCore` C++ API (no OSC). It supports ADM WAV and LUSID package sources, speaker layout selection, and real-time parameter control.
+
+## Python GUI (legacy — to be removed)
+
+The PySide6 GUI at `gui/realtimeGUI/` is the legacy GUI. It will be removed once the C++ GUI is verified at feature parity. It requires the Python venv from `init.sh`.
+
 ```bash
 # Legacy setup (Python venv required)
 python3 -m venv spatialroot
@@ -236,7 +255,8 @@ spatialroot/
 ├── thirdparty/
 │   └── allolib/            # AlloLib (audio I/O, DBAP, OSC; git submodule)
 ├── gui/
-│   └── realtimeGUI/        # Current Python PySide6 GUI (will be removed in Stage 3)
+│   ├── imgui/              # C++ Dear ImGui + GLFW desktop GUI (primary)
+│   └── realtimeGUI/        # Legacy Python PySide6 GUI (to be removed)
 ├── PUBLIC_DOCS/API.md      # EngineSession C++ embedding API documentation
 ├── CMakeLists.txt          # Root build — all components
 ├── build.sh / init.sh      # macOS/Linux build scripts

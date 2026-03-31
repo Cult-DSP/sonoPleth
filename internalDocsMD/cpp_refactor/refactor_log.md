@@ -21,6 +21,13 @@ See `refactor_planning.md` for stage-level status updates.
 
 <!-- Agent: append entries below this line. Do not edit above it. -->
 
+### [Stage 3 — Native file dialogs (NSOpenPanel), Browse buttons, source hint, device dropdown]
+
+**Date:** 03-30
+**Files changed:** `gui/imgui/src/FileDialog.hpp`, `gui/imgui/src/FileDialog.cpp`, `gui/imgui/src/FileDialog_macOS.mm` (created), `gui/imgui/src/App.hpp`, `gui/imgui/src/App.cpp`, `gui/imgui/CMakeLists.txt`, `run.sh` (created), `run.ps1` (created)
+**What was done:** Replaced the broken `osascript + popen` file dialog approach with a proper `NSOpenPanel` Objective-C++ implementation (`FileDialog_macOS.mm`). Added Browse buttons to SOURCE (any file/folder via `pickFileOrDirectory`), LAYOUT (.json filter), REMAP CSV (.csv filter), and TRANSCODE INPUT (.wav/.xml filter). Replaced the overlapping source hint with an inline "ADM" / "LUSID" green tag next to the SOURCE label. Replaced the device InputText with a Scan button + combo populated via `al::AudioDevice` enumeration. Added `run.sh` / `run.ps1` launch scripts.
+**Notes:** `osascript` blocked the main thread and the dialog appeared behind the GLFW window. `NSOpenPanel` (`FileDialog_macOS.mm`) runs its own Cocoa modal event loop and integrates correctly since GLFW already initialises `NSApplication`. `FileDialog.cpp` now handles Windows (`GetOpenFileName`) and Linux (zenity) only; macOS is conditional via `target_sources` in CMakeLists. `al::AudioDevice::numDevices()` initialises PortAudio on first call — safe because PortAudio is reference-counted; engine start will re-init without conflict. Human verified: GUI launches, file dialogs work, device scan works, ADM/LUSID detection shows inline.
+
 ### [Stage 3 — init.sh / build.sh: imgui + glfw submodule init and --gui flag]
 
 **Date:** 03-30
@@ -176,6 +183,15 @@ See `refactor_planning.md` for stage-level status updates.
 **Files changed:** `spatial_engine/realtimeEngine/src/EngineSession.cpp`
 **What was done:** Investigated `al::ParameterServer` port=0 behavior by reading AlloLib source. `ParameterServer::listen()` checks `if (oscPort < 0)` — port 0 falls through and calls `osc::Recv::open(0, ...)`. UDP bind to port 0 succeeds on macOS with OS-assigned ephemeral port. Result: port=0 does NOT fail `start()`, but does NOT disable OSC either — it starts a server on a random port. Added `if (mOscPort > 0)` guard wrapping the entire ParameterServer + OscParams block in `start()`.
 **Notes:** IDE diagnostics (clangd) show false errors because clangd lacks CMake include paths; actual compile is unaffected. `shutdown()` is already guarded with `if (mParamServer)` — no change needed there. Stage 2 Tasks 2.1, 2.2, 2.4, 2.5, and the embedding test remain for the next agent.
+
+---
+
+### [Stage 3 — Aesthetic overhaul: dark/cream theme, Menlo font, card layout, transcode tab cards]
+
+**Date:** 03-30
+**Files changed:** `gui/imgui/src/main.cpp`, `gui/imgui/src/App.cpp`, `README.md`
+**What was done:** `main.cpp`: loaded Menlo 13.5px (falls back to ImGui default), applied `StyleColorsLight()` base then full dark/cream palette override (dark `WindowBg`, cream `ChildBg`/`FrameBg`, dark text). Added workflow breadcrumb header ("ADM → LUSID → Spatial Render") centred, state badge right-aligned. `renderEngineTab()`: rewrote as four bordered `BeginChild` cards — INPUT CONFIGURATION (186px), TRANSPORT (108px with integrated status row), RUNTIME CONTROLS (220px with uppercase labels), ENGINE LOG (remaining height). `renderTranscodeTab()`: restructured into three cards — TRANSCODE CONFIGURATION (162px), TRANSCODE CONTROL (80px with right-aligned status badge matching TRANSPORT card style), TRANSCODE LOG (remaining height). `README.md`: updated Qt references to ImGui+GLFW, added C++ GUI section with build/launch instructions, added `run.sh`/`run.ps1` to build scripts table, updated project structure tree.
+**Notes:** Card heights calculated from FontSize + FramePadding*2 + ItemSpacing.y ≈ 28px/row. `GrabRounding=10.f` gives circular slider grabs. `WindowRounding=0.f` / `ChildRounding=4.f` keeps outer window sharp while cards are slightly rounded. Pending human build verification.
 
 ---
 

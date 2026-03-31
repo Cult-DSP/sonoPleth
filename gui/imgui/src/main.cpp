@@ -95,20 +95,92 @@ int main(int argc, char* argv[]) {
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
     io.IniFilename = nullptr;  // disable imgui.ini persistence (dev tool)
 
-    ImGui::StyleColorsDark();
+    // ── Font: Menlo (macOS system monospace). Falls back to ImGui built-in. ──────
+    // Menlo ships with every macOS since 10.6 and matches the reference aesthetic.
+    {
+        const char* menloPath = "/System/Library/Fonts/Menlo.ttc";
+        FILE* f = fopen(menloPath, "rb");
+        if (f) {
+            fclose(f);
+            io.Fonts->AddFontFromFileTTF(menloPath, 13.5f);
+        }
+        // If Menlo is not found (non-macOS), the default ImGui bitmap font is used.
+    }
 
-    // Slightly soften the default dark theme
+    // ── Theme: dark background, warm cream cards (matches reference prototype) ──
+    ImGui::StyleColorsLight();  // start from light base, then override
+
     ImGuiStyle& style = ImGui::GetStyle();
-    style.WindowRounding    = 4.f;
+
+    // Shape
+    style.WindowRounding    = 0.f;
+    style.ChildRounding     = 4.f;
     style.FrameRounding     = 3.f;
-    style.GrabRounding      = 3.f;
-    style.ItemSpacing       = ImVec2(8.f, 5.f);
-    style.FramePadding      = ImVec2(6.f, 4.f);
-    style.Colors[ImGuiCol_WindowBg]  = ImVec4(0.08f, 0.08f, 0.08f, 1.f);
-    style.Colors[ImGuiCol_ChildBg]   = ImVec4(0.11f, 0.11f, 0.11f, 1.f);
-    style.Colors[ImGuiCol_FrameBg]   = ImVec4(0.16f, 0.16f, 0.17f, 1.f);
-    style.Colors[ImGuiCol_Header]    = ImVec4(0.20f, 0.20f, 0.22f, 1.f);
-    style.Colors[ImGuiCol_Button]    = ImVec4(0.22f, 0.22f, 0.24f, 1.f);
+    style.GrabRounding      = 10.f;   // circular slider grab
+    style.PopupRounding     = 4.f;
+    style.ScrollbarRounding = 3.f;
+    style.TabRounding       = 3.f;
+    style.WindowBorderSize  = 0.f;
+    style.ChildBorderSize   = 1.f;
+    style.FrameBorderSize   = 1.f;
+    style.ItemSpacing       = ImVec2(8.f, 6.f);
+    style.ItemInnerSpacing  = ImVec2(6.f, 4.f);
+    style.FramePadding      = ImVec2(7.f, 4.f);
+    style.WindowPadding     = ImVec2(12.f, 10.f);
+    style.ScrollbarSize     = 10.f;
+    style.GrabMinSize       = 10.f;
+
+    // Palette
+    auto& C = style.Colors;
+    // Outer window (the dark desktop surround)
+    C[ImGuiCol_WindowBg]          = ImVec4(0.07f, 0.07f, 0.07f, 1.f);
+    // Cards / child windows
+    C[ImGuiCol_ChildBg]           = ImVec4(0.88f, 0.86f, 0.82f, 1.f);
+    C[ImGuiCol_Border]            = ImVec4(0.65f, 0.62f, 0.57f, 1.f);
+    C[ImGuiCol_BorderShadow]      = ImVec4(0.f,   0.f,   0.f,   0.f);
+    // Text
+    C[ImGuiCol_Text]              = ImVec4(0.10f, 0.09f, 0.08f, 1.f);
+    C[ImGuiCol_TextDisabled]      = ImVec4(0.42f, 0.40f, 0.36f, 1.f);
+    // Input / frame
+    C[ImGuiCol_FrameBg]           = ImVec4(0.93f, 0.91f, 0.87f, 1.f);
+    C[ImGuiCol_FrameBgHovered]    = ImVec4(0.89f, 0.87f, 0.83f, 1.f);
+    C[ImGuiCol_FrameBgActive]     = ImVec4(0.83f, 0.81f, 0.77f, 1.f);
+    // Buttons
+    C[ImGuiCol_Button]            = ImVec4(0.84f, 0.82f, 0.78f, 1.f);
+    C[ImGuiCol_ButtonHovered]     = ImVec4(0.77f, 0.75f, 0.71f, 1.f);
+    C[ImGuiCol_ButtonActive]      = ImVec4(0.68f, 0.66f, 0.62f, 1.f);
+    // Headers (combo, collapsible, etc.)
+    C[ImGuiCol_Header]            = ImVec4(0.80f, 0.78f, 0.74f, 1.f);
+    C[ImGuiCol_HeaderHovered]     = ImVec4(0.74f, 0.72f, 0.68f, 1.f);
+    C[ImGuiCol_HeaderActive]      = ImVec4(0.68f, 0.66f, 0.62f, 1.f);
+    // Separator
+    C[ImGuiCol_Separator]         = ImVec4(0.60f, 0.57f, 0.52f, 1.f);
+    C[ImGuiCol_SeparatorHovered]  = ImVec4(0.50f, 0.47f, 0.43f, 1.f);
+    C[ImGuiCol_SeparatorActive]   = ImVec4(0.40f, 0.38f, 0.34f, 1.f);
+    // Sliders
+    C[ImGuiCol_SliderGrab]        = ImVec4(0.18f, 0.17f, 0.15f, 1.f);
+    C[ImGuiCol_SliderGrabActive]  = ImVec4(0.08f, 0.07f, 0.06f, 1.f);
+    // Checkmark
+    C[ImGuiCol_CheckMark]         = ImVec4(0.12f, 0.11f, 0.10f, 1.f);
+    // Scrollbar
+    C[ImGuiCol_ScrollbarBg]       = ImVec4(0.82f, 0.80f, 0.76f, 1.f);
+    C[ImGuiCol_ScrollbarGrab]     = ImVec4(0.55f, 0.52f, 0.48f, 1.f);
+    C[ImGuiCol_ScrollbarGrabHovered] = ImVec4(0.45f, 0.42f, 0.38f, 1.f);
+    C[ImGuiCol_ScrollbarGrabActive]  = ImVec4(0.35f, 0.32f, 0.29f, 1.f);
+    // Tabs
+    C[ImGuiCol_Tab]               = ImVec4(0.78f, 0.76f, 0.72f, 1.f);
+    C[ImGuiCol_TabHovered]        = ImVec4(0.88f, 0.86f, 0.82f, 1.f);
+    C[ImGuiCol_TabSelected]       = ImVec4(0.88f, 0.86f, 0.82f, 1.f);
+    C[ImGuiCol_TabSelectedOverline] = ImVec4(0.18f, 0.17f, 0.15f, 1.f);
+    C[ImGuiCol_TabDimmed]         = ImVec4(0.72f, 0.70f, 0.66f, 1.f);
+    C[ImGuiCol_TabDimmedSelected] = ImVec4(0.82f, 0.80f, 0.76f, 1.f);
+    // Popup
+    C[ImGuiCol_PopupBg]           = ImVec4(0.91f, 0.89f, 0.85f, 1.f);
+    // Title bar (unused — root window has no title)
+    C[ImGuiCol_TitleBg]           = ImVec4(0.78f, 0.76f, 0.72f, 1.f);
+    C[ImGuiCol_TitleBgActive]     = ImVec4(0.72f, 0.70f, 0.66f, 1.f);
+    // Clear color matches the outer window background
+    // (set in the render loop: glClearColor)
 
     ImGui_ImplGlfw_InitForOpenGL(window, true);
     ImGui_ImplOpenGL3_Init(glsl_version);
@@ -145,7 +217,7 @@ int main(int argc, char* argv[]) {
         int fb_w, fb_h;
         glfwGetFramebufferSize(window, &fb_w, &fb_h);
         glViewport(0, 0, fb_w, fb_h);
-        glClearColor(0.08f, 0.08f, 0.08f, 1.f);
+        glClearColor(0.07f, 0.07f, 0.07f, 1.f);
         glClear(GL_COLOR_BUFFER_BIT);
         ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
 

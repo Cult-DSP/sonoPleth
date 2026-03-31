@@ -159,11 +159,28 @@ void App::renderUI() {
         ImGuiWindowFlags_NoBringToFrontOnFocus);
 
     // ── Header bar ────────────────────────────────────────────────────────
-    ImGui::TextDisabled("Spatial Root");
-    ImGui::SameLine();
-    ImGui::Text("Real-Time Engine");
-    ImGui::SameLine(ImGui::GetWindowWidth() - 200.f);
-    ImGui::TextColored(stateColor(mState), "● %s", stateName(mState));
+    ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 2.f);
+
+    // Logo symbol + app name (left)
+    ImGui::TextColored({0.60f, 0.57f, 0.52f, 1.f}, "⊙");
+    ImGui::SameLine(0.f, 8.f);
+    ImGui::Text("Spatial Root");
+    ImGui::SameLine(0.f, 6.f);
+    ImGui::TextDisabled("Real-Time Engine");
+
+    // Workflow breadcrumb (centre)
+    const char* crumb = "ADM  →  LUSID  →  Spatial Render";
+    float crumbW = ImGui::CalcTextSize(crumb).x;
+    float crumbX = (ImGui::GetWindowWidth() - crumbW) * 0.5f;
+    ImGui::SameLine(crumbX);
+    ImGui::TextDisabled("%s", crumb);
+
+    // State indicator (right)
+    char stateBuf[64];
+    snprintf(stateBuf, sizeof(stateBuf), "●  %s", stateName(mState));
+    float stateW = ImGui::CalcTextSize(stateBuf).x + 16.f;
+    ImGui::SameLine(ImGui::GetWindowWidth() - stateW);
+    ImGui::TextColored(stateColor(mState), "%s", stateBuf);
 
     ImGui::Separator();
 
@@ -184,96 +201,104 @@ void App::renderUI() {
 }
 
 // ── renderEngineTab() ─────────────────────────────────────────────────────────
+// Each section is a bordered card (BeginChild with border=true).
+// Heights are sized to fit content at 13.5px Menlo font with the current style.
+// Card gap is one Spacing() call between cards.
 
 void App::renderEngineTab() {
     bool isRunning = (mState == AppState::Running || mState == AppState::Paused);
     bool isIdle    = (mState == AppState::Idle || mState == AppState::Error);
 
-    // ── INPUT CONFIGURATION ───────────────────────────────────────────────
-    ImGui::SeparatorText("INPUT CONFIGURATION");
+    // Muted green for detected source type
+    const ImVec4 kGreen  = {0.20f, 0.62f, 0.25f, 1.f};
+    // Amber for busy/transcoding
+    const ImVec4 kAmber  = {0.70f, 0.45f, 0.08f, 1.f};
+    // Red for errors
+    const ImVec4 kRed    = {0.72f, 0.18f, 0.15f, 1.f};
 
-    // Source path
-    ImGui::TextDisabled("SOURCE");
-    if (mSourceIsAdm) {
+    // ── INPUT CONFIGURATION card ──────────────────────────────────────────
+    // 5 widget rows + card label + spacing ≈ 186px
+    if (ImGui::BeginChild("##inputcard", {0.f, 186.f}, true)) {
+        ImGui::TextDisabled("INPUT CONFIGURATION");
+        ImGui::Spacing();
+
+        if (isRunning) ImGui::BeginDisabled(true);
+
+        // Source
+        ImGui::TextDisabled("SOURCE");
+        if (mSourceIsAdm)        { ImGui::SameLine(); ImGui::TextColored(kGreen, "ADM"); }
+        else if (mSourceIsLusid) { ImGui::SameLine(); ImGui::TextColored(kGreen, "LUSID"); }
+        ImGui::SameLine(120.f);
+        ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 78.f);
+        if (ImGui::InputText("##source", &mSourcePath)) detectSource();
         ImGui::SameLine();
-        ImGui::TextColored({0.3f, 0.9f, 0.3f, 1.f}, "ADM");
-    } else if (mSourceIsLusid) {
+        if (ImGui::Button("Browse##src")) {
+            std::string p = pickFileOrDirectory("Select Audio Source");
+            if (!p.empty()) { mSourcePath = p; detectSource(); }
+        }
+
+        // Speaker layout
+        ImGui::TextDisabled("LAYOUT");
+        ImGui::SameLine(120.f);
+        ImGui::SetNextItemWidth(110.f);
+        if (ImGui::Combo("##layoutpreset", &mLayoutPreset, kLayoutNames, 3)) {
+            if (mLayoutPreset < 2)
+                mLayoutPath = resolveProjectPath(kLayoutPaths[mLayoutPreset]);
+        }
         ImGui::SameLine();
-        ImGui::TextColored({0.3f, 0.9f, 0.3f, 1.f}, "LUSID");
-    }
-    ImGui::SameLine(120.f);
-    ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 78.f);
-    if (ImGui::InputText("##source", &mSourcePath)) detectSource();
-    ImGui::SameLine();
-    if (ImGui::Button("Browse##src")) {
-        std::string p = pickFileOrDirectory("Select Audio Source");
-        if (!p.empty()) { mSourcePath = p; detectSource(); }
-    }
+        ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 78.f);
+        ImGui::InputText("##layout", &mLayoutPath);
+        ImGui::SameLine();
+        if (ImGui::Button("Browse##layout")) {
+            std::string p = pickFile("Select Speaker Layout", {"*.json"}, "JSON files");
+            if (!p.empty()) { mLayoutPath = p; mLayoutPreset = 2; }
+        }
 
-    // Speaker layout
-    ImGui::TextDisabled("LAYOUT");
-    ImGui::SameLine(120.f);
-    ImGui::SetNextItemWidth(110.f);
-    if (ImGui::Combo("##layoutpreset", &mLayoutPreset, kLayoutNames, 3)) {
-        if (mLayoutPreset < 2)
-            mLayoutPath = resolveProjectPath(kLayoutPaths[mLayoutPreset]);
-    }
-    ImGui::SameLine();
-    ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 78.f);
-    ImGui::InputText("##layout", &mLayoutPath);
-    ImGui::SameLine();
-    if (ImGui::Button("Browse##layout")) {
-        std::string p = pickFile("Select Speaker Layout", {"*.json"}, "JSON files");
-        if (!p.empty()) { mLayoutPath = p; mLayoutPreset = 2; }  // switch to Custom
-    }
+        // Remap CSV
+        ImGui::TextDisabled("REMAP CSV");
+        ImGui::SameLine(120.f);
+        ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 78.f);
+        ImGui::InputText("##remap", &mRemapPath);
+        ImGui::SameLine();
+        if (ImGui::Button("Browse##remap")) {
+            std::string p = pickFile("Select Remap CSV", {"*.csv"}, "CSV files");
+            if (!p.empty()) mRemapPath = p;
+        }
+        ImGui::SameLine();
+        ImGui::TextDisabled("(optional)");
 
-    // Remap CSV (optional)
-    ImGui::TextDisabled("REMAP CSV");
-    ImGui::SameLine(120.f);
-    ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 78.f);
-    ImGui::InputText("##remap", &mRemapPath);
-    ImGui::SameLine();
-    if (ImGui::Button("Browse##remap")) {
-        std::string p = pickFile("Select Remap CSV", {"*.csv"}, "CSV files");
-        if (!p.empty()) mRemapPath = p;
+        // Device
+        ImGui::TextDisabled("DEVICE");
+        ImGui::SameLine(120.f);
+        if (ImGui::Button("Scan##device")) scanDevices();
+        ImGui::SameLine();
+        if (mDeviceList.empty()) {
+            ImGui::TextDisabled("(click Scan to list output devices)");
+        } else {
+            std::vector<const char*> items;
+            for (const auto& d : mDeviceList) items.push_back(d.c_str());
+            ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 8.f);
+            if (ImGui::Combo("##device", &mDeviceIdx, items.data(), (int)items.size()))
+                mDeviceName = (mDeviceIdx == 0) ? "" : mDeviceList[mDeviceIdx];
+        }
+
+        // Buffer size
+        ImGui::TextDisabled("BUFFER");
+        ImGui::SameLine(120.f);
+        ImGui::SetNextItemWidth(100.f);
+        ImGui::Combo("##bufsize", &mBufferSizeIdx, kBufferSizeNames, 5);
+
+        if (isRunning) ImGui::EndDisabled();
     }
-    ImGui::SameLine();
-    ImGui::TextDisabled("(optional)");
-
-    // Output device
-    ImGui::TextDisabled("DEVICE");
-    ImGui::SameLine(120.f);
-    if (ImGui::Button("Scan##device")) scanDevices();
-    ImGui::SameLine();
-    if (mDeviceList.empty()) {
-        ImGui::TextDisabled("(click Scan to list output devices)");
-    } else {
-        std::vector<const char*> items;
-        for (const auto& d : mDeviceList) items.push_back(d.c_str());
-        ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 8.f);
-        if (ImGui::Combo("##device", &mDeviceIdx, items.data(), (int)items.size()))
-            mDeviceName = (mDeviceIdx == 0) ? "" : mDeviceList[mDeviceIdx];
-    }
-
-    // Buffer size
-    ImGui::TextDisabled("BUFFER");
-    ImGui::SameLine(120.f);
-    ImGui::SetNextItemWidth(100.f);
-    ImGui::Combo("##bufsize", &mBufferSizeIdx, kBufferSizeNames, 5);
-
-    if (isRunning) {
-        // Lock inputs while engine is running
-        ImGui::BeginDisabled(true);
-        ImGui::Text("  (inputs locked while engine is running)");
-        ImGui::EndDisabled();
-    }
-
+    ImGui::EndChild();
     ImGui::Spacing();
 
-    // ── TRANSPORT ─────────────────────────────────────────────────────────
-    ImGui::SeparatorText("TRANSPORT");
+    // ── TRANSPORT card ────────────────────────────────────────────────────
+    // Buttons + status line + optional error/busy line ≈ 108px
+    if (ImGui::BeginChild("##transportcard", {0.f, 108.f}, true)) {
+        ImGui::TextDisabled("TRANSPORT");
+        ImGui::Spacing();
 
-    {
         bool canStart  = isIdle;
         bool canStop   = isRunning;
         bool canPause  = (mState == AppState::Running);
@@ -281,140 +306,138 @@ void App::renderEngineTab() {
         bool busy      = (mState == AppState::Transcoding);
 
         if (!canStart) ImGui::BeginDisabled(true);
-        if (ImGui::Button("START")) onStart();
+        if (ImGui::Button("Start"))  onStart();
         if (!canStart) ImGui::EndDisabled();
 
         ImGui::SameLine();
         if (!canStop) ImGui::BeginDisabled(true);
-        if (ImGui::Button("STOP")) onStop();
+        if (ImGui::Button("Stop"))   onStop();
         if (!canStop) ImGui::EndDisabled();
 
         ImGui::SameLine();
         if (!canPause) ImGui::BeginDisabled(true);
-        if (ImGui::Button("PAUSE")) onPause();
+        if (ImGui::Button("Pause"))  onPause();
         if (!canPause) ImGui::EndDisabled();
 
         ImGui::SameLine();
         if (!canResume) ImGui::BeginDisabled(true);
-        if (ImGui::Button("RESUME")) onResume();
+        if (ImGui::Button("Resume")) onResume();
         if (!canResume) ImGui::EndDisabled();
 
-        if (busy) {
+        // State badge (right-aligned)
+        const char* badge    = stateName(mState);
+        float       badgeW   = ImGui::CalcTextSize(badge).x + 20.f;
+        ImGui::SameLine(ImGui::GetContentRegionAvail().x + ImGui::GetCursorPosX() - badgeW);
+        ImGui::TextColored(stateColor(mState), "●  %s", badge);
+
+        // Second row: status (running) / busy / error
+        if (isRunning) {
+            ImGui::Text("t=%.1fs", mStatus.timeSec);
             ImGui::SameLine();
-            ImGui::TextColored({1.f, 0.8f, 0.f, 1.f}, "Transcoding ADM...");
-        }
-
-        // Error message
-        if (mState == AppState::Error && !mLastError.empty()) {
-            ImGui::TextColored({1.f, 0.3f, 0.3f, 1.f}, "Error: %s", mLastError.c_str());
+            ImGui::Text("CPU=%.1f%%", mStatus.cpuLoad * 100.f);
+            ImGui::SameLine();
+            ImGui::Text("RMS=%.4f", mStatus.mainRms);
+            ImGui::SameLine();
+            ImGui::Text("Xrun=%zu", mStatus.xruns);
+            if (mStatus.nanGuardCount > 0 || mStatus.speakerProximityCount > 0) {
+                ImGui::SameLine();
+                ImGui::TextColored(kAmber, "NaN=%llu Prox=%llu",
+                    (unsigned long long)mStatus.nanGuardCount,
+                    (unsigned long long)mStatus.speakerProximityCount);
+            }
+        } else if (busy) {
+            ImGui::TextColored(kAmber, "Transcoding ADM...");
+        } else if (mState == AppState::Error && !mLastError.empty()) {
+            ImGui::TextColored(kRed, "Error: %s", mLastError.c_str());
         }
     }
-
+    ImGui::EndChild();
     ImGui::Spacing();
 
-    // ── STATUS (only when engine is running) ──────────────────────────────
-    if (isRunning) {
-        ImGui::SeparatorText("STATUS");
-        ImGui::Text("t=%.1fs  CPU=%.1f%%  mainRms=%.4f  subRms=%.4f  Xrun=%zu",
-            mStatus.timeSec,
-            mStatus.cpuLoad * 100.f,
-            mStatus.mainRms,
-            mStatus.subRms,
-            mStatus.xruns);
-        ImGui::SameLine();
-        if (mStatus.paused)
-            ImGui::TextColored({1.f, 0.6f, 0.f, 1.f}, "  PAUSED");
-        else
-            ImGui::TextColored({0.2f, 0.9f, 0.2f, 1.f}, "  PLAYING");
-
-        if (mStatus.nanGuardCount > 0 || mStatus.speakerProximityCount > 0) {
-            ImGui::TextColored({1.f, 0.7f, 0.2f, 1.f},
-                "  NaN-guard=%llu  Prox=%llu",
-                (unsigned long long)mStatus.nanGuardCount,
-                (unsigned long long)mStatus.speakerProximityCount);
-        }
+    // ── RUNTIME CONTROLS card ─────────────────────────────────────────────
+    // 4 slider rows + checkbox + elevation combo + label ≈ 220px
+    if (ImGui::BeginChild("##ctrlcard", {0.f, 220.f}, true)) {
+        ImGui::TextDisabled("RUNTIME CONTROLS");
         ImGui::Spacing();
+
+        if (!isRunning) ImGui::BeginDisabled(true);
+
+        // Master Gain
+        ImGui::TextDisabled("MASTER GAIN");
+        ImGui::SameLine(160.f);
+        ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 70.f);
+        if (ImGui::SliderFloat("##gain", &mGain, 0.1f, 3.0f, "%.2f"))
+            if (isRunning) mSession.setMasterGain(mGain);
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(60.f);
+        if (ImGui::InputFloat("##gaininput", &mGain, 0.f, 0.f, "%.2f"))
+            if (isRunning) { mGain = std::clamp(mGain, 0.1f, 3.0f); mSession.setMasterGain(mGain); }
+
+        // DBAP Focus
+        ImGui::TextDisabled("DBAP FOCUS");
+        ImGui::SameLine(160.f);
+        ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 70.f);
+        if (ImGui::SliderFloat("##focus", &mFocus, 0.2f, 5.0f, "%.2f"))
+            if (isRunning) mSession.setDbapFocus(mFocus);
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(60.f);
+        if (ImGui::InputFloat("##focusinput", &mFocus, 0.f, 0.f, "%.2f"))
+            if (isRunning) { mFocus = std::clamp(mFocus, 0.2f, 5.0f); mSession.setDbapFocus(mFocus); }
+
+        // Speaker Mix dB
+        ImGui::TextDisabled("SPEAKER MIX (DB)");
+        ImGui::SameLine(160.f);
+        ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 70.f);
+        if (ImGui::SliderFloat("##spkmix", &mSpkMixDb, -10.f, 10.f, "%.1f dB"))
+            if (isRunning) mSession.setSpeakerMixDb(mSpkMixDb);
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(60.f);
+        if (ImGui::InputFloat("##spkmixinput", &mSpkMixDb, 0.f, 0.f, "%.1f"))
+            if (isRunning) { mSpkMixDb = std::clamp(mSpkMixDb, -10.f, 10.f); mSession.setSpeakerMixDb(mSpkMixDb); }
+
+        // Sub Mix dB
+        ImGui::TextDisabled("SUB MIX (DB)");
+        ImGui::SameLine(160.f);
+        ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 70.f);
+        if (ImGui::SliderFloat("##submix", &mSubMixDb, -10.f, 10.f, "%.1f dB"))
+            if (isRunning) mSession.setSubMixDb(mSubMixDb);
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(60.f);
+        if (ImGui::InputFloat("##submixinput", &mSubMixDb, 0.f, 0.f, "%.1f"))
+            if (isRunning) { mSubMixDb = std::clamp(mSubMixDb, -10.f, 10.f); mSession.setSubMixDb(mSubMixDb); }
+
+        // Auto Compensation
+        if (ImGui::Checkbox("FOCUS AUTO-COMPENSATION", &mAutoComp))
+            if (isRunning) mSession.setAutoCompensation(mAutoComp);
+
+        // Elevation Mode
+        ImGui::TextDisabled("ELEVATION MODE");
+        ImGui::SameLine(160.f);
+        ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 8.f);
+        if (ImGui::Combo("##elevmode", &mElevationMode, kElevModeNames, 3))
+            if (isRunning) mSession.setElevationMode(static_cast<ElevationMode>(mElevationMode));
+
+        if (!isRunning) ImGui::EndDisabled();
     }
-
-    // ── RUNTIME CONTROLS ──────────────────────────────────────────────────
-    ImGui::SeparatorText("RUNTIME CONTROLS");
-
-    if (!isRunning) {
-        ImGui::TextDisabled("  (controls active after START)");
-        ImGui::BeginDisabled(true);
-    }
-
-    // Master Gain
-    ImGui::TextDisabled("Master Gain");
-    ImGui::SameLine(160.f);
-    ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 70.f);
-    if (ImGui::SliderFloat("##gain", &mGain, 0.1f, 3.0f, "%.2f"))
-        if (isRunning) mSession.setMasterGain(mGain);
-    ImGui::SameLine();
-    ImGui::SetNextItemWidth(60.f);
-    if (ImGui::InputFloat("##gaininput", &mGain, 0.f, 0.f, "%.2f"))
-        if (isRunning) { mGain = std::clamp(mGain, 0.1f, 3.0f); mSession.setMasterGain(mGain); }
-
-    // DBAP Focus
-    ImGui::TextDisabled("DBAP Focus");
-    ImGui::SameLine(160.f);
-    ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 70.f);
-    if (ImGui::SliderFloat("##focus", &mFocus, 0.2f, 5.0f, "%.2f"))
-        if (isRunning) mSession.setDbapFocus(mFocus);
-    ImGui::SameLine();
-    ImGui::SetNextItemWidth(60.f);
-    if (ImGui::InputFloat("##focusinput", &mFocus, 0.f, 0.f, "%.2f"))
-        if (isRunning) { mFocus = std::clamp(mFocus, 0.2f, 5.0f); mSession.setDbapFocus(mFocus); }
-
-    // Speaker Mix dB
-    ImGui::TextDisabled("Speaker Mix dB");
-    ImGui::SameLine(160.f);
-    ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 70.f);
-    if (ImGui::SliderFloat("##spkmix", &mSpkMixDb, -10.f, 10.f, "%.1f dB"))
-        if (isRunning) mSession.setSpeakerMixDb(mSpkMixDb);
-    ImGui::SameLine();
-    ImGui::SetNextItemWidth(60.f);
-    if (ImGui::InputFloat("##spkmixinput", &mSpkMixDb, 0.f, 0.f, "%.1f"))
-        if (isRunning) { mSpkMixDb = std::clamp(mSpkMixDb, -10.f, 10.f); mSession.setSpeakerMixDb(mSpkMixDb); }
-
-    // Sub Mix dB
-    ImGui::TextDisabled("Sub Mix dB");
-    ImGui::SameLine(160.f);
-    ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 70.f);
-    if (ImGui::SliderFloat("##submix", &mSubMixDb, -10.f, 10.f, "%.1f dB"))
-        if (isRunning) mSession.setSubMixDb(mSubMixDb);
-    ImGui::SameLine();
-    ImGui::SetNextItemWidth(60.f);
-    if (ImGui::InputFloat("##submixinput", &mSubMixDb, 0.f, 0.f, "%.1f"))
-        if (isRunning) { mSubMixDb = std::clamp(mSubMixDb, -10.f, 10.f); mSession.setSubMixDb(mSubMixDb); }
-
-    // Auto Compensation
-    if (ImGui::Checkbox("Focus Auto-Compensation", &mAutoComp))
-        if (isRunning) mSession.setAutoCompensation(mAutoComp);
-
-    // Elevation Mode
-    ImGui::TextDisabled("Elevation Mode");
-    ImGui::SameLine(160.f);
-    ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 8.f);
-    if (ImGui::Combo("##elevmode", &mElevationMode, kElevModeNames, 3))
-        if (isRunning) mSession.setElevationMode(static_cast<ElevationMode>(mElevationMode));
-
-    if (!isRunning) ImGui::EndDisabled();
-
+    ImGui::EndChild();
     ImGui::Spacing();
 
-    // ── ENGINE LOG ────────────────────────────────────────────────────────
-    ImGui::SeparatorText("ENGINE LOG");
-    ImGui::SetNextWindowBgAlpha(0.5f);
-    if (ImGui::BeginChild("##enginelog",
-            ImVec2(0.f, ImGui::GetContentRegionAvail().y - 8.f),
-            false,
-            ImGuiWindowFlags_HorizontalScrollbar)) {
-        for (const auto& entry : mEngineLog) {
-            ImGui::TextColored(entry.color, "%s", entry.text.c_str());
+    // ── ENGINE LOG card (fills remaining space) ───────────────────────────
+    float logH = ImGui::GetContentRegionAvail().y;
+    if (ImGui::BeginChild("##logcard", {0.f, logH}, true)) {
+        ImGui::TextDisabled("ENGINE LOG");
+        ImGui::Spacing();
+        if (ImGui::BeginChild("##enginelog",
+                {0.f, ImGui::GetContentRegionAvail().y},
+                false,
+                ImGuiWindowFlags_HorizontalScrollbar)) {
+            for (const auto& entry : mEngineLog) {
+                ImGui::TextColored(entry.color, "%s", entry.text.c_str());
+            }
+            if (mEngineLogAutoScroll && ImGui::GetScrollY() >= ImGui::GetScrollMaxY() - 20.f)
+                ImGui::SetScrollHereY(1.f);
         }
-        if (mEngineLogAutoScroll && ImGui::GetScrollY() >= ImGui::GetScrollMaxY() - 20.f)
-            ImGui::SetScrollHereY(1.f);
+        ImGui::EndChild();
     }
     ImGui::EndChild();
 }
@@ -422,47 +445,64 @@ void App::renderEngineTab() {
 // ── renderTranscodeTab() ──────────────────────────────────────────────────────
 
 void App::renderTranscodeTab() {
-    ImGui::SeparatorText("ADM -> LUSID TRANSCODE");
-    ImGui::TextDisabled("Run cult-transcoder to convert an ADM WAV/XML to a LUSID JSON package.");
-    ImGui::Spacing();
+    const ImVec4 kGreen = {0.20f, 0.62f, 0.25f, 1.f};
+    const ImVec4 kAmber = {0.70f, 0.45f, 0.08f, 1.f};
+    const ImVec4 kRed   = {0.72f, 0.18f, 0.15f, 1.f};
 
-    // Input file
-    ImGui::TextDisabled("INPUT FILE");
-    ImGui::SameLine(130.f);
-    ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 78.f);
-    ImGui::InputText("##tcinput", &mTcInput);
-    ImGui::SameLine();
-    if (ImGui::Button("Browse##tcinput")) {
-        std::string p = pickFile("Select ADM Input", {"*.wav", "*.xml"}, "ADM files");
-        if (!p.empty()) mTcInput = p;
-    }
-
-    // In-format override
-    ImGui::TextDisabled("IN-FORMAT");
-    ImGui::SameLine(130.f);
-    ImGui::SetNextItemWidth(140.f);
-    ImGui::Combo("##tcinformat", &mTcInFormat, kTcFormatNames, 4);
-
-    // LFE mode
-    ImGui::TextDisabled("LFE MODE");
-    ImGui::SameLine(130.f);
-    ImGui::SetNextItemWidth(140.f);
-    ImGui::Combo("##tclfemode", &mTcLfeMode, kTcLfeModeNames, 2);
-
-    // Output path
-    ImGui::TextDisabled("OUTPUT");
-    ImGui::SameLine(130.f);
-    ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 8.f);
-    ImGui::InputText("##tcoutput", &mTcOutput);
-    ImGui::SameLine(130.f);
-    ImGui::TextDisabled("(empty = auto-derived from input path)");
-
-    ImGui::Spacing();
-
-    // TRANSCODE button + status
     bool tcBusy = mTcRunner.isRunning();
-    if (tcBusy) ImGui::BeginDisabled(true);
-    if (ImGui::Button("TRANSCODE", {140.f, 0.f})) {
+
+    // ── TRANSCODE CONFIGURATION card ──────────────────────────────────────
+    // 4 widget rows + label + spacing ≈ 162px
+    if (ImGui::BeginChild("##tcconfigcard", {0.f, 162.f}, true)) {
+        ImGui::TextDisabled("TRANSCODE CONFIGURATION");
+        ImGui::Spacing();
+
+        if (tcBusy) ImGui::BeginDisabled(true);
+
+        // Input file
+        ImGui::TextDisabled("INPUT FILE");
+        ImGui::SameLine(130.f);
+        ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 78.f);
+        ImGui::InputText("##tcinput", &mTcInput);
+        ImGui::SameLine();
+        if (ImGui::Button("Browse##tcinput")) {
+            std::string p = pickFile("Select ADM Input", {"*.wav", "*.xml"}, "ADM files");
+            if (!p.empty()) mTcInput = p;
+        }
+
+        // In-format override
+        ImGui::TextDisabled("IN-FORMAT");
+        ImGui::SameLine(130.f);
+        ImGui::SetNextItemWidth(140.f);
+        ImGui::Combo("##tcinformat", &mTcInFormat, kTcFormatNames, 4);
+
+        // LFE mode
+        ImGui::TextDisabled("LFE MODE");
+        ImGui::SameLine(130.f);
+        ImGui::SetNextItemWidth(140.f);
+        ImGui::Combo("##tclfemode", &mTcLfeMode, kTcLfeModeNames, 2);
+
+        // Output path
+        ImGui::TextDisabled("OUTPUT");
+        ImGui::SameLine(130.f);
+        ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 8.f);
+        ImGui::InputText("##tcoutput", &mTcOutput);
+        ImGui::SameLine(130.f);
+        ImGui::TextDisabled("(empty = auto-derived from input path)");
+
+        if (tcBusy) ImGui::EndDisabled();
+    }
+    ImGui::EndChild();
+    ImGui::Spacing();
+
+    // ── TRANSCODE CONTROL card ─────────────────────────────────────────────
+    // Button row + status line ≈ 80px
+    if (ImGui::BeginChild("##tcctrlcard", {0.f, 80.f}, true)) {
+        ImGui::TextDisabled("CONTROL");
+        ImGui::Spacing();
+
+        if (tcBusy) ImGui::BeginDisabled(true);
+        if (ImGui::Button("Transcode", {120.f, 0.f})) {
         // Resolve format (auto = infer from extension)
         std::string format = kTcFormatValues[mTcInFormat];
         if (mTcInFormat == 0) {
@@ -519,30 +559,30 @@ void App::renderTranscodeTab() {
             });
         }
     }
-    if (tcBusy) ImGui::EndDisabled();
+        if (tcBusy) ImGui::EndDisabled();
 
-    ImGui::SameLine();
-    if (mTcDone) {
-        if (mTcSuccess)
-            ImGui::TextColored({0.3f, 0.9f, 0.3f, 1.f}, "COMPLETE");
-        else
-            ImGui::TextColored({1.f, 0.3f, 0.3f, 1.f}, "FAILED");
-    } else if (tcBusy) {
-        ImGui::TextColored({1.f, 0.8f, 0.f, 1.f}, "Running...");
-    } else {
-        ImGui::TextDisabled("IDLE");
+        // Status right-aligned
+        const char* tcStatus = tcBusy ? "Running..." :
+                               mTcDone ? (mTcSuccess ? "Complete" : "Failed") : "Idle";
+        ImVec4 tcColor = tcBusy ? kAmber :
+                         mTcDone ? (mTcSuccess ? kGreen : kRed) :
+                         ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled);
+        float statusW = ImGui::CalcTextSize(tcStatus).x + 20.f;
+        ImGui::SameLine(ImGui::GetContentRegionAvail().x + ImGui::GetCursorPosX() - statusW);
+        ImGui::TextColored(tcColor, "●  %s", tcStatus);
     }
-
+    ImGui::EndChild();
     ImGui::Spacing();
-    ImGui::SeparatorText("TRANSCODE LOG");
 
-    // Drain the thread-safe log into rendering
-    {
+    // ── TRANSCODE LOG card (fills remaining space) ─────────────────────────
+    float logH = ImGui::GetContentRegionAvail().y;
+    if (ImGui::BeginChild("##tclogcard", {0.f, logH}, true)) {
+        ImGui::TextDisabled("TRANSCODE LOG");
+        ImGui::Spacing();
+
         std::lock_guard<std::mutex> lock(mTcLogMutex);
-        // log is already in mTcLog — no copy needed since we render under lock
-        ImGui::SetNextWindowBgAlpha(0.5f);
         if (ImGui::BeginChild("##tclog",
-                ImVec2(0.f, ImGui::GetContentRegionAvail().y - 8.f),
+                {0.f, ImGui::GetContentRegionAvail().y},
                 false,
                 ImGuiWindowFlags_HorizontalScrollbar)) {
             for (const auto& entry : mTcLog) {
@@ -554,6 +594,7 @@ void App::renderTranscodeTab() {
         }
         ImGui::EndChild();
     }
+    ImGui::EndChild();
 }
 
 // ── Engine lifecycle ──────────────────────────────────────────────────────────
