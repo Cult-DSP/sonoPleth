@@ -595,3 +595,348 @@ Key implementation constraints:
 2. Read `gui/imgui/src/App.cpp` and `gui/imgui/src/main.cpp` to understand the current implementation in full before making any changes.
 3. Ask the user which refinement from section 3.0 to tackle first, or whether they have a specific improvement in mind.
 4. Work through section 3.0 in priority order unless directed otherwise: `mSourceHint` display → transcode log mutex → `(optional)` hint position → card height calibration → logo image render.
+
+---
+
+## Stage 4 — Pre-Deletion Documentation, Python Removal, and Docs Update
+
+**Status:** Not started. Gate: human confirms Stage 3 feature parity before 4.2 or 4.3 begin. Task 4.1 (Python documentation) may begin without that gate.
+
+These three tasks are intended to run in new context windows, one at a time, each with a human verification step before the next begins. Onboarding prompts for each task are at the bottom of this file.
+
+| Task | Name | Gate |
+|---|---|---|
+| 4.1 | Document useful Python information to `usefulPyInfo.md` | Human reviews the doc before Python deletion begins |
+| 4.2 | Delete all Python source, GUI, and venv | Human confirms feature parity + 4.1 doc is approved |
+| 4.3 | Update `AGENTS.md`, `devHistory.md`, `realtime_master.md` | Human reviews after 4.2 is complete |
+
+### 4.1 — Document useful Python information
+
+**Output file:** `internalDocsMD/cpp_refactor/usefulPyInfo.md`
+
+Read every Python file listed below and extract information that is **not already captured in the C++ source, CMake, or existing docs**, and that could be useful for future development, debugging, or reference. This is a read-and-document task — do not modify any Python files.
+
+**Files to read (project Python only — exclude `spatialroot/` venv):**
+
+- `realtimeMain.py` — CLI entry point: argument names, defaults, help text
+- `runPipeline.py` — offline pipeline entry point and source-type detection logic
+- `gui/realtimeGUI/` — entire Python GUI directory (all `.py` files): UX flows, parameter labels, default values, any logic not replicated in the C++ GUI
+- `gui/pipeline_runner.py`, `gui/background.py` — subprocess patterns
+- `gui/widgets/` — all widget files: any UI conventions worth preserving
+- `src/analyzeADM/analyzeMetadata.py`, `src/analyzeADM/checkAudioChannels.py` — ADM parsing details
+- `src/analyzeRender.py`, `src/packageADM/splitStems.py` — offline pipeline logic
+- `src/config/configCPP.py` (and any `configCPP_posix.py`, `configCPP_windows.py`) — build flags, environment setup
+- `utils/deleteData.py`, `utils/getExamples.py` — utility scripts
+
+**What to capture in `usefulPyInfo.md`:**
+
+- OSC parameter names and ranges (anything not already in `PUBLIC_DOCS/API.md`)
+- Default parameter values that differ from engine defaults
+- Source type detection logic (ADM vs LUSID heuristics, file/directory checks)
+- ADM workflow details (preprocessing steps, intermediate file paths, CLI invocations)
+- Any GUI UX behaviour that may not be replicated in the ImGui GUI (e.g. error states, validation, confirmation dialogs)
+- Build flags or environment variables from `configCPP*.py` that are not in `build.sh`
+- Any known workarounds, edge cases, or `# TODO` / `# FIXME` comments
+- Any CLI flags or argument patterns not documented elsewhere
+
+**What NOT to capture:**
+
+- Code that is already superseded by the C++ engine or cult-transcoder
+- Third-party or venv code
+- PySide6 styling/theming that has no C++ equivalent
+
+**After completing the doc:** stop and ask the human to review `usefulPyInfo.md` before proceeding.
+
+### 4.2 — Delete all Python source, GUI, and venv
+
+**Gate:** Human confirms Stage 3 feature parity AND has approved the `usefulPyInfo.md` doc from task 4.1.
+
+This task is mechanical deletion. A weaker model is appropriate. Read the deletion list carefully — do not delete anything not on this list.
+
+**Delete in order:**
+
+1. Python entry points:
+   - `realtimeMain.py`
+   - `runPipeline.py`
+   - `runRealtime.py` (if it exists)
+
+2. Python GUI:
+   - `gui/realtimeGUI/` (entire directory)
+   - `gui/pipeline_runner.py`
+   - `gui/background.py`
+   - `gui/utils/` (entire directory if only Python files remain)
+   - `gui/widgets/` (entire directory if only Python files remain)
+
+3. Python pipeline and analysis:
+   - `src/analyzeADM/` (entire directory)
+   - `src/packageADM/` (entire directory)
+   - `src/analyzeRender.py`
+   - `src/createRender.py` (if it exists)
+   - `src/createFromLUSID.py` (if it exists)
+
+4. Python build system:
+   - `src/config/configCPP.py`
+   - `src/config/configCPP_posix.py` (if it exists)
+   - `src/config/configCPP_windows.py` (if it exists)
+   - `src/config/` (entire directory if empty after deletion)
+
+5. Python LUSID library:
+   - `LUSID/src/` (entire directory)
+   - `LUSID/tests/` (entire directory)
+
+6. Utilities:
+   - `utils/deleteData.py`
+   - `utils/getExamples.py`
+   - `utils/` (entire directory if empty after deletion)
+
+7. Python runtime:
+   - `requirements.txt`
+   - `spatialroot/` venv (entire directory)
+
+8. After deletion: check if any `__init__.py` files or empty `__pycache__` directories remain and remove them.
+
+**Verify after deletion:** `init.sh && build.sh --engine-only` completes without error. `./run.sh` launches the GUI. No Python runtime is required for either.
+
+**After completing deletion:** stop and ask the human to verify before proceeding to 4.3.
+
+### 4.3 — Update AGENTS.md, devHistory.md, and realtime_master.md
+
+**Gate:** Task 4.2 complete (Python removed) and human has confirmed.
+
+Update three docs to reflect the completed C++ refactor. Read each file in full before editing. These are internal agent docs — write for a future agent or developer, not for end users. Be accurate and concise; do not pad with filler.
+
+---
+
+**`internalDocsMD/AGENTS.md`**
+
+This file describes the project architecture and toolchain for agents. It currently describes a Python-centric workflow (PySide6 GUI, `runRealtime.py`, `runPipeline.py`, `configCPP*.py`). Update it to reflect the current state:
+
+- Replace all references to `runRealtime.py` and `runPipeline.py` as entry points with `spatialroot_realtime` (CLI binary)
+- Replace all references to `configCPP*.py` / Python build system with `init.sh` + `build.sh`
+- Replace all references to the PySide6 GUI (`gui/realtimeGUI/`) with the ImGui + GLFW GUI (`gui/imgui/`)
+- Update the architecture section: the GUI now embeds `EngineSessionCore` directly (no subprocess, no OSC dependency for local control). Runtime parameters are set via direct C++ setter methods (`setMasterGain`, `setDbapFocus`, `setSpeakerMixDb`, `setSubMixDb`, `setAutoCompensation`, `setElevationMode`).
+- Update the runtime control plane section: OSC is now a secondary/optional surface (port 9009 by default, disabled with `oscPort=0`). The primary control surface is the direct C++ API.
+- Remove any "§Python Virtual Environment" section or mark it deleted.
+- Add a Phase 6 banner at the top noting the C++ refactor completion date (2026-03-31) and linking to `internalDocsMD/cpp_refactor/refactor_planning.md`.
+- Do not rewrite sections that remain accurate (e.g. cult-transcoder integration, LUSID format, engine agent phases 1–8).
+
+---
+
+**`internalDocsMD/devHistory.md`**
+
+Add a new milestone section for the C++ refactor. This file uses a milestone + description format. Add:
+
+- **Phase 4: C++ Refactor and ImGui GUI** (date: 2026-03-31)
+- Cover: Python build system replaced by `init.sh`/`build.sh`; `EngineSessionCore` static library hardened with V1.1 API (runtime setters, typed `ElevationMode`, `oscPort=0` guard); Python PySide6 GUI replaced by Dear ImGui + GLFW GUI linking `EngineSessionCore` directly; Python GUI, entry points, LUSID library, and venv removed.
+- Note: `spatialroot_realtime` is now the primary CLI; `EngineSession::shutdown()` is terminal (construct a new instance to restart).
+
+---
+
+**`internalDocsMD/Realtime_Engine/agentDocsv1/realtime_master.md`**
+
+This file describes the original engine agent architecture. Much of it remains accurate (AlloLib backend, DBAP spatializer, streaming, threading model). Update only the sections that are now stale:
+
+- **GUI section** (currently "PySide6, Keep PySide6"): mark as superseded. The GUI is now Dear ImGui + GLFW, embedding `EngineSessionCore` directly in-process. No `QProcess`. No subprocess.
+- **Runtime Control Plane section** (currently "al::Parameter + ParameterServer (OSC)"): update to note that OSC is now a secondary surface. Primary control is direct C++ setter methods on `EngineSession`. The parameter names and ranges are unchanged and OSC still works on port 9009.
+- **Python Entry Point section** (currently describes `runRealtime.py`): mark as removed. `spatialroot_realtime` CLI binary is the direct entry point. The GUI launches it via `EngineSession` in-process, not as a subprocess.
+- **Next Major Task section** (currently "Pipeline Refactor (C++-first realtime)"): mark as complete. The refactor described there is done.
+- Add a note at the top of the file: "Updated 2026-03-31 — C++ refactor complete. See `internalDocsMD/cpp_refactor/refactor_planning.md` for full history."
+
+**After completing all three doc updates:** stop and ask the human to review before committing.
+
+---
+
+## Onboarding Prompts — Stage 4 Tasks
+
+Each prompt below is self-contained. Copy the relevant one into a new context window for the task.
+
+---
+
+### Onboarding Prompt — Task 4.1: Document Useful Python Information
+
+```
+You are documenting useful information from the Python source files in the Spatial Root project before they are deleted in an upcoming step.
+
+## Context
+
+Spatial Root has completed a full C++ refactor (Stages 1–3). The Python GUI, entry points, pipeline scripts, and build system have been replaced by:
+- `spatialroot_realtime` C++ binary (primary CLI)
+- `EngineSessionCore` static library with a direct C++ API
+- Dear ImGui + GLFW GUI (`gui/imgui/`) embedding `EngineSessionCore` directly
+- `init.sh` / `build.sh` replacing `configCPP*.py`
+- `cult-transcoder` handling all ADM transcoding
+
+The Python files will be deleted in the next task. Before deletion, extract any information that is not already captured in the C++ source, CMake files, or existing docs, and that could be useful for future development.
+
+## Your task
+
+Create `internalDocsMD/cpp_refactor/usefulPyInfo.md` by reading and extracting from the Python files below.
+
+## Files to read (exclude `spatialroot/` venv directory)
+
+- `realtimeMain.py`
+- `runPipeline.py`
+- `runRealtime.py` (if it exists)
+- `gui/realtimeGUI/` (all .py files in this directory and subdirectories)
+- `gui/pipeline_runner.py`, `gui/background.py`
+- `gui/widgets/` (all .py files)
+- `src/analyzeADM/analyzeMetadata.py`, `src/analyzeADM/checkAudioChannels.py`
+- `src/analyzeRender.py`, `src/packageADM/splitStems.py`
+- `src/config/configCPP.py` (and any configCPP_posix.py, configCPP_windows.py)
+- `utils/deleteData.py`, `utils/getExamples.py`
+
+## What to extract
+
+- OSC parameter names and value ranges not already in `PUBLIC_DOCS/API.md`
+- Default parameter values that differ from the C++ engine defaults in `RealtimeTypes.hpp`
+- Source type detection logic (ADM vs LUSID heuristics)
+- Any GUI UX behaviour not replicated in the ImGui GUI (error states, validation flows, edge cases)
+- Build flags or environment variables from configCPP scripts not captured in `build.sh`
+- Known workarounds, edge cases, `# TODO` / `# FIXME` comments that may still be relevant
+- CLI argument names and defaults not documented in `PUBLIC_DOCS/API.md`
+
+## What NOT to extract
+
+- Code already superseded by C++ or cult-transcoder
+- Third-party or venv code
+- PySide6 styling that has no C++ analogue
+
+## Source of truth files (read before starting)
+
+- `spatial_engine/realtimeEngine/src/EngineSession.hpp` — V1.1 API (runtime setters, lifecycle)
+- `spatial_engine/realtimeEngine/src/RealtimeTypes.hpp` — parameter defaults
+- `PUBLIC_DOCS/API.md` — current public documentation
+- `internalDocsMD/cpp_refactor/refactor_planning.md` — full refactor history
+
+## Rules
+
+- Read each Python file before extracting from it.
+- Do NOT modify any Python files.
+- Do NOT delete anything.
+- When done, stop and ask the human to review `internalDocsMD/cpp_refactor/usefulPyInfo.md` before any Python deletion proceeds.
+```
+
+---
+
+### Onboarding Prompt — Task 4.2: Delete All Python
+
+```
+You are removing all Python source, GUI, and runtime files from the Spatial Root project. This is a mechanical deletion task.
+
+## Context
+
+Spatial Root has completed a full C++ refactor. The Python files listed below have been superseded and are safe to delete:
+- The Python PySide6 GUI is replaced by `gui/imgui/` (Dear ImGui + GLFW)
+- `runRealtime.py` / `realtimeMain.py` are replaced by `spatialroot_realtime` binary
+- `configCPP*.py` is replaced by `init.sh` / `build.sh`
+- The Python LUSID library is replaced by the C++ engine reading LUSID JSON directly
+- Useful information from these files has already been extracted to `internalDocsMD/cpp_refactor/usefulPyInfo.md`
+
+## Prerequisite check
+
+Before deleting anything, verify:
+1. `internalDocsMD/cpp_refactor/usefulPyInfo.md` exists (Task 4.1 output)
+2. `build/gui/imgui/Spatial Root` binary exists (Stage 3 built and working)
+
+If either check fails, stop and ask the human before proceeding.
+
+## Deletion list (delete only these — nothing else)
+
+1. `realtimeMain.py`
+2. `runPipeline.py`
+3. `runRealtime.py` (if it exists — skip if not found)
+4. `gui/realtimeGUI/` (entire directory)
+5. `gui/pipeline_runner.py`
+6. `gui/background.py`
+7. `gui/utils/` (entire directory — verify only Python files remain first)
+8. `gui/widgets/` (entire directory — verify only Python files remain first)
+9. `src/analyzeADM/` (entire directory)
+10. `src/packageADM/` (entire directory)
+11. `src/analyzeRender.py`
+12. `src/createRender.py` (if it exists)
+13. `src/createFromLUSID.py` (if it exists)
+14. `src/config/configCPP.py`
+15. `src/config/configCPP_posix.py` (if it exists)
+16. `src/config/configCPP_windows.py` (if it exists)
+17. `src/config/` (entire directory only if empty after step 16)
+18. `LUSID/src/` (entire directory)
+19. `LUSID/tests/` (entire directory)
+20. `utils/deleteData.py`
+21. `utils/getExamples.py`
+22. `utils/` (entire directory only if empty after step 21)
+23. `requirements.txt`
+24. `spatialroot/` (entire venv directory)
+25. Any orphaned `__pycache__/` directories within the above paths
+
+## After deletion
+
+Run: `./init.sh` — must complete without error.
+Run: `./run.sh` — GUI must launch.
+
+If either fails, stop and report the error before proceeding.
+
+When done, stop and ask the human to verify the deletion before proceeding to Task 4.3.
+```
+
+---
+
+### Onboarding Prompt — Task 4.3: Update Internal Docs
+
+```
+You are updating three internal agent documentation files to reflect the completed C++ refactor of Spatial Root. This is a documentation-only task — do not modify any source code or build files.
+
+## Context
+
+Spatial Root has completed a full C++ refactor (2026-03-31). The Python GUI, entry points, LUSID library, and venv have been removed. The project now runs entirely on C++:
+- `spatialroot_realtime` — primary CLI binary
+- `EngineSessionCore` — static library, V1.1 API with direct runtime setter methods
+- `gui/imgui/` — Dear ImGui + GLFW GUI, embeds EngineSessionCore in-process
+- `init.sh` / `build.sh` — replaces Python build system
+- `cult-transcoder` — standalone transcoding tool (unchanged)
+
+## Source of truth (read these first)
+
+1. `internalDocsMD/cpp_refactor/refactor_planning.md` — full refactor history and decisions
+2. `spatial_engine/realtimeEngine/src/EngineSession.hpp` — V1.1 public API
+3. `spatial_engine/realtimeEngine/src/RealtimeTypes.hpp` — types and config
+4. `gui/imgui/src/App.cpp` — canonical GUI implementation reference
+5. `PUBLIC_DOCS/API.md` — public API documentation
+
+## Files to update
+
+### 1. `internalDocsMD/AGENTS.md`
+
+Read the full file before editing. Update:
+- Add a Phase 6 banner at the top: "Phase 6 (2026-03-31): C++ refactor complete — see `internalDocsMD/cpp_refactor/refactor_planning.md`."
+- All references to `runRealtime.py` / `realtimeMain.py` as entry points → `spatialroot_realtime` binary
+- All references to `configCPP*.py` / Python build → `init.sh` + `build.sh`
+- All references to the PySide6 GUI → ImGui + GLFW GUI (`gui/imgui/`)
+- Architecture section: GUI now embeds EngineSessionCore in-process; runtime parameters use direct C++ setter methods, not OSC
+- Runtime control plane: OSC is secondary (port 9009 default, disabled with oscPort=0); primary surface is the direct C++ API
+- Python Virtual Environment section: mark as removed
+- Do not rewrite sections that remain accurate (cult-transcoder, LUSID format, engine agent phases 1–8)
+
+### 2. `internalDocsMD/devHistory.md`
+
+Read the full file before editing. Append a new milestone section:
+
+**Phase 4: C++ Refactor and ImGui GUI (2026-03-31)**
+Cover: Python build system replaced by init.sh/build.sh; EngineSessionCore V1.1 API (runtime setters, typed ElevationMode, oscPort=0 guard); PySide6 GUI replaced by Dear ImGui + GLFW GUI linking EngineSessionCore directly (no subprocess); Python GUI, entry points, LUSID library, and venv removed.
+Key fact: `EngineSession::shutdown()` is terminal — construct a new instance to restart (now handled by the GUI via `std::unique_ptr<EngineSession>`).
+
+### 3. `internalDocsMD/Realtime_Engine/agentDocsv1/realtime_master.md`
+
+Read the full file before editing. Update only stale sections — do not rewrite accurate sections:
+- Add a note at the top: "Updated 2026-03-31 — C++ refactor complete. See `internalDocsMD/cpp_refactor/refactor_planning.md`."
+- GUI section (currently "Keep PySide6"): mark as superseded. GUI is now Dear ImGui + GLFW, in-process, no QProcess.
+- Runtime Control Plane section: OSC is now secondary. Primary control is direct C++ setter methods on EngineSession. Parameter names and ranges are unchanged.
+- Python Entry Point section: mark `runRealtime.py` as removed. `spatialroot_realtime` is the CLI. GUI uses in-process EngineSession.
+- "Next Major Task" section: mark the described pipeline refactor as complete (2026-03-31).
+
+## Rules
+
+- Read each file in full before editing.
+- Do not modify source code or build files.
+- Do not rewrite sections that are still accurate.
+- When done, stop and ask the human to review all three files before any commits.
+```
