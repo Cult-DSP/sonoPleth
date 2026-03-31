@@ -51,7 +51,7 @@
 | 2   | ✅ FIXED | **High**     | Legacy script trusted corrupted WAV header without cross-check (script removed Phase 6) | (historical)                                        |
 | 3   | ✅ FIXED | **Low**      | Stale `DEBUG` print statements left in renderer                                         | `SpatialRenderer.cpp`                               |
 | 4   | ✅ FIXED | **Medium**   | `masterGain` default mismatch resolved — now consistently `0.5` across code and docs    | `SpatialRenderer.hpp` · `main.cpp` · `RENDERING.md` |
-| 5   | ✅ FIXED | **Medium**   | `dbap_focus` now forwarded for all DBAP-based modes, including plain `"dbap"`           | (archived, pre-Phase 6: `runPipeline.py`)          |
+| 5   | ✅ FIXED | **Medium**   | `dbap_focus` now forwarded for all DBAP-based modes, including plain `"dbap"`           | (archived, pre-Phase 6: `runPipeline.py`)           |
 | 6   | ✅ FIXED | **Medium**   | Legacy Python wrapper exposed `master_gain` (wrapper removed Phase 6)                   | (historical)                                        |
 
 CURRENT PROJECT:
