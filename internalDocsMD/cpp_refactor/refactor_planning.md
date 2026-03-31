@@ -207,9 +207,12 @@ Update `PUBLIC_DOCS/API.md`:
 **Implemented (pending visual verification):**
 - Dark background + warm cream card panels (StyleColorsLight base + full palette override)
 - Menlo 13.5px monospace font (falls back to ImGui default on non-macOS)
-- Header: logo symbol, app name, workflow breadcrumb (centred), state badge (right)
+- Header: logo symbol `⊙`, app name, workflow breadcrumb (centred), state badge (right)
 - ENGINE tab: four bordered card sections (INPUT CONFIGURATION, TRANSPORT, RUNTIME CONTROLS, ENGINE LOG)
 - TRANSCODE tab: three bordered card sections (TRANSCODE CONFIGURATION, TRANSCODE CONTROL, TRANSCODE LOG)
+
+**Pending (not yet started):**
+- Logo image render: `gui/imgui/src/miniLogo.png` exists but is not displayed in the header. Requires loading as an OpenGL texture (stb_image, which is already present in `thirdparty/allolib/external/stb/`) and rendering via `ImGui::Image()`. The `⊙` Unicode symbol is the current placeholder.
 
 **Goal:** Build the C++ Dear ImGui + GLFW GUI as the replacement for the Python PySide6 GUI. After human verification of full feature parity, remove the Python GUI and all Python launch/build infrastructure.
 
@@ -222,6 +225,38 @@ Update `PUBLIC_DOCS/API.md`:
 - [ ] Python GUI and wrappers removed
 - [ ] `spatialroot/` venv removed
 - [ ] Zero Python runtime dependency for the core engine
+
+### 3.0 GUI refinement backlog (post-verification)
+
+After the initial aesthetic verification, the following refinements are recommended. Read `gui/imgui/src/App.cpp` and `gui/imgui/src/main.cpp` before attempting any of these — they are all surgical edits, not rewrites.
+
+**High priority — correctness / usability:**
+
+1. **`mSourceHint` is never rendered.** `detectSource()` populates `mSourceHint` with diagnostic text (e.g. "Not ADM WAV — missing fmt chunk", "LUSID package detected") but nothing in `renderEngineTab()` displays it. Users who type a wrong path see no feedback until they click Start. Fix: add a small `ImGui::TextColored(kRed/kGreen, ...)` line below the SOURCE InputText showing `mSourceHint` when non-empty. Use `kGreen` for valid detections, `kRed` for errors.
+
+2. **Transcode log mutex held during entire render.** `renderTranscodeTab()` holds `mTcLogMutex` for the full `BeginChild` draw loop (`std::lock_guard` at outer scope). The background thread cannot append to the log while a frame is rendering. Fix: copy `mTcLog` into a local `std::deque<LogEntry>` under the lock, release, then render from the copy.
+
+3. **`(optional)` hint on REMAP CSV overflows the card.** It is placed with `ImGui::SameLine()` after the Browse button, which is already at the right edge of the card. It likely clips or wraps. Fix: move it to a `TextDisabled` on the label side (before `SameLine(120.f)`), or as a tooltip on the Browse button.
+
+4. **Card heights are fixed pixels.** The constants 186, 108, 220, 162, 80 were estimated. After a real build they may be slightly too tall (wasted space) or too short (clipped content). Fix: after visual verification, measure each card's actual content height using `ImGui::GetFrameHeightWithSpacing()` (= FontSize + FramePadding.y * 2 + ItemSpacing.y) × row count, and adjust the constants. Alternatively, compute them dynamically at render time — but fixed constants are fine for V1 once calibrated.
+
+**Medium priority — polish:**
+
+5. **Logo image.** `gui/imgui/src/miniLogo.png` is unused. To render it: load with `stb_image` (single-header, at `thirdparty/allolib/external/stb/stb/stb_image.h`; include path already available via `EngineSessionCore`), upload as an OpenGL texture in `App::App()`, cache the `GLuint` texture ID, and render in the header via `ImGui::Image((ImTextureID)(intptr_t)texId, ImVec2(h, h))` where `h` is the current line height. Replace the `⊙` placeholder symbol. Keep the fallback symbol if texture loading fails.
+
+6. **Header breadcrumb collision at narrow window widths.** The breadcrumb uses `ImGui::SameLine(crumbX)` where `crumbX = (windowWidth - textWidth) / 2`. If the left-side app name text is wide or the window is narrow, `crumbX` can be negative or overlap the left content — ImGui clamps SameLine to current cursor position in that case, causing a visual collision. Fix: only render the breadcrumb if `crumbX > leftContentWidth + some margin`, otherwise skip it gracefully.
+
+7. **Window title is static.** The GLFW window title `"Spatial Root — Real-Time Engine"` never changes. Could reflect the current source filename or engine state. Minor quality-of-life improvement.
+
+8. **`pickFile` uses deprecated `allowedFileTypes` on macOS 12+.** Already noted with a `#pragma` suppressor in `FileDialog_macOS.mm`. Future fix: switch to `allowedContentTypes` using `UTType` (requires macOS 12+ deployment target). Low urgency — the deprecated API still works.
+
+**Low priority — future V1.1:**
+
+9. **OSC toggle.** `App.hpp` has a DEV NOTE: `oscPort=9009` always-on for V1. Consider adding an OSC enable/disable checkbox or port number InputInt in a Settings card. Currently the Python GUI also always-on, so parity is maintained.
+
+10. **Python GUI removal (Stage 3.2).** Do not start until human has verified full feature parity with the Python GUI at `gui/realtimeGUI/`. See section 3.2 below for the removal checklist.
+
+---
 
 ### 3.1 Qt GUI — gui/qt/
 
