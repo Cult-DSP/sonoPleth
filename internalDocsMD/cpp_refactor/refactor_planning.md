@@ -195,21 +195,19 @@ Update `PUBLIC_DOCS/API.md`:
 
 ## Stage 3 — ImGui + GLFW GUI + Python Removal
 
-**Status:** GUI implementation complete (2026-03-30) — pending human build + visual verification. All source files written and functional changes verified by user. Aesthetic overhaul (dark/cream theme, Menlo font, card layout) implemented but not yet built/verified. Stage 3.2 (Python removal) begins after human verifies full feature parity.
+**Status:** GUI verified working (2026-03-30). Builds, launches, and looks solid against reference prototype. Entering polish/refinement phase. Stage 3.2 (Python removal) pending explicit user sign-off on feature parity.
 
-**Implemented (human-verified):**
+**Verified working:**
 - Native NSOpenPanel file dialogs (FileDialog_macOS.mm) for all browse buttons
 - SOURCE field accepts any file/directory, rejects incompatible with inline error
 - Inline "ADM" / "LUSID" green tag next to SOURCE label
 - Device dropdown with Scan button via `al::AudioDevice` enumeration
-- `run.sh` / `run.ps1` launch scripts
-
-**Implemented (pending visual verification):**
 - Dark background + warm cream card panels (StyleColorsLight base + full palette override)
-- Menlo 13.5px monospace font (falls back to ImGui default on non-macOS)
+- Menlo 13.5px monospace font
 - Header: logo symbol `⊙`, app name, workflow breadcrumb (centred), state badge (right)
 - ENGINE tab: four bordered card sections (INPUT CONFIGURATION, TRANSPORT, RUNTIME CONTROLS, ENGINE LOG)
 - TRANSCODE tab: three bordered card sections (TRANSCODE CONFIGURATION, TRANSCODE CONTROL, TRANSCODE LOG)
+- `run.sh` / `run.ps1` launch scripts
 
 **Pending (not yet started):**
 - Logo image render: `gui/imgui/src/miniLogo.png` exists but is not displayed in the header. Requires loading as an OpenGL texture (stb_image, which is already present in `thirdparty/allolib/external/stb/`) and rendering via `ImGui::Image()`. The `⊙` Unicode symbol is the current placeholder.
@@ -220,8 +218,9 @@ Update `PUBLIC_DOCS/API.md`:
 
 - [x] ImGui GUI implementation complete (all source files written)
 - [x] Native file dialogs, device scan, source detection, transport controls — human verified
-- [ ] Aesthetic theme verified against reference prototype
-- [ ] Human verifies full feature parity with Python GUI
+- [x] Aesthetic theme verified — builds and looks solid against reference prototype
+- [ ] Polish refinements (section 3.0 backlog)
+- [ ] Human confirms full feature parity with Python GUI
 - [ ] Python GUI and wrappers removed
 - [ ] `spatialroot/` venv removed
 - [ ] Zero Python runtime dependency for the core engine
@@ -495,33 +494,30 @@ Key implementation constraints:
 
 ## Current state when this prompt was last updated (2026-03-30)
 
-**Stage 1 is complete and verified.** init.sh + build.sh produce all three binaries from clean with no Python dependency. README, API.md, and CMakeLists files are updated.
+**Stages 1 and 2 are complete and verified.**
 
-**Stage 2 is complete and verified.** Build passes. `embedding_test` binary runs and prints `PASS`. All tasks done:
-- Task 2.1: `setMasterGain`, `setDbapFocus`, `setSpeakerMixDb`, `setSubMixDb`, `setAutoCompensation`, `setElevationMode` added to `EngineSession.hpp/.cpp`.
-- Task 2.2: Deferred. `add_subdirectory` path propagates AlloLib include dirs correctly. Full `install(EXPORT)` / `find_package` support requires BUILD_INTERFACE/INSTALL_INTERFACE generator expressions — future work.
-- Task 2.3: `if (mOscPort > 0)` guard in `start()` — done in prior session.
-- Task 2.4: `EngineOptions::elevationMode` changed from `int` to `ElevationMode` enum. `main.cpp` updated with `static_cast<ElevationMode>(...)`. `configureEngine()` updated with `static_cast<int>(opts.elevationMode)`.
-- Task 2.5: `API.md` updated — setter docs, Runtime Parameter Control section, `oscPort=0` behavior, `update()` polling contract.
-- Embedding test: `spatial_engine/realtimeEngine/src/embedding_test.cpp` written and passing. Target added to `realtimeEngine/CMakeLists.txt`.
+**Stage 3 GUI is built, verified, and working.** The user has confirmed the GUI launches, file dialogs work, device scan works, ADM/LUSID detection shows inline, transport controls work, and the aesthetic (dark/cream theme, Menlo font, card layout) looks solid. The GUI is ready for polish and refinement.
 
-**You are beginning Stage 3.** The goal is to build the Dear ImGui + GLFW desktop GUI, verify feature parity with the Python GUI, then remove all Python infrastructure.
+**What is done in Stage 3:**
+- `gui/imgui/CMakeLists.txt` — full CMake target; `.mm` compiled via `target_sources` on Apple; AppKit linked
+- `gui/imgui/src/main.cpp` — GLFW + OpenGL 3.3 Core + Dear ImGui render loop; Menlo 13.5px font; `StyleColorsLight` base + full dark/cream palette override; `--root` CLI arg
+- `gui/imgui/src/App.hpp` / `App.cpp` — full application; ENGINE + TRANSCODE tabs; four card sections in ENGINE tab (INPUT CONFIGURATION, TRANSPORT, RUNTIME CONTROLS, ENGINE LOG); three card sections in TRANSCODE tab; NSOpenPanel Browse buttons on all path fields; device Scan+Combo via `al::AudioDevice`; complete 5-stage engine lifecycle; `SubprocessRunner` for cult-transcoder; thread-safe transcode log
+- `gui/imgui/src/FileDialog.hpp` + `FileDialog_macOS.mm` + `FileDialog.cpp` — NSOpenPanel on macOS; `GetOpenFileName` on Windows; zenity on Linux
+- `gui/imgui/src/SubprocessRunner.hpp` / `.cpp` — background subprocess with streamed output
+- `run.sh` / `run.ps1` — launch scripts
+- Root `CMakeLists.txt`, `init.sh`, `build.sh`, `README.md` — all updated to reference `gui/imgui/`
 
-**CMakeLists.txt root update required (do this first in Stage 3):** The root `CMakeLists.txt` still references `gui/qt/` throughout — update all references to `gui/imgui/`. The `SPATIALROOT_BUILD_GUI` option description also says "Qt desktop GUI" — update to "ImGui + GLFW desktop GUI".
+**What is NOT yet done in Stage 3:**
+- GUI polish and refinement — see section 3.0 for prioritised backlog
+- Logo image render (`gui/imgui/src/miniLogo.png` exists; `⊙` is the current placeholder)
+- `mSourceHint` is populated by `detectSource()` but never rendered — users get no inline feedback on invalid sources
+- Stage 3.2: Python GUI removal — only after the user confirms full feature parity
 
-**Stage 3 section in this doc still uses Qt terminology** (QTimer, QProcess, QMainWindow, gui/qt/). Treat those sections as the requirements spec and adapt to ImGui + GLFW equivalents:
-- `gui/qt/` → `gui/imgui/`
-- `QTimer` polling → render loop (GLFW event loop with `glfwWaitEventsTimeout` or a fixed sleep)
-- `QProcess` for cult-transcoder → `popen`/`posix_spawn` or a thin subprocess wrapper
-- `QMainWindow::closeEvent` → GLFW window close callback (`glfwSetWindowCloseCallback`)
-- Qt widget layout → Dear ImGui immediate-mode panels
+**You are continuing Stage 3 with polish and refinement.** Read section 3.0 for the prioritised backlog. Do not begin Stage 3.2 (Python removal) without explicit user confirmation.
 
 ## What you should do right now
 
-1. Read the eight source-of-truth files listed above (same list — still authoritative).
-2. Read `refactor_log.md` to see everything done in Stages 1 and 2.
-3. Read `gui/realtimeGUI/` (the Python PySide6 GUI) to understand the required feature set before designing anything.
-4. Read `spatial_engine/realtimeEngine/src/main.cpp` — it is the canonical reference for how the polling loop, `update()`, `queryStatus()`, and `consumeDiagnostics()` are used together.
-5. Ask the user which Dear ImGui + GLFW submodule paths to use before writing any CMake. The submodules need to be added to `thirdparty/` and initialized. Do not assume paths.
-6. Begin Stage 3 tasks in order: CMakeLists.txt root fix (gui/qt → gui/imgui) → submodule setup → `gui/imgui/` CMake scaffold → ImGui application skeleton → feature implementation → Python removal.
-```
+1. Read `refactor_log.md` — read the most recent entries first (top of the log). Note: the App.cpp and main.cpp scaffold entries have **SUPERSEDED** notes; the current state is described in the "Stage 3 — Native file dialogs" and "Stage 3 — Aesthetic overhaul" entries.
+2. Read `gui/imgui/src/App.cpp` and `gui/imgui/src/main.cpp` to understand the current implementation in full before making any changes.
+3. Ask the user which refinement from section 3.0 to tackle first, or whether they have a specific improvement in mind.
+4. Work through section 3.0 in priority order unless directed otherwise: `mSourceHint` display → transcode log mutex → `(optional)` hint position → card height calibration → logo image render.
