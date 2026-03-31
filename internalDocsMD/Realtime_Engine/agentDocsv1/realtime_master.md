@@ -603,14 +603,13 @@ main speaker channels.
 
 ## Critical Implementation Details for Future Context Windows
 
-> These details were captured at the end of the ADM Direct Streaming implementation
-> session to preserve context that isn't obvious from reading code alone.
+> **Archived:** These details were captured at the end of the ADM Direct Streaming implementation session. Much of the Python logic referenced here (e.g. `xml_etree_parser.py`, `runPipeline.py`) was entirely removed in Phase 6, moving entirely to the C++ `cult-transcoder` tool.
 
-### Full LFE Channel Mapping Chain (Python → C++)
+### Full LFE Channel Mapping Chain (Archived python reference)
 
-The LFE channel mapping crosses two codebases and involves a hardcoded flag:
+The LFE channel mapping historically crossed two codebases and involved a hardcoded flag:
 
-1. **Python LUSID parser** (`LUSID/src/xml_etree_parser.py` line 44):
+1. **Python LUSID parser** (`LUSID/src/xml_etree_parser.py` line 44 - REMOVED):
    `_DEV_LFE_HARDCODED = True` — when `True`, any DirectSpeaker at 1-based
    ADM channel 4 is tagged as LFE (function `_is_lfe_channel()`). When `False`,
    it falls back to checking `speakerLabel` for the substring "lfe".
@@ -629,9 +628,7 @@ The LFE channel mapping crosses two codebases and involves a hardcoded flag:
 4. **C++ `Spatializer.hpp`**: LFE sources (identified by `pose.isLFE`) bypass
    DBAP entirely and route directly to subwoofer channels from the speaker layout.
 
-**Implication**: Changing `_DEV_LFE_HARDCODED` to `False` in the parser will
-make LFE detection label-based, but the C++ `parseChannelIndex()` hardcoded
-index 3 would still need to be made dynamic (read from the scene JSON).
+**Implication**: Current Phase 6 logic using `cult-transcoder` now handles this C++-side. Legacy implications regarding `_DEV_LFE_HARDCODED` in python are archived.
 
 ### Shared Loaders — Offline ↔ Real-Time Code Sharing
 
@@ -662,20 +659,14 @@ functions within the `MultichannelReader` class scope. This is standard C++ for
 resolving circular dependencies between header-only types. If you move
 `SourceStream` to its own header, the method impls should move with it.
 
-### Known Bug — `runPipeline.py` Line 177
+### Known Bug — `runPipeline.py` Line 177 (Archived)
 
-In the `if __name__ == "__main__"` CLI block, the LUSID branch calls:
+> **Archived:** `runPipeline.py` was removed in Phase 6.
 
-```python
-run_pipeline_from_LUSID(sourceADMFile, sourceSpeakerLayout, renderMode, createRenderAnalysis, outputRenderPath)
-```
+In the `if __name__ == "__main__"` CLI block, the LUSID branch historically called an invalid parameter.
+**Not an active issue** — `runPipeline.py` no longer exists.
 
-But `outputRenderPath` is **never defined** in this code path (it's only a
-default parameter in `run_pipeline_from_ADM()`). This will crash with
-`NameError` if someone runs the offline pipeline CLI with a LUSID package input.
-**Not a real-time engine issue** — but worth knowing about.
-
-### Audio Scan Toggle — `scan_audio` (✅ Implemented)
+### Audio Scan Toggle — `scan_audio` (✅ Implemented, Archived Phase 6)
 
 The ADM real-time path (`run_realtime_from_ADM()`) previously ran a full
 per-channel audio activity scan unconditionally at Step 2, adding ~14 seconds

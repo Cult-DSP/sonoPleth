@@ -170,13 +170,13 @@ CMake link targets: `al` + `Gamma`.
 
 #### Changes applied
 
-| File                                           | Change                                                                                                                                           |
-| ---------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `.gitmodules`                                  | Added `shallow = true` to `thirdparty/allolib` — fresh clones are depth=1 automatically                                                          |
-| `src/configCPP.py` `initializeSubmodules()`    | Uses `--depth 1` — `init.sh` now initializes allolib shallow (~510 MB saved)                                                                     |
-| `src/configCPP.py` `initializeEbuSubmodules()` | Uses `--depth 1` — libbw64/libadm also shallow                                                                                                   |
-| `scripts/shallow-submodules.sh`                | **New.** One-time idempotent script to re-shallow an existing deep clone                                                                         |
-| `scripts/sparse-allolib.sh`                    | **New, opt-in only.** Sparse working-tree checkout (~14 MB saved); ⚠️ fragile with AlloLib's unconditional CMakeLists — not run by default or CI |
+| File                                  | Change                                                                                                                                           |
+| ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `.gitmodules`                         | Added `shallow = true` to `thirdparty/allolib` — fresh clones are depth=1 automatically                                                          |
+| `init.sh` `initializeSubmodules()`    | Uses `--depth 1` — `init.sh` now initializes allolib shallow (~510 MB saved)                                                                     |
+| `init.sh` `initializeEbuSubmodules()` | Uses `--depth 1` — libbw64/libadm also shallow                                                                                                   |
+| `scripts/shallow-submodules.sh`       | **New.** One-time idempotent script to re-shallow an existing deep clone                                                                         |
+| `scripts/sparse-allolib.sh`           | **New, opt-in only.** Sparse working-tree checkout (~14 MB saved); ⚠️ fragile with AlloLib's unconditional CMakeLists — not run by default or CI |
 
 **Default path (`init.sh` / CI):** full working tree, shallow history. Builds correctly with no CMake changes.
 **To apply to an existing deep clone:** `./scripts/shallow-submodules.sh`
@@ -202,8 +202,6 @@ Planned work:
 **Status:** Document only. Await further instructions before implementing Track B.
 
 FUTURE ISSUES
-| 7 | ⚠️ UNFIXED | **Low** | Double audio-channel scan — `exportAudioActivity()` then `channelHasAudio()` ~28 s wasted | `runPipeline.py` lines 86–88 |
-| 8 | ⚠️ UNFIXED | **Low** | `sys.argv[1]` accessed before bounds check → potential `IndexError` | `runPipeline.py` line 158 |
 | 9 | ℹ️ NOTE | **Info** | Large interleaved buffer (~11.3 GB peak for 56ch × 566s) allocated in one shot | `WavUtils.cpp` `writeMultichannelWav()` |
 | 10 | ℹ️ NOTE | **Info** | Test file exercises only `audio_object` + `LFE` paths; `direct_speaker` untested at render level | Pipeline integration tests |
 
@@ -229,17 +227,6 @@ additional:
 
 - **Historical note:** A legacy Python wrapper exposed `master_gain` to the offline renderer.
 - Phase 6 removed the Python wrapper; `master_gain` is now a C++ CLI/runtime concern.
-
-**#7 — Double audio-channel scan**
-
-- `runPipeline.py` calls `exportAudioActivity()` (writes `containsAudio.json`) then immediately calls `channelHasAudio()` again.
-- Both functions scan the entire WAV file (~14s each for 566s file).
-- **Fix**: Use result of first scan directly; remove second call.
-
-**#8 — sys.argv bounds check**
-
-- `runPipeline.py` line 158: `source_path = sys.argv[1]` is reached before the `if len(sys.argv) < 2:` check on line 162.
-- **Fix**: Move bounds check before first access.
 
 **#9 — Large interleaved buffer**
 
@@ -828,22 +815,19 @@ Build and run via `init.sh` / `build.sh` / `run.sh` and the C++ binaries.
 
 ### Stem Splitting
 
+**Issue:** Sspatialroot_adm_extract`binary not found
+**Solution:** Run`./init.sh` to build the embedded ADM extractor.
+
+**Issue:** Empty scene / no frames after parsing  
+**Solution:** Check ADM XML format. Some ADM files have non-standard structure. Use the debug `scene.summary()` output for diagnostics.
+
+### Stem Splitting
+
 **Issue:** Stems have wrong naming (`src_1.wav` instead of `1.1.wav`)  
 **Solution:** Updated code uses node IDs now. Re-run pipeline with latest code.
 
 **Issue:** LFE stem missing  
-**Solution:** Check `_DEV_LFE_HARDCODED` flag in `xmlParser.py`. LFE detection may need adjustment.
-
-### Spatial Rendering
-
-**Issue:** "Missing stems" / sources cutting out  
-**Cause:** Directions outside layout's elevation coverage (VBAP gaps)  
-**Solution:**
-
-- Use DBAP instead of VBAP (no coverage gaps): `--spatializer dbap`
-- Enable vertical compensation (default): RescaleAtmosUp
-- Check "Direction Sanitization Summary" in render output
-
+**Solution:** Check the `--lfe-mode` flag logic in `cult-transcoder` C++ source
 **Issue:** Sources at zenith/nadir are silent  
 **Cause:** Layout doesn't have speakers at extreme elevations  
 **Solution:** Use `--elevation_mode compress` (RescaleFullSphere) to map full [-90°, +90°] range

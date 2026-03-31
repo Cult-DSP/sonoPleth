@@ -36,11 +36,11 @@ No Python toolchain required. Requires CMake 3.20+ and a C++17 compiler.
 
 After setup, binaries are at:
 
-| Binary | Path |
-|---|---|
-| `spatialroot_realtime` | `build/spatial_engine/realtimeEngine/spatialroot_realtime` |
+| Binary                       | Path                                                            |
+| ---------------------------- | --------------------------------------------------------------- |
+| `spatialroot_realtime`       | `build/spatial_engine/realtimeEngine/spatialroot_realtime`      |
 | `spatialroot_spatial_render` | `build/spatial_engine/spatialRender/spatialroot_spatial_render` |
-| `cult-transcoder` | `build/cult_transcoder/cult-transcoder` |
+| `cult-transcoder`            | `build/cult_transcoder/cult-transcoder`                         |
 
 ### Subsequent Builds
 
@@ -154,15 +154,15 @@ Options:
 
 The build system is CMake + shell scripts. No Python required.
 
-| Script | Platform | Role |
-|---|---|---|
-| `init.sh` | macOS / Linux | Initialize submodules + call `build.sh` |
-| `build.sh` | macOS / Linux | CMake configure + build |
-| `init.ps1` | Windows | Initialize submodules + call `build.ps1` |
-| `build.ps1` | Windows | CMake configure + build |
+| Script      | Platform      | Role                                           |
+| ----------- | ------------- | ---------------------------------------------- |
+| `init.sh`   | macOS / Linux | Initialize submodules + call `build.sh`        |
+| `build.sh`  | macOS / Linux | CMake configure + build                        |
+| `init.ps1`  | Windows       | Initialize submodules + call `build.ps1`       |
+| `build.ps1` | Windows       | CMake configure + build                        |
 | `engine.sh` | macOS / Linux | Fast clean rebuild of the realtime engine only |
-| `run.sh` | macOS / Linux | Launch the ImGui GUI (builds first if needed) |
-| `run.ps1` | Windows | Launch the ImGui GUI |
+| `run.sh`    | macOS / Linux | Launch the ImGui GUI (builds first if needed)  |
+| `run.ps1`   | Windows       | Launch the ImGui GUI                           |
 
 The root `CMakeLists.txt` builds all components via option flags:
 
@@ -229,19 +229,6 @@ Then launch from the project root:
 ```
 
 The GUI controls the spatial audio engine directly via the `EngineSessionCore` C++ API (no OSC). It supports ADM WAV and LUSID package sources, speaker layout selection, and real-time parameter control.
-
-## Python GUI (legacy — to be removed)
-
-The PySide6 GUI at `gui/realtimeGUI/` is the legacy GUI. It will be removed once the C++ GUI is verified at feature parity. It requires the Python venv from `init.sh`.
-
-```bash
-# Legacy setup (Python venv required)
-python3 -m venv spatialroot
-spatialroot/bin/pip install -r requirements.txt
-python realtimeMain.py --gui ...
-```
-
----
 
 ## Project Structure
 
