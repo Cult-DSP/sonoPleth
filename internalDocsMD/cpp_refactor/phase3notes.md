@@ -1,5 +1,11 @@
 ## notes from first gui prototype
 
+### engine notes:
+
+engine doesn't actually restart when stoped or source file is changed - time just continues from previous instance - needs a restart / kill button potentially like the python version - need to know what this actually does
+
+### other
+
 mostly good
 
 v1 functional notes:
