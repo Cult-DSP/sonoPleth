@@ -5,7 +5,7 @@ Lead Developer: Lucian Parisi
 
 Spatial Root is a C++ spatial audio engine for decoding ADM BW64 files and rendering to multichannel speaker arrays using DBAP spatialization. It includes a real-time streaming engine, an offline batch renderer, and the CULT transcoder for ADM→LUSID scene conversion.
 
-A C++ Dear ImGui + GLFW desktop GUI (`gui/imgui/`) is the replacement for the current Python GUI.
+A C++ Dear ImGui + GLFW desktop GUI (`gui/imgui/`) is the replacement for the legacy Python GUI (archived/removed in Phase 6).
 
 ---
 

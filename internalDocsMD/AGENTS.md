@@ -10,7 +10,7 @@
 > See `internalDocsMD/cpp_refactor/refactor_planning.md`.
 
 > **Phase 3 (2026-03-04):** ADM WAV preprocessing moved into `cult-transcoder`.
-> The (now removed) Python launcher `runRealtime.py` called `cult_transcoder/build/cult-transcoder transcode --in-format adm_wav`
+> **Historical (pre-Phase 6):** The (now removed) Python launcher `runRealtime.py` called `cult_transcoder/build/cult-transcoder transcode --in-format adm_wav`
 > instead of `extractMetaData()` + Python oracle + `writeSceneOnly()`.
 > See `cult_transcoder/internalDocsMD/AGENTS-CULT.md §8` and `DEV-PLAN-CULT.md Phase 3`.
 
@@ -51,7 +51,7 @@
 | 2   | ✅ FIXED | **High**     | Legacy script trusted corrupted WAV header without cross-check (script removed Phase 6) | (historical)                                        |
 | 3   | ✅ FIXED | **Low**      | Stale `DEBUG` print statements left in renderer                                         | `SpatialRenderer.cpp`                               |
 | 4   | ✅ FIXED | **Medium**   | `masterGain` default mismatch resolved — now consistently `0.5` across code and docs    | `SpatialRenderer.hpp` · `main.cpp` · `RENDERING.md` |
-| 5   | ✅ FIXED | **Medium**   | `dbap_focus` now forwarded for all DBAP-based modes, including plain `"dbap"`           | `runPipeline.py`                                    |
+| 5   | ✅ FIXED | **Medium**   | `dbap_focus` now forwarded for all DBAP-based modes, including plain `"dbap"`           | (archived, pre-Phase 6: `runPipeline.py`)          |
 | 6   | ✅ FIXED | **Medium**   | Legacy Python wrapper exposed `master_gain` (wrapper removed Phase 6)                   | (historical)                                        |
 
 CURRENT PROJECT:
@@ -111,8 +111,9 @@ Rules:
 - Keep the output stable: `processedData/currentMetaData.xml` remains the same format (raw ADM XML string).
 
 3. Wire the pipeline to use the new tool (no semantic changes)
-  - Update the C++ preprocessing/tooling path that generates `processedData/currentMetaData.xml` to use `spatialroot_adm_extract` exclusively.
-  - Preserve current filenames and directories so everything downstream stays compatible.
+
+- Update the C++ preprocessing/tooling path that generates `processedData/currentMetaData.xml` to use `spatialroot_adm_extract` exclusively.
+- Preserve current filenames and directories so everything downstream stays compatible.
 
 4. Update `init.sh` to build the tool
    - `init.sh` should:
@@ -1008,7 +1009,7 @@ The Python LUSID library and related pipeline scripts were removed in Phase 6. P
 
 - [x] **Expose `master_gain`** ✅ FIXED — legacy Python wrapper provided this; Phase 6 removed Python wrappers while keeping the underlying gain capability
 
-- [x] **Forward `dbap_focus` for all DBAP modes** ✅ FIXED — `runPipeline.py` sends `--dbap_focus` for both `"dbap"` and `"dbapfocus"` modes
+- [x] **Forward `dbap_focus` for all DBAP modes** ✅ FIXED — archived note from the removed Python offline pipeline (`runPipeline.py`)
 
 - [x] **LFE gain control** ✅ — realtime engine has `subMix` atomic in `RealtimeTypes.hpp`, exposed as `/realtime/sub_mix_db` (±10 dB) via OSC and the Sub Mix slider in `RealtimeControlsPanel`. Fully wired.
   - Note: `dbap_sub_compensation = 0.95f` in `SpatialRenderer.cpp` is the **offline renderer only** — not relevant to realtime pipeline.
@@ -1036,9 +1037,9 @@ The Python LUSID library and related pipeline scripts were removed in Phase 6. P
   - Peak memory ~11.3 GB with per-channel buffers on top
   - Write in chunks (e.g., 1s blocks) to reduce peak allocation
 
-- [ ] **Eliminate double audio-channel scan** ⚠️ _[Issues list #7]_
-  - `runPipeline.py` calls `exportAudioActivity()` then `channelHasAudio()` — both scan the full WAV (~14s each)
-  - Use result of first scan directly; remove redundant second call (~28s savings)
+- [ ] **Eliminate double audio-channel scan** ⚠️ _[Issues list #7]_ (archived, offline pipeline)
+  - `runPipeline.py` called `exportAudioActivity()` then `channelHasAudio()` — both scanned the full WAV (~14s each)
+  - Historical note only; the Python offline pipeline was removed in Phase 6
 
 - [ ] **Large scene optimization** (1000+ frames)
   - Current: 2823 frames loads in <1ms (acceptable)
@@ -1109,9 +1110,9 @@ The Python LUSID library and related pipeline scripts were removed in Phase 6. P
   - Multiple files use different patterns for delete-before-write
   - Create single util function in `utils/`
 
-- [ ] **Fix hardcoded paths**
-  - `parser.py`, `packageForRender.py` have hardcoded `processedData/` paths
-  - Make configurable via CLI or config file
+- [ ] **Fix hardcoded paths** (archived, Python-era tooling)
+  - `parser.py`, `packageForRender.py` had hardcoded `processedData/` paths
+  - Historical note only; Python tooling was removed in Phase 6
 
 - [ ] **Static object handling in render instructions**
   - LUSID handles static objects via single keyframe
@@ -1119,7 +1120,7 @@ The Python LUSID library and related pipeline scripts were removed in Phase 6. P
 
 #### Dependency Management
 
-- [ ] **Stable builds for all dependencies**
+- [ ] **Stable builds for all dependencies** (archived, Python-era tooling)
   - Ensure `requirements.txt` pins versions
   - Git submodules should track specific commits (already done for AlloLib)
 
@@ -1127,7 +1128,7 @@ The Python LUSID library and related pipeline scripts were removed in Phase 6. P
   - AlloLib is large — only clone parts actually used?
   - May not be worth complexity
 
-- [ ] **Bundle as CLI tool**
+- [ ] **Bundle as CLI tool** (archived Python-era idea)
   - Package entire pipeline as installable command (`pip install spatialroot`)
   - Single entry point: `spatialroot render <adm_file> --layout <layout>`
 
