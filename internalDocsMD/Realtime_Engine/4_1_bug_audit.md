@@ -29,23 +29,42 @@ The realtime engine reads a `.lusid.json` scene file, streams audio from a multi
 ### Build and run
 
 ```bash
-# Build the realtime engine (standalone binary):
-./engine.sh
+# Run init.sh once before the first build (initializes submodules):
+./init.sh
 
-# Build the full GUI (engine is linked into the GUI binary):
+# Build everything (engine + offline + cult-transcoder + GUI):
 ./build.sh --gui
 
-# Launch the GUI:
+# Build engine only (faster for engine-only changes):
+./build.sh --engine-only
+
+# Launch the GUI (the normal way to run the engine):
 ./run.sh
 
-# Run engine directly from the CLI (headless):
-./spatial_engine/realtimeEngine/build/spatialroot_realtime \
+# Run engine directly from the CLI (headless testing):
+./build/spatial_engine/realtimeEngine/spatialroot_realtime \
     --layout spatial_engine/speaker_layouts/translab-sono-layout.json \
-    --scene  processedData/stageForRender/scene.lusid.json \
-    --adm    sourceData/<file>.wav \
-    [--device "MOTU Pro Audio"]   # omit to use system default
-    [--list-devices]              # enumerate output devices then exit
+    --scene  processedData/stageForRender/SWALE-ATMOS-LFE.lusid.json \
+    --adm    sourceData/SWALE-ATMOS-LFE.wav \
+    --device "MOTU Pro Audio"     # omit to use system default
+    --list-devices                # enumerate output devices then exit
 ```
+
+Note: `./engine.sh` is a legacy standalone build script that outputs to `spatial_engine/realtimeEngine/build/`. Prefer `./build.sh` — it uses the unified CMake build at `build/` and is the canonical path.
+
+### Test content
+
+All test content lives in `sourceData/`. Corresponding LUSID scenes are in `processedData/stageForRender/`. File names match:
+
+| Content | ADM WAV | LUSID scene |
+|---|---|---|
+| Swale | `sourceData/SWALE-ATMOS-LFE.wav` | `processedData/stageForRender/SWALE-ATMOS-LFE.lusid.json` |
+| Ascent | `sourceData/ASCENT-ATMOS-LFE.wav` | `processedData/stageForRender/ASCENT-ATMOS-LFE.lusid.json` |
+| Eden | `sourceData/EDEN-ATMOS-MIX-LFE.wav` | `processedData/stageForRender/EDEN-ATMOS-MIX-LFE.lusid.json` |
+| Canyon | `sourceData/CANYON-ATMOS-LFE.wav` | *(no pre-built scene — transcode via GUI TRANSCODE tab or cult-transcoder)* |
+| 360RA | `sourceData/360RA_test.wav` | `processedData/stageForRender/360RA_test.lusid.json` |
+
+Speaker layouts: `spatial_engine/speaker_layouts/translab-sono-layout.json` (primary test), `allosphere_layout.json` (56-ch).
 
 ---
 
@@ -255,33 +274,11 @@ Use this format for every new patch attempt. Copy and fill in.
 
 ### Bug 9.1 — Pre-guard endpoint blending — PLAN
 
-**Approach (fast-mover path):** Pre-guard `positionStart` and `positionEnd` once before the sub-step loop. Lerp between the two pre-guarded endpoints inside the loop — smooth by construction.
+**Scope note:** This is a targeted test patch for one specific pop mechanism (intra-block guard-state discontinuity in the fast-mover path). Not all remaining pops are guard-related; this patch should be evaluated as a diagnostic step, not a final universal fix.
 
-```cpp
-auto applyGuard = [&](al::Vec3f posePos) -> al::Vec3f {
-    al::Vec3f rp(posePos.x, -posePos.z, posePos.y);  // flip to DBAP space
-    // Pass 1: soft zone
-    for (const auto& spkVec : mSpeakerPositions) { /* parabolic bump */ }
-    // Pass 2: hard floor convergence
-    for (int iter = 0; iter < kGuardMaxIter; ++iter) { /* push loop */ }
-    return al::Vec3f(rp.x, rp.z, -rp.y);  // un-flip
-};
+**Sequencing:** Implement the normal-path continuity fix first and retest. Then implement the fast-mover patch as a separate change.
 
-al::Vec3f guardedStart = applyGuard(pose.positionStart);
-al::Vec3f guardedEnd   = applyGuard(pose.positionEnd);
-
-for (int j = 0; j < kNumSubSteps; ++j) {
-    float alpha = (static_cast<float>(j) + 0.5f) / static_cast<float>(kNumSubSteps);
-    al::Vec3f subSafePos = guardedStart + alpha * (guardedEnd - guardedStart);
-    float mag = subSafePos.mag();
-    if (mag > 1e-7f) subSafePos = (subSafePos / mag) * mLayoutRadius;
-    // no per-step guard — endpoints already guarded
-    mFastMoverScratch.zeroOut();
-    mDBap->renderBuffer(mFastMoverScratch, subSafePos,
-                        mSourceBuffer.data() + j * subFrames, subFrames);
-    // accumulate...
-}
-```
+---
 
 **Approach (normal path — cross-block guard-transition):** When guard fired this block or last block, blend `mPrevSafePos[si]` (sub-steps 0–1) → `safePos` (sub-steps 2–3) using the existing scratch infrastructure.
 
@@ -314,11 +311,59 @@ mPrevGuardFired[si] = guardFiredForSource ? 1u : 0u;
 
 Move `subFrames` definition above the `isFastMover` branch so both paths share it.
 
+---
+
+**Approach (fast-mover path — revised):** Pre-guard both endpoints with the full guard (Pass 1 + Pass 2 convergence) before the sub-step loop. These serve as smooth trajectory anchors. Inside the loop, lerp between the pre-guarded endpoints, then apply only Pass 2 (hard-floor) as a **single scan** safety net — no Pass 1, no convergence loop.
+
+Rationale for this structure:
+- Pre-guarded endpoints eliminate the large divergent corrections between adjacent sub-steps that caused the original gain step.
+- Pass 1 is omitted inside the loop because the soft-zone bump reintroduces the same divergent correction the fix is meant to eliminate.
+- The single-scan Pass 2 catches the case where the lerped path (a chord) passes back through a hard-floor region between two hard-floor-safe endpoints. Because both endpoints are already clear, any mid-path intrusion will be small; a single scan is sufficient and avoids overcorrection.
+
+Caveat: single-scan Pass 2 is a safety net, not a full geometric guarantee. If a lerped sub-step lands in a region where multiple speakers overlap, a single scan may not fully resolve it. This is an acceptable tradeoff for a test patch.
+
+```cpp
+auto applyGuard = [&](al::Vec3f posePos) -> al::Vec3f {
+    al::Vec3f rp(posePos.x, -posePos.z, posePos.y);  // flip to DBAP space
+    // Pass 1: soft zone (parabolic bump)
+    for (const auto& spkVec : mSpeakerPositions) { /* ... */ }
+    // Pass 2: hard floor convergence loop
+    for (int iter = 0; iter < kGuardMaxIter; ++iter) { /* ... */ }
+    return al::Vec3f(rp.x, rp.z, -rp.y);  // un-flip
+};
+
+al::Vec3f guardedStart = applyGuard(pose.positionStart);  // full guard
+al::Vec3f guardedEnd   = applyGuard(pose.positionEnd);    // full guard
+
+for (int j = 0; j < kNumSubSteps; ++j) {
+    float alpha = (static_cast<float>(j) + 0.5f) / static_cast<float>(kNumSubSteps);
+    al::Vec3f subPos = guardedStart + alpha * (guardedEnd - guardedStart);
+    float mag = subPos.mag();
+    if (mag > 1e-7f) subPos = (subPos / mag) * mLayoutRadius;
+
+    // Safety net: Pass 2 only, single scan (no convergence loop, no Pass 1)
+    for (const auto& spkVec : mSpeakerPositions) {
+        float dist = (subPos - spkVec).mag();
+        if (dist < kMinSpeakerDist && dist > 1e-7f) {
+            al::Vec3f dir = (subPos - spkVec) / dist;
+            subPos = spkVec + dir * kMinSpeakerDist;
+        }
+    }
+
+    mFastMoverScratch.zeroOut();
+    mDBap->renderBuffer(mFastMoverScratch, subPos,
+                        mSourceBuffer.data() + j * subFrames, subFrames);
+    // accumulate...
+}
+```
+
+---
+
 **Files to change:** `Spatializer.hpp` only.
 
 **RT-safety:** Zero allocation. State vectors are audio-thread-owned after `start()`. Negligible memory.
 
-**Status:** PLAN
+**Status:** PLAN (normal-path continuity fix PATCHED 2026-04-01; fast-mover patch pending retest)
 
 ---
 

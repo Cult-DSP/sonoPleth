@@ -516,18 +516,53 @@ public:
                 float angleDelta = std::acos(dotVal);
                 bool  isFastMover = (angleDelta > kFastMoverAngleRad);
 
+                // subFrames is used by both the normal-path doBlend branch
+                // and the fast-mover branch — define it here so both can reach it.
+                const unsigned int subFrames =
+                    numFrames / static_cast<unsigned int>(kNumSubSteps);
+
                 if (!isFastMover) {
                     // ── Normal path ───────────────────────────────────────
-                    // Single guarded position (safePos, computed above) for
-                    // the whole block. renderBuffer() accumulates into mRenderIO.
-                    mDBap->renderBuffer(mRenderIO, safePos,
-                                        mSourceBuffer.data(), numFrames);
+                    // Bug 9.1 — cross-block guard-transition continuity.
+                    // When Pass 2 fired this block or last block, blend the
+                    // guard-resolved position from last block (mPrevSafePos)
+                    // into the first half of sub-steps, then safePos for the
+                    // second half.  Eliminates the ~23% DBAP gain step at
+                    // block boundaries when a source enters or exits the
+                    // hard-floor zone.
+                    //
+                    // doBlend activates only when a guard transition is detected
+                    // (current or prior block fired Pass 2) AND a valid prior
+                    // position exists.  Both conditions required to avoid
+                    // stale-data artefacts on the very first block.
+                    const bool doBlend = (si < mPrevSafePos.size())
+                        && mPrevSafeValid[si]
+                        && (guardFiredForSource || mPrevGuardFired[si]);
+
+                    if (doBlend) {
+                        for (int j = 0; j < kNumSubSteps; ++j) {
+                            const al::Vec3f& subPos =
+                                (j < kNumSubSteps / 2) ? mPrevSafePos[si] : safePos;
+                            mFastMoverScratch.zeroOut();
+                            mDBap->renderBuffer(mFastMoverScratch, subPos,
+                                                mSourceBuffer.data() + j * subFrames,
+                                                subFrames);
+                            for (unsigned int ch = 0; ch < renderChannels; ++ch) {
+                                const float* src = mFastMoverScratch.outBuffer(ch);
+                                float*       dst = mRenderIO.outBuffer(ch);
+                                for (unsigned int f = 0; f < subFrames; ++f)
+                                    dst[j * subFrames + f] += src[f];
+                            }
+                        }
+                    } else {
+                        // Normal single-position render (no guard transition).
+                        mDBap->renderBuffer(mRenderIO, safePos,
+                                            mSourceBuffer.data(), numFrames);
+                    }
                 } else {
                     // ── Fast-mover path ───────────────────────────────────
                     // Render 4 sub-chunks, each at a lerp'd position that is
                     // renormalised to the layout-radius sphere, then guarded.
-                    const unsigned int subFrames =
-                        numFrames / static_cast<unsigned int>(kNumSubSteps);
 
                     for (int j = 0; j < kNumSubSteps; ++j) {
                         // Sub-chunk center interpolation weight (0.125, 0.375, 0.625, 0.875)
@@ -588,6 +623,17 @@ public:
                                 dst[j * subFrames + f] += src[f];
                         }
                     }
+                }
+
+                // Bug 9.1 — update guard-transition blending state for next block.
+                // safePos is the block-center guard-resolved position (normal path).
+                // Written unconditionally so a following normal-path block always
+                // has a fresh anchor, regardless of whether this block was a
+                // fast-mover or not.
+                if (si < mPrevSafePos.size()) {
+                    mPrevSafePos[si]    = safePos;
+                    mPrevSafeValid[si]  = 1u;
+                    mPrevGuardFired[si] = guardFiredForSource ? 1u : 0u;
                 }
             }
         }
@@ -918,8 +964,16 @@ public:
         // All sources start "silent" so the very first block always triggers
         // the fade-in ramp regardless of prior state.
         mSourceWasSilent.assign(numSources, 1u);
+
+        // Bug 9.1 — guard-transition blending state. All sources start with
+        // no valid prior position and no prior guard firing, so the blend path
+        // is suppressed on the very first block (safe default).
+        mPrevSafePos.assign(numSources, al::Vec3f(0.0f, 0.0f, 0.0f));
+        mPrevSafeValid.assign(numSources, 0u);
+        mPrevGuardFired.assign(numSources, 0u);
+
         std::cout << "[Spatializer] prepareForSources: " << numSources
-                  << " per-source onset-fade slots allocated." << std::endl;
+                  << " per-source state slots allocated (onset-fade + guard-blend)." << std::endl;
     }
 
     // ── Phase 6: Focus auto-compensation ─────────────────────────────────
@@ -1120,4 +1174,19 @@ private:
     //   prepareForSources() was never called.
     // AUDIO-THREAD-OWNED after start().
     std::vector<uint8_t>        mSourceWasSilent;
+
+    // ── Bug 9.1: Per-source guard-transition blending state ───────────────
+    // Indexed by stable pose order (si) — same slot each block.
+    // mPrevSafePos[si]    — guard-resolved position written at end of last
+    //                       block (normal path only). Used as the blend-start
+    //                       anchor for the next block's doBlend path.
+    // mPrevSafeValid[si]  — 1 = mPrevSafePos[si] holds a valid value (at
+    //                       least one block has completed for this source).
+    // mPrevGuardFired[si] — 1 = hard-floor Pass 2 fired on last block
+    //                       (normal path). Triggers blend even when the
+    //                       current block is guard-free (exit transition).
+    // Allocated once by prepareForSources(). AUDIO-THREAD-OWNED after start().
+    std::vector<al::Vec3f>      mPrevSafePos;
+    std::vector<uint8_t>        mPrevSafeValid;
+    std::vector<uint8_t>        mPrevGuardFired;
 };
