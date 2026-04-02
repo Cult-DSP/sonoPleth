@@ -74,7 +74,7 @@ Speaker layouts: `spatial_engine/speaker_layouts/translab-sono-layout.json` (pri
 
 | File | Role |
 |---|---|
-| `spatial_engine/realtimeEngine/src/Spatializer.hpp` | Core DBAP render loop. Proximity guard (Pass 1 soft zone + Pass 2 hard floor), fast-mover sub-stepping, Phase 6 mix trims (spkMix/lfeMix), Phase 7 device copy, Phase 14 diagnostic measurement points. **Most bugs touch this file.** |
+| `spatial_engine/realtimeEngine/src/Spatializer.hpp` | Core DBAP render loop. Proximity guard (Pass 1 soft zone + Pass 2 hard floor), fast-mover sub-stepping, cross-block guard-transition blending (`mPrevSafePos`/`mPrevSafeValid`/`mPrevGuardFired` — Bug 9.1), Phase 6 mix trims (spkMix/lfeMix), Phase 7 device copy, Phase 14 diagnostic measurement points. **Most bugs touch this file.** |
 | `spatial_engine/realtimeEngine/src/Pose.hpp` | Keyframe interpolation pipeline: SLERP → `safeDirForSource` → `sanitizeDirForLayout` → `directionToDBAPPosition`. Computes `SourcePose::position` (block center), `positionStart`, `positionEnd`. Pose is known clean — do not suspect it without evidence. |
 | `spatial_engine/realtimeEngine/src/RealtimeBackend.hpp` | Audio callback controller. Owns `ControlSmooth` (50 ms exponential smoother for gain/focus), `processBlock()` Steps 1–6, per-block timing, CPU meter. All config values reach the audio thread exclusively via `mSmooth`. |
 | `spatial_engine/realtimeEngine/src/RealtimeTypes.hpp` | Shared types: `RealtimeConfig` atomics (written by OSC/session API, snapshotted by audio thread). `EngineState` diagnostic counters. `EngineOptions`, `SceneInput`, `LayoutInput`, `RuntimeParams`, `EngineStatus`, `DiagnosticEvents` structs. Threading model documented in header comments — read them. |
@@ -171,14 +171,19 @@ Three threads. This matters for any change touching shared state.
 
 ```
 getBlock() → onset-fade ramp (Bug 1.1) → masterGain multiply
+→ Pass 1 soft guard → Pass 2 hard guard convergence → safePos
 → [fast-mover? angleDelta > 0.25 rad]
     YES → 4 sub-chunks, each:
             lerp positionStart→positionEnd → renorm to mLayoutRadius
-            → Pass 1 soft guard → Pass 2 hard guard
+            → Pass 1 soft guard → Pass 2 hard guard (per sub-step, independent)
             → renderBuffer into mFastMoverScratch → accumulate into mRenderIO
-    NO  → [guard-blend? (Bug 9.1 — planned)]
-            YES → 4 sub-chunks: first 2 use mPrevSafePos[si], last 2 use safePos
-            NO  → Pass 1 soft guard → Pass 2 hard guard → single renderBuffer(mRenderIO, safePos)
+    NO  → [doBlend? guardFiredForSource || mPrevGuardFired[si]] (Bug 9.1)
+            YES → 4 sub-chunks:
+                    first 2 use mPrevSafePos[si] (last block's safe pos)
+                    last  2 use safePos (this block's safe pos)
+                    → renderBuffer into mFastMoverScratch → accumulate into mRenderIO
+            NO  → single renderBuffer(mRenderIO, safePos)
+→ update mPrevSafePos[si], mPrevSafeValid[si], mPrevGuardFired[si]
 → Phase 6: spkMix trim (mains), lfeMix trim (subs)
 → Phase 14 pre-copy measurement (render-bus active mask, DOM/CLUSTER latches)
 → Phase 7: identity copy mRenderIO → io.outBuffer()
@@ -187,7 +192,7 @@ getBlock() → onset-fade ramp (Bug 1.1) → masterGain multiply
 
 ---
 
-### Proximity guard structure (as of 2026-03-28)
+### Proximity guard structure (as of 2026-04-01)
 
 Both the normal path and each fast-mover sub-step apply two passes. The coordinate flip `rp = Vec3f(pos.x, -pos.z, pos.y)` is applied before the guard and undone after — all guard math is in DBAP-internal space, not pose space.
 
@@ -196,6 +201,8 @@ Both the normal path and each fast-mover sub-step apply two passes. The coordina
 **Pass 2 — hard floor** (`kMinSpeakerDist = 0.15 m`): convergence loop (`kGuardMaxIter = 4`). Scans all speakers; if any source is within 0.15 m, pushes out and restarts. Breaks when no speaker fires.
 
 `guardFiredForSource` is set when Pass 2 fires. `speakerProximityCount` is incremented per source-block where the hard floor fires.
+
+**Cross-block blending (Bug 9.1, normal path only):** Three per-source state vectors — `mPrevSafePos`, `mPrevSafeValid`, `mPrevGuardFired` — track the previous block's guard-resolved position and whether Pass 2 fired. When a guard transition is detected (Pass 2 fired this block or last block), the normal path splits into 4 sub-steps: first two use `mPrevSafePos[si]`, last two use `safePos`. This eliminates the ~23% DBAP gain step at block boundaries during guard entry/exit. State is updated at the end of every source render (fast-mover blocks also write a fresh anchor). Fast-mover sub-steps still apply guard independently per sub-step — that path is unchanged.
 
 ---
 
@@ -223,6 +230,8 @@ t=42.5s  CPU=23%  rDom=0xffff  dDom=0xffff  rBus=0x3ffff  dev=0x3ffff  mainRms=0
 
 - Do not redesign auto-compensation (returns 1.0f — plumbing exists, math was wrong; deferred).
 - Do not reopen broad device/output mismatch analysis — Bug 3.2 + Bug 8.1 resolved the structural issue.
+- Do not reopen guard-pop investigation — Bug 9.1 is confirmed closed (translab 2026-04-01). Reopen only if pops recur consistently in later testing.
+- Do not implement the fast-mover guard patch — deferred; no consistent audible evidence after Bug 9.1. See Bug 9 deferred entry.
 - Do not add per-sample or per-source logging in the audio callback (RT-unsafe).
 - Do not change DBAP render granularity (block-based is canonical; per-sample was tried and reverted).
 - Do not re-litigate the structural parity audit — confirmed complete (`3-8-bug-diagnoses.md`). Numerical comparison is deferred as Bug 10.
@@ -257,117 +266,47 @@ Use this format for every new patch attempt. Copy and fill in.
 
 ## Open bugs
 
----
-
-### Bug 9 — Fast-mover intra-block guard transition pop
-
-**Root cause:** In the fast-mover sub-step path (`Spatializer.hpp`), the proximity guard is applied independently per sub-step. When a source sweeps through the `kMinSpeakerDist = 0.15 m` boundary mid-block, adjacent sub-steps have different guard states. DBAP gain on the dominant speaker changes ~23% at the boundary (`focus=1.5`: `0.14^-3 ≈ 364` vs `0.15^-3 ≈ 296`). This step falls at a 128-sample boundary — audible as a click or high-pitched transient.
-
-**Evidence:** Ascent pops at specific timestamps (~115 s, ~198 s, ~345 s). `SpkG` and `NaN` stay near 0 during these events, ruling out the hard-floor guard and clamp as direct causes. The intra-block step is geometrically guaranteed whenever a fast-moving source crosses the guard boundary within a block.
-
-**Relevant code:**
-- `Spatializer.hpp` — fast-mover `for (int j = 0; j < kNumSubSteps; ++j)` block in the DBAP branch. Guard runs inside this loop on each `subSafePos` independently.
-- `Spatializer.hpp` — normal-path `if (!isFastMover)` block: add `mPrevSafePos` blending for guard-transition blocks.
-- `Spatializer.hpp` — `prepareForSources(size_t n)`: extend to allocate 3 new per-source state vectors.
-
----
-
-### Bug 9.1 — Pre-guard endpoint blending — PLAN
-
-**Scope note:** This is a targeted test patch for one specific pop mechanism (intra-block guard-state discontinuity in the fast-mover path). Not all remaining pops are guard-related; this patch should be evaluated as a diagnostic step, not a final universal fix.
-
-**Sequencing:** Implement the normal-path continuity fix first and retest. Then implement the fast-mover patch as a separate change.
-
----
-
-**Approach (normal path — cross-block guard-transition):** When guard fired this block or last block, blend `mPrevSafePos[si]` (sub-steps 0–1) → `safePos` (sub-steps 2–3) using the existing scratch infrastructure.
-
-New state in `Spatializer.hpp` private section:
-```cpp
-std::vector<al::Vec3f>  mPrevSafePos;    // guard-resolved position from last block
-std::vector<uint8_t>    mPrevSafeValid;  // 1 = initialized
-std::vector<uint8_t>    mPrevGuardFired; // 1 = guard fired last block
-```
-
-Normal-path logic (`if (!isFastMover)` block):
-```cpp
-const bool doBlend = mPrevSafeValid[si] && (guardFiredForSource || mPrevGuardFired[si]);
-
-if (doBlend) {
-    for (int j = 0; j < kNumSubSteps; ++j) {
-        const al::Vec3f& subPos = (j < kNumSubSteps / 2) ? mPrevSafePos[si] : safePos;
-        mFastMoverScratch.zeroOut();
-        mDBap->renderBuffer(mFastMoverScratch, subPos,
-                            mSourceBuffer.data() + j * subFrames, subFrames);
-        // accumulate into mRenderIO at frame offset j * subFrames
-    }
-} else {
-    mDBap->renderBuffer(mRenderIO, safePos, mSourceBuffer.data(), numFrames);
-}
-mPrevSafePos[si]    = safePos;
-mPrevSafeValid[si]  = 1u;
-mPrevGuardFired[si] = guardFiredForSource ? 1u : 0u;
-```
-
-Move `subFrames` definition above the `isFastMover` branch so both paths share it.
-
----
-
-**Approach (fast-mover path — revised):** Pre-guard both endpoints with the full guard (Pass 1 + Pass 2 convergence) before the sub-step loop. These serve as smooth trajectory anchors. Inside the loop, lerp between the pre-guarded endpoints, then apply only Pass 2 (hard-floor) as a **single scan** safety net — no Pass 1, no convergence loop.
-
-Rationale for this structure:
-- Pre-guarded endpoints eliminate the large divergent corrections between adjacent sub-steps that caused the original gain step.
-- Pass 1 is omitted inside the loop because the soft-zone bump reintroduces the same divergent correction the fix is meant to eliminate.
-- The single-scan Pass 2 catches the case where the lerped path (a chord) passes back through a hard-floor region between two hard-floor-safe endpoints. Because both endpoints are already clear, any mid-path intrusion will be small; a single scan is sufficient and avoids overcorrection.
-
-Caveat: single-scan Pass 2 is a safety net, not a full geometric guarantee. If a lerped sub-step lands in a region where multiple speakers overlap, a single scan may not fully resolve it. This is an acceptable tradeoff for a test patch.
-
-```cpp
-auto applyGuard = [&](al::Vec3f posePos) -> al::Vec3f {
-    al::Vec3f rp(posePos.x, -posePos.z, posePos.y);  // flip to DBAP space
-    // Pass 1: soft zone (parabolic bump)
-    for (const auto& spkVec : mSpeakerPositions) { /* ... */ }
-    // Pass 2: hard floor convergence loop
-    for (int iter = 0; iter < kGuardMaxIter; ++iter) { /* ... */ }
-    return al::Vec3f(rp.x, rp.z, -rp.y);  // un-flip
-};
-
-al::Vec3f guardedStart = applyGuard(pose.positionStart);  // full guard
-al::Vec3f guardedEnd   = applyGuard(pose.positionEnd);    // full guard
-
-for (int j = 0; j < kNumSubSteps; ++j) {
-    float alpha = (static_cast<float>(j) + 0.5f) / static_cast<float>(kNumSubSteps);
-    al::Vec3f subPos = guardedStart + alpha * (guardedEnd - guardedStart);
-    float mag = subPos.mag();
-    if (mag > 1e-7f) subPos = (subPos / mag) * mLayoutRadius;
-
-    // Safety net: Pass 2 only, single scan (no convergence loop, no Pass 1)
-    for (const auto& spkVec : mSpeakerPositions) {
-        float dist = (subPos - spkVec).mag();
-        if (dist < kMinSpeakerDist && dist > 1e-7f) {
-            al::Vec3f dir = (subPos - spkVec) / dist;
-            subPos = spkVec + dir * kMinSpeakerDist;
-        }
-    }
-
-    mFastMoverScratch.zeroOut();
-    mDBap->renderBuffer(mFastMoverScratch, subPos,
-                        mSourceBuffer.data() + j * subFrames, subFrames);
-    // accumulate...
-}
-```
-
----
-
-**Files to change:** `Spatializer.hpp` only.
-
-**RT-safety:** Zero allocation. State vectors are audio-thread-owned after `start()`. Negligible memory.
-
-**Status:** PLAN (normal-path continuity fix PATCHED 2026-04-01; fast-mover patch pending retest)
+*(none — see deferred items below)*
 
 ---
 
 ## Closed bugs
+
+---
+
+### Bug 9 — Guard transition pop (normal-path cross-block discontinuity)
+
+**Root cause:** The normal-path DBAP render used a single guard-resolved position (`safePos`) for the entire block. When a source entered or exited the `kMinSpeakerDist = 0.15 m` hard-floor zone, the guard-resolved position changed discontinuously between consecutive blocks. DBAP gain on the dominant speaker stepped ~23% at the block boundary (`focus=1.5`: `0.14^-3 ≈ 364` vs `0.15^-3 ≈ 296`) — audible as a click or high-pitched transient.
+
+**Evidence pre-fix:** Ascent pops at ~115 s, ~198 s, ~345 s. `SpkG` near 0 during events (hard-floor guard not actively firing mid-run — transitions were at block boundaries, not within blocks).
+
+---
+
+### Bug 9.1 — Cross-block guard-transition blending — PATCHED (2026-04-01)
+
+**Approach:** Added three per-source state vectors (`mPrevSafePos`, `mPrevSafeValid`, `mPrevGuardFired`) to `Spatializer.hpp`. When Pass 2 fired on the current or previous block, the normal path splits into 4 sub-steps using `mFastMoverScratch`: first two sub-steps use `mPrevSafePos[si]` (previous block's guard-resolved position), last two use `safePos` (current block). State is updated unconditionally at the end of each source's render so fast-mover blocks also leave a valid anchor. `subFrames` hoisted above the `isFastMover` branch so both paths share it. No allocation in the audio callback.
+
+**Files changed:**
+- `spatial_engine/realtimeEngine/src/Spatializer.hpp`: state vectors (private section), `prepareForSources()` allocation, normal-path `doBlend` branch, `subFrames` hoist, end-of-source state update.
+
+**RT-safety:** Zero allocation. All state vectors are audio-thread-owned after `start()`. Negligible memory overhead (3 × numSources scalars).
+
+**Test result (2026-04-01, translab):**
+- Ascent: clean, no pops the whole run.
+- Swale: clean.
+- 360RA (rescale full sphere): one isolated pop ~96 s on first run; second run clean. Not attributed to this fix — insufficient evidence to act on. May be a content-specific or non-guard pop mechanism.
+
+**Status:** PATCHED
+
+---
+
+### Bug 9 — Fast-mover intra-block guard-step (deferred follow-up)
+
+**Note:** The original Bug 9 diagnosis named the *fast-mover* sub-step path as the primary suspect. The normal-path fix (Bug 9.1) resolved the audible symptoms at translab before any fast-mover patch was needed, indicating the normal-path cross-block discontinuity was the dominant mechanism. The fast-mover intra-block guard step (independent guard per sub-step) is a geometrically real issue but produced no consistent audible evidence after Bug 9.1 landed.
+
+**Deferred plan (do not implement unless pops reappear consistently in later testing):** Pre-guard both endpoints with the full guard before the sub-step loop; lerp between pre-guarded endpoints per sub-step; apply Pass 2 only (single scan, no convergence loop, no Pass 1) as a safety net inside the loop. See the previously documented rationale in git history.
+
+**Status:** DEFERRED — reopen only if pops recur consistently and correlate with fast-mover sources.
 
 ---
 
@@ -535,6 +474,8 @@ Extended `Pose::computePositions()` from `(double blockCenterTimeSec)` to `(doub
 
 ## Deferred / open questions
 
+- **Bug 9 fast-mover patch (deferred):** Intra-block guard-state discontinuity in the fast-mover sub-step path is geometrically real but produced no consistent audible evidence after Bug 9.1 landed. Do not implement unless pops reappear consistently in later testing and correlate with fast-mover sources. Design is documented under the Bug 9 closed entry above.
+- **360RA isolated pop (~96 s, first run only):** Single occurrence, not reproduced on second run. Not attributed to Bug 9.1. Possible causes: content-specific guard interaction, non-guard mechanism, or one-off OS scheduling event. Monitor in future 360RA testing; do not act on single-run evidence.
+- **`kMinSpeakerDist` tuning:** 0.15 m may be too large for 360RA DirectSpeaker content (sources at 0.02–0.10 m from target speakers). Consider reducing to ~0.05 m if 360RA pops recur.
 - **Bug 10 (deferred): Numerical parity with offline renderer.** Structural parity confirmed (`3-8-bug-diagnoses.md`). Not numerically verified. Primary concern: `splitStems.py` may write mono WAVs at PCM_16 rather than FLOAT. Check: `sf.info('processedData/stageForRender/1.1.wav').subtype` should be `'FLOAT'`. Full procedure in `3-8-bug-diagnoses.md` Section 5.
-- **`kMinSpeakerDist` tuning:** 0.15 m may be too large for 360RA DirectSpeaker content (sources at 0.02–0.10 m from target speakers). Consider reducing to ~0.05 m after Bug 9 is confirmed fixed.
 - **Remap load-order bug:** `outputRemap.load()` passes `config.outputChannels` for both `renderChannels` and `deviceChannels`. `deviceChannels` should be the post-open actual count. Latent; only affects `--remap` path.
