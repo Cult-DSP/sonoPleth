@@ -1,5 +1,7 @@
 # TO DO
 
+- set up github ci for this project
+
 ## immediate
 
 - clean up old documentation and consolidate
