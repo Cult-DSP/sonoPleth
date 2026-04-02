@@ -2,12 +2,10 @@
 
 ## immediate
 
-- fix MACOS and ubuntu ci build issues:
-
-*
-
+- fix ubuntu ci build issues and move onto windows:
 - clean up old documentation and consolidate
 - autocomp math
+
 - minimal allolib fork
 
 ## tasks
