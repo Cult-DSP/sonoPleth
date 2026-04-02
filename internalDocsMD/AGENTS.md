@@ -25,7 +25,7 @@
 
 ## Table of Contents
 
-0. [🔎 Issues Found During Duration/RF64 Investigation](#-issues-found-during-durationrf64-investigation-feb-16-2026)
+0. [ Issues Found During Duration/RF64 Investigation](#-issues-found-during-durationrf64-investigation-feb-16-2026)
 1. [Project Overview](#project-overview)
 2. [Architecture & Data Flow](#architecture--data-flow)
 3. [Core Components](#core-components)
@@ -925,6 +925,39 @@ git push origin feature/my-feature
 
 # Create PR on GitHub
 ```
+
+### CI — GitHub Actions
+
+CI runs automatically on push and PR to `main` and `devel`. It can also be triggered manually from the GitHub Actions UI (`workflow_dispatch`).
+
+**Workflow file:** `.github/workflows/ci.yml`
+
+**Platforms:** `ubuntu-22.04` and `macos-14` (pinned, not floating `*-latest`).
+
+**What CI does:**
+
+1. Checks out the repo with `submodules: recursive`
+2. Installs Ubuntu system packages required by AlloLib (ALSA, PulseAudio, OpenGL, X11 headers)
+3. Runs `cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DSPATIALROOT_BUILD_GUI=OFF`
+4. Runs `cmake --build build --parallel`
+
+All C++ dependencies are vendored as submodules — no system package manager installs are needed beyond the AlloLib platform headers.
+
+**To reproduce CI locally:**
+
+```bash
+git submodule update --init --recursive
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DSPATIALROOT_BUILD_GUI=OFF
+cmake --build build --parallel
+```
+
+For a fully clean build:
+
+```bash
+rm -rf build && cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DSPATIALROOT_BUILD_GUI=OFF && cmake --build build --parallel
+```
+
+Full CI details, vendored dependency table, known build fixes, and future extension notes: `internalDocsMD/OS/CI_overview.md`.
 
 ---
 

@@ -1,10 +1,11 @@
 # TO DO
 
-- set up github ci for this project - sort of working
-
 ## immediate
 
-- fix lbsnd file dependency and test - in progress
+- fix MACOS and ubuntu ci build issues:
+
+*
+
 - clean up old documentation and consolidate
 - autocomp math
 - minimal allolib fork
