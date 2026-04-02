@@ -3,8 +3,6 @@
 ## immediate
 
 - fix cpp gui session restarting issue and test
-- use refactor info to update realtime master md and agents.md
-- remove python bloat
 - get back to work on realtime engine fixes
 
 ## tasks
@@ -20,12 +18,13 @@
   - clean up the random run files and shell scripts at project root
 - bugs to fix:
   - main engine playback (reloc and pops)
-  - auto comp
+  - auto comp and overal runtime debug focus
 
 - windows support
 
 # Crucial CLI / GUI Features:
 
+- add more volume decrease support
 - select output at run time - seems to work
 - limit buffer size selectiom - potentially dangerous / produce warnings
 - add render tab, dont bundle with transcoder

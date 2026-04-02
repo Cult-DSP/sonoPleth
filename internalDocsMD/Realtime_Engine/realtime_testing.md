@@ -1,3 +1,29 @@
+# 4 - 1 - 26 realtime testing
+
+## round 1 - bug fix 9.1 part 1
+
+### results [translab testing]:
+
+- ascent test 1:
+
+* first half no bugs - perfect
+* no issues the whole time -
+
+- swale test 1:
+
+* perfect
+
+-
+
+- 360ra test file test 1
+
+* note: since 360ra uses full cartesian coords (y -1 to +1), unlike atmos (y 0 to +1), i select the rescale full sphere, not rescale atmos up
+
+* 1 pop around 96 seconds - that was all
+
+- 360ra test file test 2
+- no issues the second time
+
 # 3 - 28 - 26 Realtime Testing
 
 ## Round 4
