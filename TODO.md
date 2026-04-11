@@ -4,10 +4,10 @@
 
 - windows ci
 - windows dependencies and build
-- clean up old documentation and consolidate
 - autocomp math
+- clean up old documentation and consolidate
 
-- minimal allolib fork
+- minimal allolib fork - and test builds
 
 ## tasks
 

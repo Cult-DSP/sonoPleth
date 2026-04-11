@@ -228,20 +228,20 @@ int main(int argc, char *argv[]) {
     // layout JSON has speaker positions in radians
     // these get converted to degrees when creating al::Speaker objects in SpatialRenderer
     std::cout << "Loading layout...\n";
-    SpeakerLayoutData layout = LayoutLoader::loadLayout(layoutFile);
+    SpeakerLayoutData layout = LayoutLoader::loadLayout(layoutFile.string());
 
     // spatial trajectories from LUSID scene (frames/nodes format)
     std::cout << "Loading LUSID scene...\n";
-    SpatialData spatial = JSONLoader::loadLusidScene(positionsFile);
+    SpatialData spatial = JSONLoader::loadLusidScene(positionsFile.string());
 
     // load all mono source files
     std::cout << "Loading source WAVs...\n";
     std::map<std::string, MonoWavData> sources;
     if (useADM) {
         std::cout << "  ADM file: " << admFile << " (direct channel extraction)\n";
-        sources = WavUtils::loadSourcesFromADM(admFile, spatial.sources, spatial.sampleRate);
+        sources = WavUtils::loadSourcesFromADM(admFile.string(), spatial.sources, spatial.sampleRate);
     } else {
-        sources = WavUtils::loadSources(sourcesFolder, spatial.sources, spatial.sampleRate);
+        sources = WavUtils::loadSources(sourcesFolder.string(), spatial.sources, spatial.sampleRate);
     }
 
     // main rendering happens here
@@ -253,7 +253,7 @@ int main(int argc, char *argv[]) {
     // output has consecutive channels 0 to numSpeakers
     // if you need AlloSphere hardware channel numbers with gaps you can remap later
     std::cout << "Writing output WAV: " << outFile << "\n";
-    WavUtils::writeMultichannelWav(outFile, output);
+    WavUtils::writeMultichannelWav(outFile.string(), output);
 
     std::cout << "Done.\n";
     return 0;

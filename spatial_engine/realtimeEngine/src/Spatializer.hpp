@@ -95,6 +95,13 @@
 #include <string>
 #include <vector>
 
+// MSVC does not have __builtin_popcountll; use the intrinsic equivalent.
+#ifdef _MSC_VER
+#include <intrin.h>
+static inline int sr_popcountll(unsigned long long x) { return static_cast<int>(__popcnt64(x)); }
+#define __builtin_popcountll sr_popcountll
+#endif
+
 #include "al/io/al_AudioIO.hpp"
 #include "al/sound/al_Dbap.hpp"
 #include "al/sound/al_Speaker.hpp"
