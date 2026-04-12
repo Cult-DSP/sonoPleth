@@ -2,10 +2,10 @@
 
 ## immediate
 
-- windows ci
-- windows dependencies and build
-- autocomp math
 - clean up old documentation and consolidate
+- deprecate remap csv - use internal mapping logic (virtual linear channels array remapped to input channels at the end) - redocument and test
+- test runtime now that everything builds via ci
+- autocomp math
 
 - minimal allolib fork - and test builds
 
@@ -22,7 +22,6 @@
   - clean up the random run files and shell scripts at project root
   - clean up old branches
 - bugs to fix:
-  - main engine playback (reloc and pops)
   - auto comp and overal runtime debug focus
 
 - windows support
