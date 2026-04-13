@@ -38,14 +38,55 @@ The engine follows a sequential agent model. Each agent owns one stage of the pr
 ### Build / Run Quick Reference
 
 ```bash
-./init.sh          # first-time setup
-./build.sh         # subsequent builds
-./run.sh           # launch GUI (or run spatialroot_realtime directly)
+./init.sh              # first-time setup (run once)
+./build.sh --gui       # build everything including GUI
+./build.sh --engine-only  # faster rebuild for engine-only changes
+./run.sh               # launch GUI (normal path)
+
+# Headless CLI testing:
+./build/spatialroot_realtime \
+    --layout spatial_engine/speaker_layouts/translab-sono-layout.json \
+    --scene  processedData/stageForRender/SWALE-ATMOS-LFE.lusid.json \
+    --adm    sourceData/SWALE-ATMOS-LFE.wav \
+    --device "MOTU Pro Audio"   # omit for system default
+    --list-devices              # enumerate output devices then exit
 ```
 
-Test content: `sourceData/SWALE-ATMOS-LFE.wav` (ADM mode), `sourceData/lusid_package/` (mono mode).
+Note: `./engine.sh` is a legacy standalone build script outputting to `spatial_engine/realtimeEngine/build/`. Prefer `./build.sh` — it uses the unified CMake build at `build/` and is the canonical path.
 
-Key source files: `Spatializer.hpp`, `Streaming.hpp`, `Pose.hpp`, `RealtimeBackend.hpp`, `EngineSession.hpp`, `RealtimeTypes.hpp`.
+### Test Content
+
+| Content | ADM WAV | LUSID Scene |
+|---|---|---|
+| Swale | `sourceData/SWALE-ATMOS-LFE.wav` | `processedData/stageForRender/SWALE-ATMOS-LFE.lusid.json` |
+| Ascent | `sourceData/ASCENT-ATMOS-LFE.wav` | `processedData/stageForRender/ASCENT-ATMOS-LFE.lusid.json` |
+| Eden | `sourceData/EDEN-ATMOS-MIX-LFE.wav` | `processedData/stageForRender/EDEN-ATMOS-MIX-LFE.lusid.json` |
+| Canyon | `sourceData/CANYON-ATMOS-LFE.wav` | *(no pre-built scene — transcode via GUI TRANSCODE tab or cult-transcoder)* |
+| 360RA | `sourceData/360RA_test.wav` | `processedData/stageForRender/360RA_test.lusid.json` |
+
+Speaker layouts: `spatial_engine/speaker_layouts/translab-sono-layout.json` (primary test), `allosphere_layout.json` (56-ch).
+
+### Key Source Files
+
+**C++ engine:**
+
+| File | Role |
+|---|---|
+| `spatial_engine/realtimeEngine/src/Spatializer.hpp` | Core DBAP render loop. Proximity guard (Pass 1 soft zone + Pass 2 hard floor), fast-mover sub-stepping, cross-block guard-transition blending (`mPrevSafePos`/`mPrevSafeValid`/`mPrevGuardFired`), Phase 6 mix trims, Phase 14 diagnostic measurement points. **Most bugs touch this file.** |
+| `spatial_engine/realtimeEngine/src/Pose.hpp` | Keyframe interpolation pipeline: SLERP → `safeDirForSource` → `sanitizeDirForLayout` → `directionToDBAPPosition`. Computes `SourcePose::position` (block center), `positionStart`, `positionEnd`. |
+| `spatial_engine/realtimeEngine/src/RealtimeBackend.hpp` | Audio callback controller. Owns `ControlSmooth` (50 ms exponential smoother for gain/focus), `processBlock()` Steps 1–6, per-block timing, CPU meter. All config values reach the audio thread exclusively via `mSmooth`. |
+| `spatial_engine/realtimeEngine/src/RealtimeTypes.hpp` | Shared types: `RealtimeConfig` atomics, `EngineState` diagnostic counters, all public structs. Threading model documented in header comments — read them. |
+| `spatial_engine/realtimeEngine/src/EngineSession.hpp/.cpp` | Public session API. Wraps all subsystems. Contains OSC `ParameterServer` and `OscParams` inner struct. |
+| `spatial_engine/realtimeEngine/src/main.cpp` | Headless CLI entry point. Parses args, builds config structs, calls `EngineSession` API, runs monitoring loop. |
+| `spatial_engine/realtimeEngine/src/Streaming.hpp` | Per-source audio streaming from multichannel ADM WAV. `parseChannelIndex()` maps source name → 0-based ADM channel: `"N.1" → N-1`, `"LFE" → 3`. |
+
+**C++ GUI:**
+
+| File | Role |
+|---|---|
+| `gui/imgui/src/App.hpp` / `App.cpp` | ImGui + GLFW desktop app. Owns `EngineSession`. `onStart()` always calls `resetRuntimeToDefaults()` before launching. Controls engine via direct C++ setters — not OSC. Two tabs: ENGINE and TRANSCODE. |
+| `gui/imgui/src/SubprocessRunner.hpp/.cpp` | Runs `cult-transcoder` subprocess for ADM WAV → LUSID scene conversion. |
+| `gui/imgui/src/main.cpp` | GLFW window setup, render loop, calls `App::tick()` each frame. |
 
 Threading model: audio thread (RT, AlloLib), loader thread (background disk I/O), main thread (lifecycle + update()). See [Threading and Safety](#threading-and-safety) below.
 
@@ -269,14 +310,15 @@ All `RealtimeConfig` atomics use `std::memory_order_relaxed` for reads on the au
 
 OSC is the **secondary** control surface (primary is direct `EngineSession` setters). Default port: `9009`. Disable: `oscPort=0` in `RuntimeConfig`.
 
-| Parameter | OSC Address | Range | Default |
-|---|---|---|---|
-| Master Gain | `/realtime/gain` | 0.0–1.0 | 0.5 |
-| DBAP Focus | `/realtime/focus` | 0.2–5.0 | 1.5 |
-| Speaker Mix dB | `/realtime/speaker_mix_db` | -10–+10 | 0.0 |
-| Sub Mix dB | `/realtime/sub_mix_db` | -10–+10 | 0.0 |
-| Auto-Compensation | `/realtime/auto_comp` | 0/1 | 0 |
-| Pause/Play | `/realtime/paused` | 0/1 | 0 |
+| Parameter | OSC Address | Type | Range | Default | Notes |
+|---|---|---|---|---|---|
+| Master Gain | `/realtime/gain` | float | 0.1–3.0 | 0.5 | Master gain |
+| DBAP Focus | `/realtime/focus` | float | 0.2–5.0 | 1.5 | DBAP rolloff exponent |
+| Speaker Mix dB | `/realtime/speaker_mix_db` | float | -10–+10 | 0.0 | Post-DBAP main trim |
+| Sub Mix dB | `/realtime/sub_mix_db` | float | -10–+10 | 0.0 | Post-DBAP sub trim |
+| Auto-Compensation | `/realtime/auto_comp` | float (bool) | 0/1 | 0 | Focus auto-compensation |
+| Pause/Play | `/realtime/paused` | float (bool) | 0/1 | 0 | Pause/resume transport |
+| Elevation Mode | `/realtime/elevation_mode` | float (int) | 0/1/2 | 0 | 0=RescaleAtmosUp, 1=RescaleFullSphere, 2=Clamp |
 
 **Wiring:** Parameter callbacks write to `RealtimeConfig` atomics via `std::memory_order_relaxed`. `pendingAutoComp` flag: for main-thread-only `computeFocusCompensation()`.
 
@@ -300,6 +342,92 @@ Key architectural decisions (locked for v1):
 - Up to 128 sources simultaneously
 - PCM WAV/RF64 input (LUSID packages or ADM direct streaming)
 - Runtime toggles: elevation mode, DBAP focus, master gain, speaker compensation, play/pause/restart
+
+---
+
+## DBAP Render Path (One Source, One Block)
+
+> From `4_1_bug_audit.md` — reference for anyone touching `Spatializer.hpp`.
+
+```
+getBlock() → onset-fade ramp (Bug 1.1) → masterGain multiply
+→ Pass 1 soft guard → Pass 2 hard guard convergence → safePos
+→ [fast-mover? angleDelta > 0.25 rad]
+    YES → 4 sub-chunks, each:
+            lerp positionStart→positionEnd → renorm to mLayoutRadius
+            → Pass 1 soft guard → Pass 2 hard guard (per sub-step, independent)
+            → renderBuffer into mFastMoverScratch → accumulate into mRenderIO
+    NO  → [doBlend? guardFiredForSource || mPrevGuardFired[si]] (Bug 9.1)
+            YES → 4 sub-chunks:
+                    first 2 use mPrevSafePos[si] (last block's safe pos)
+                    last  2 use safePos (this block's safe pos)
+                    → renderBuffer into mFastMoverScratch → accumulate into mRenderIO
+            NO  → single renderBuffer(mRenderIO, safePos)
+→ update mPrevSafePos[si], mPrevSafeValid[si], mPrevGuardFired[si]
+→ Phase 6: spkMix trim (mains), lfeMix trim (subs)
+→ Phase 14 pre-copy measurement (render-bus active mask, DOM/CLUSTER latches)
+→ Phase 7: identity copy mRenderIO → io.outBuffer()
+→ Phase 14 post-copy measurement (device active mask)
+```
+
+The coordinate flip `rp = Vec3f(pos.x, -pos.z, pos.y)` is applied before the guard and undone after — all guard math is in DBAP-internal space, not pose space.
+
+---
+
+## Proximity Guard Structure
+
+**Pass 1 — soft zone** (`kGuardSoftZone = 0.45 m`): single scan. Symmetric parabolic bump: `u = (dist - kMin) / (kSoft - kMin)`, `push = zoneWidth * u * (1-u)`. Zero effect at both boundaries, peak at midpoint. No iteration.
+
+**Pass 2 — hard floor** (`kMinSpeakerDist = 0.15 m`): convergence loop (`kGuardMaxIter = 4`). Scans all speakers; if any source is within 0.15 m, pushes out and restarts. Breaks when no speaker fires.
+
+`guardFiredForSource` is set when Pass 2 fires. `speakerProximityCount` incremented per source-block where the hard floor fires.
+
+**Cross-block blending (Bug 9.1, normal path only):** Three per-source state vectors — `mPrevSafePos`, `mPrevSafeValid`, `mPrevGuardFired` — track the previous block's guard-resolved position and whether Pass 2 fired. When a guard transition is detected, the normal path splits into 4 sub-steps: first two use `mPrevSafePos[si]`, last two use `safePos`. Eliminates the ~23% DBAP gain step at block boundaries during guard entry/exit. State updated at the end of every source render.
+
+**Deferred — fast-mover intra-block guard:** Intra-block guard-state discontinuity in the fast-mover sub-step path is geometrically real but produced no consistent audible evidence after Bug 9.1. Do not implement unless pops recur consistently and correlate with fast-mover sources.
+
+---
+
+## Diagnostic Output Key
+
+```
+t=42.5s  CPU=23%  rDom=0xffff  dDom=0xffff  rBus=0x3ffff  dev=0x3ffff  mainRms=0.031  subRms=0.004  Xrun=0  NaN=0  SpkG=14  PLAYING
+[RELOC-RENDER]   t=42.5s  mask: 0xffff → 0x3ffff
+[DOM-RENDER]     t=42.5s  dom:  0xffff → 0x3ffff
+[CLUSTER-RENDER] t=42.5s  top4: 0x0123 → 0x0456
+```
+
+| Field | Meaning |
+|---|---|
+| `rBus` / `dev` | Active channel bitmask: render bus / device output. `0x3ffff` = 18 ch (16 main + 2 sub). If these differ → output-layer problem. |
+| `[RELOC]` toggling `0x3ffff ↔ 0xffff` | Sub channels turning on/off with LFE content. **Expected, not a bug.** |
+| `[CLUSTER]` | 2+ of the top-4 mains changed. Correlate with audible pops/relocations. |
+| `SpkG` | `speakerProximityCount` this 500 ms window. Nonzero = hard-floor guard active. |
+| `NaN` | `nanGuardCount`. Should be 0. |
+| `CPU` | Wall-clock callback load as `elapsed_µs / block_budget_µs`, capped at 2.0. |
+
+---
+
+## Speaker Layout Quick Reference (translab-sono-layout.json)
+
+- 16 main speakers (channels 0–15), 2 subs (channels 16, 17)
+- Ring 0 (ch 0–7): elevation ~1.75° (near-horizontal)
+- Ring 1 (ch 8–15): elevation ~38–44° (elevated)
+- Layout is 3D (`mLayoutIs2D = false`) → `RescaleAtmosUp` fires for all sources with z > 0
+- Median radius ~5.065 m (`mLayoutRadius`, used as DBAP position scale)
+- Sub channels 16–17 always excluded from `domMask` and DBAP gain output
+
+---
+
+## What Not To Do
+
+- Do not redesign auto-compensation (returns 1.0f — plumbing exists, math was wrong; deferred).
+- Do not reopen broad device/output mismatch analysis — Bug 3.2 + Bug 8.1 resolved the structural issue.
+- Do not reopen guard-pop investigation — Bug 9.1 confirmed closed (translab 2026-04-01). Reopen only if pops recur consistently in later testing.
+- Do not implement the fast-mover guard patch — deferred; no consistent audible evidence after Bug 9.1.
+- Do not add per-sample or per-source logging in the audio callback (RT-unsafe).
+- Do not change DBAP render granularity (block-based is canonical; per-sample was tried and reverted).
+- Do not modify `runPipeline.py` — deprecated and removed. Headless runs use the engine binary directly.
 
 ---
 

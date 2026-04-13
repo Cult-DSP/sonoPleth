@@ -18,7 +18,7 @@
 - `spatialroot_gui` — Dear ImGui + GLFW desktop GUI — builds, launches, and links `EngineSessionCore` directly (no subprocess, no OSC dependency for local control)
 
 **Deferred items:**
-- macOS Dock icon: in-app Dock tile icon via `[NSApp setApplicationIconImage:]` works while running. The desktop/Finder file icon does not update — requires packaging as a `.app` bundle. Deferred to Phase 5.
+- macOS Dock icon: in-app Dock tile icon via `[NSApp setApplicationIconImage:]` works while running. The desktop/Finder file icon does not update — requires packaging as a `.app` bundle. Deferred to a future phase.
 - `SPATIALROOT_BUILD_GUI=ON` flag: GUI build disabled in CI until `gui/imgui/CMakeLists.txt` integration is verified.
 
 ### Stage 3 — ImGui + GLFW GUI
@@ -106,6 +106,23 @@ spatialroot_spatial_render --adm <file> --positions <json> --layout <json> --out
 **Key changes in v3.9:** Removed `containsAudio` analysis (cult-transcoder assumes all channels active). `packageForRender` became optional utility. LUSID package input mode retained for backward compatibility.
 
 **Removed at Phase 6:** `runPipeline.py`, `src/analyzeADM/`, `src/packageADM/`, `src/analyzeRender.py`, `src/config/configCPP*.py`.
+
+---
+
+## Transition from `spatialroot_adm_extract` to `cult-transcoder` (Phase 3, March 2026)
+
+### Old System: `spatialroot_adm_extract` (archived)
+
+- **Purpose:** Extracted ADM XML metadata from BW64/RF64/WAV files.
+- **Implementation:** Built using EBU libraries (`libbw64` and `libadm`).
+- **Output:** `processedData/currentMetaData.xml`
+- **Limitations:** Required a separate build step. Limited to ADM extraction without additional processing.
+
+### New System: `cult-transcoder`
+
+- **Purpose:** Handles ADM extraction and ADM→LUSID transcoding.
+- **Implementation:** Integrated into the `cult-transcoder` binary.
+- **Usage:** `cult-transcoder transcode --in-format adm_wav`
 
 ---
 
@@ -206,6 +223,25 @@ else:
 | Spatial Renderer | `spatial_engine/spatialRender/build/spatialroot_spatial_render` | `...spatialroot_spatial_render.exe` |
 
 All of `src/config/configCPP*.py` removed in Phase 6.
+
+---
+
+## Issues Found During Duration/RF64 Investigation (February 16, 2026)
+
+> From AGENTS.md §0. All items resolved.
+
+| # | Status | Severity | Issue | Location |
+|---|---|---|---|---|
+| 1 | ✅ FIXED | Critical | WAV 4 GB header overflow — `SF_FORMAT_WAV` wraps 32-bit size field | `WavUtils.cpp` |
+| 2 | ✅ FIXED | High | Legacy script trusted corrupted WAV header without cross-check (script removed Phase 6) | (historical) |
+| 3 | ✅ FIXED | Low | Stale `DEBUG` print statements left in renderer | `SpatialRenderer.cpp` |
+| 4 | ✅ FIXED | Medium | `masterGain` default mismatch — now consistently `0.5` | `SpatialRenderer.hpp`, `main.cpp`, docs |
+| 5 | ✅ FIXED | Medium | `dbap_focus` not forwarded for plain `"dbap"` mode (archived, pre-Phase 6) | (historical) |
+| 6 | ✅ FIXED | Medium | Legacy Python wrapper exposed `master_gain` (wrapper removed Phase 6) | (historical) |
+
+**Future items (tracked separately):**
+- #9 (Info): Large interleaved buffer ~11.3 GB peak for 56ch × 566s. Mitigation: chunked streaming write.
+- #10 (Info): Test files only exercise `audio_object` + `LFE` paths; `direct_speaker` untested at render level.
 
 ---
 
@@ -322,25 +358,6 @@ Locked v1 design decisions documented at the time:
 
 ---
 
-## Issues Found During Duration/RF64 Investigation (February 16, 2026)
-
-> From AGENTS.md §0. All items resolved.
-
-| # | Status | Severity | Issue | Location |
-|---|---|---|---|---|
-| 1 | ✅ FIXED | Critical | WAV 4 GB header overflow — `SF_FORMAT_WAV` wraps 32-bit size field | `WavUtils.cpp` |
-| 2 | ✅ FIXED | High | Legacy script trusted corrupted WAV header without cross-check (script removed Phase 6) | (historical) |
-| 3 | ✅ FIXED | Low | Stale `DEBUG` print statements left in renderer | `SpatialRenderer.cpp` |
-| 4 | ✅ FIXED | Medium | `masterGain` default mismatch — now consistently `0.5` | `SpatialRenderer.hpp`, `main.cpp`, docs |
-| 5 | ✅ FIXED | Medium | `dbap_focus` not forwarded for plain `"dbap"` mode (archived, pre-Phase 6) | (historical) |
-| 6 | ✅ FIXED | Medium | Legacy Python wrapper exposed `master_gain` (wrapper removed Phase 6) | (historical) |
-
-**Future items (tracked separately):**
-- #9 (Info): Large interleaved buffer ~11.3 GB peak for 56ch × 566s. Mitigation: chunked streaming write.
-- #10 (Info): Test files only exercise `audio_object` + `LFE` paths; `direct_speaker` untested at render level.
-
----
-
 ## Initial GUI Prototype Notes (Early 2026)
 
 > Source: `cpp_refactor/phase3notes.md`. Notes from the very first ImGui GUI prototype before aesthetic iteration.
@@ -415,23 +432,6 @@ Directories created before any subprocess launch:
 processedData/                   — output root for all pipeline artifacts
 processedData/stageForRender/    — cult-transcoder writes scene.lusid.json here
 ```
-
----
-
-## Transition from `spatialroot_adm_extract` to `cult-transcoder` (Phase 3, March 2026)
-
-### Old System: `spatialroot_adm_extract` (archived)
-
-- **Purpose:** Extracted ADM XML metadata from BW64/RF64/WAV files.
-- **Implementation:** Built using EBU libraries (`libbw64` and `libadm`).
-- **Output:** `processedData/currentMetaData.xml`
-- **Limitations:** Required a separate build step. Limited to ADM extraction without additional processing.
-
-### New System: `cult-transcoder`
-
-- **Purpose:** Handles ADM extraction and ADM→LUSID transcoding.
-- **Implementation:** Integrated into the `cult-transcoder` binary.
-- **Usage:** `cult-transcoder transcode --in-format adm_wav`
 
 ---
 
