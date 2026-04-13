@@ -12,15 +12,15 @@
 
 ## Quick Navigation
 
-| Topic | File | Key Sections |
-|---|---|---|
-| EngineSession API contract, structs, lifecycle, hard constraints | [API.md](API.md) | [Contract](API.md#contract) · [Hard Constraints](API.md#hard-constraints) · [Validation & Gotchas](API.md#validation--known-gotchas) |
-| CI config, vendored deps, Windows fixes, CMake wiring | [BUILD_AND_CI.md](BUILD_AND_CI.md) | [CI Overview](BUILD_AND_CI.md#ci-overview) · [Dep Audit](BUILD_AND_CI.md#dependency-audit) · [Build Notes](BUILD_AND_CI.md#build-system-notes) |
-| LUSID scene format, speaker layout JSON, LUSID package import | [DEPENDENCIES.md](DEPENDENCIES.md) | [LUSID Scene](DEPENDENCIES.md#lusid-scene-json-format) · [Speaker Layout](DEPENDENCIES.md#speaker-layout-json-format) · [Package Import](DEPENDENCIES.md#lusid-package-import-contract-spatialseed) |
-| Realtime engine agents, bug audit, OSC params, threading | [REALTIME_ENGINE.md](REALTIME_ENGINE.md) | [Agent Table](REALTIME_ENGINE.md#agent-architecture-overview) · [Bug Audit](REALTIME_ENGINE.md#bug-audit-april-1-2026) · [OSC Params](REALTIME_ENGINE.md#osc-parameter-reference) · [Threading](REALTIME_ENGINE.md#threading-and-safety) |
-| Repo cleanup, AlloLib lightweighting | [REPO_AUDITING.md](REPO_AUDITING.md) | [Cleanup Audit](REPO_AUDITING.md#repository-cleanup-audit) · [AlloLib Audit](REPO_AUDITING.md#allolib-dependency-audit) |
-| Spatializers, DBAP/VBAP/LBAP, elevation, rendering CLI | [SPATIALIZATION.md](SPATIALIZATION.md) | [Rendering System](SPATIALIZATION.md#rendering-system) · [DBAP Testing](SPATIALIZATION.md#dbap-field-testing-notes) |
-| C++ refactor history, Python pipeline, old GUI, old build system | [devHistory.md](devHistory.md) | [Phase 6 Refactor](devHistory.md#phase-6--c-refactor-complete-march-29-31-2026) · [Python GUI](devHistory.md#python-gui-pyside6--phase-10-february-2026) · [Old Pipeline](devHistory.md#python-offline-pipeline-v39-march-9-2026) |
+| Topic                                                            | File                                     | Key Sections                                                                                                                                                                                                                             |
+| ---------------------------------------------------------------- | ---------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| EngineSession API contract, structs, lifecycle, hard constraints | [API.md](API.md)                         | [Contract](API.md#contract) · [Hard Constraints](API.md#hard-constraints) · [Validation & Gotchas](API.md#validation--known-gotchas)                                                                                                     |
+| CI config, vendored deps, Windows fixes, CMake wiring            | [BUILD_AND_CI.md](BUILD_AND_CI.md)       | [CI Overview](BUILD_AND_CI.md#ci-overview) · [Dep Audit](BUILD_AND_CI.md#dependency-audit) · [Build Notes](BUILD_AND_CI.md#build-system-notes)                                                                                           |
+| LUSID scene format, speaker layout JSON, LUSID package import    | [DEPENDENCIES.md](DEPENDENCIES.md)       | [LUSID Scene](DEPENDENCIES.md#lusid-scene-json-format) · [Speaker Layout](DEPENDENCIES.md#speaker-layout-json-format) · [Package Import](DEPENDENCIES.md#lusid-package-import-contract-spatialseed)                                      |
+| Realtime engine agents, bug audit, OSC params, threading         | [REALTIME_ENGINE.md](REALTIME_ENGINE.md) | [Agent Table](REALTIME_ENGINE.md#agent-architecture-overview) · [Bug Audit](REALTIME_ENGINE.md#bug-audit-april-1-2026) · [OSC Params](REALTIME_ENGINE.md#osc-parameter-reference) · [Threading](REALTIME_ENGINE.md#threading-and-safety) |
+| Repo cleanup, AlloLib lightweighting                             | [REPO_AUDITING.md](REPO_AUDITING.md)     | [Cleanup Audit](REPO_AUDITING.md#repository-cleanup-audit) · [AlloLib Audit](REPO_AUDITING.md#allolib-dependency-audit)                                                                                                                  |
+| Spatializers, DBAP/VBAP/LBAP, elevation, rendering CLI           | [SPATIALIZATION.md](SPATIALIZATION.md)   | [Rendering System](SPATIALIZATION.md#rendering-system) · [DBAP Testing](SPATIALIZATION.md#dbap-field-testing-notes)                                                                                                                      |
+| C++ refactor history, Python pipeline, old GUI, old build system | [devHistory.md](devHistory.md)           | [Phase 6 Refactor](devHistory.md#phase-6--c-refactor-complete-march-29-31-2026) · [Python GUI](devHistory.md#python-gui-pyside6--phase-10-february-2026) · [Old Pipeline](devHistory.md#python-offline-pipeline-v39-march-9-2026)        |
 
 ---
 
@@ -29,6 +29,7 @@
 spatialroot is a C++17 codebase for decoding and rendering Audio Definition Model (ADM) Broadcast WAV files (Dolby Atmos masters) to arbitrary speaker arrays using multiple spatialization algorithms.
 
 **Key capabilities:**
+
 - Multi-format input: Dolby Atmos ADM BWF WAV files
 - Multi-spatializer: DBAP (default), VBAP, LBAP
 - Arbitrary speaker layouts defined in JSON
@@ -91,13 +92,13 @@ Run `./build/spatialroot_realtime --help` for full flag list. See also `PUBLIC_D
 
 Native GUI linking `EngineSessionCore` directly in-process. No subprocess, no OSC dependency for local control.
 
-| File | Role |
-|---|---|
-| `gui/imgui/src/App.hpp` | App class declaration — all state members |
-| `gui/imgui/src/App.cpp` | All UI rendering and engine lifecycle logic — read this first |
-| `gui/imgui/src/main.cpp` | GLFW setup, ImGui init, render loop |
-| `gui/imgui/src/FileDialog_macOS.mm` | NSOpenPanel file pickers + macOS Dock icon setter |
-| `gui/imgui/CMakeLists.txt` | GUI build — includes xxd embed step for miniLogo.png |
+| File                                | Role                                                          |
+| ----------------------------------- | ------------------------------------------------------------- |
+| `gui/imgui/src/App.hpp`             | App class declaration — all state members                     |
+| `gui/imgui/src/App.cpp`             | All UI rendering and engine lifecycle logic — read this first |
+| `gui/imgui/src/main.cpp`            | GLFW setup, ImGui init, render loop                           |
+| `gui/imgui/src/FileDialog_macOS.mm` | NSOpenPanel file pickers + macOS Dock icon setter             |
+| `gui/imgui/CMakeLists.txt`          | GUI build — includes xxd embed step for miniLogo.png          |
 
 **Build:** `./init.sh` then `./build.sh --gui`. **Run:** `./run.sh`.
 
@@ -164,9 +165,11 @@ spatialroot/
 ## Runtime Control Plane
 
 **Primary (in-process):** ImGui GUI calls direct C++ setters on `EngineSession`:
+
 - `setMasterGain(float)`, `setDbapFocus(float)`, `setSpeakerMixDb(float)`, `setSubMixDb(float)`, `setAutoCompensation(bool)`, `setElevationMode(ElevationMode)`
 
 **Secondary (optional OSC):** Remains available for external tooling/remote control.
+
 - Default port: `9009`; disable with `oscPort=0` in `RuntimeConfig`
 - See [REALTIME_ENGINE.md § OSC Parameter Reference](REALTIME_ENGINE.md#osc-parameter-reference) for full address/range table
 
@@ -176,39 +179,39 @@ spatialroot/
 
 ### ADM / Transcoder
 
-| Issue | Solution |
-|---|---|
-| Empty scene / no frames after transcoding | Check ADM XML format — run `cult-transcoder` with verbose output |
-| `cult-transcoder` not found | Build with `./build.sh --cult-only` |
-| LFE stem missing / wrong | Check `--lfe-mode` flag. `hardcoded` = channel 4; `speaker-label` = ADM label detection |
-| `ModuleNotFoundError: No module named 'lxml'` | You're running archived Python code. Use the current C++ toolchain. |
+| Issue                                         | Solution                                                                                |
+| --------------------------------------------- | --------------------------------------------------------------------------------------- |
+| Empty scene / no frames after transcoding     | Check ADM XML format — run `cult-transcoder` with verbose output                        |
+| `cult-transcoder` not found                   | Build with `./build.sh --cult-only`                                                     |
+| LFE stem missing / wrong                      | Check `--lfe-mode` flag. `hardcoded` = channel 4; `speaker-label` = ADM label detection |
+| `ModuleNotFoundError: No module named 'lxml'` | You're running archived Python code. Use the current C++ toolchain.                     |
 
 ### Spatialization
 
-| Issue | Solution |
-|---|---|
-| Sources at zenith/nadir silent | Use `--elevation_mode compress` (RescaleFullSphere) |
-| Zero output / silent channels | Verify `LayoutLoader.cpp` converts radians → degrees: `azimuth * 180.0f / M_PI` |
-| LFE too loud/quiet | Tune `dbap_sub_compensation` in `SpatialRenderer.cpp` (TODO: make CLI option) |
-| DBAP sounds wrong/reversed | AlloLib DBAP coordinate transform `(x,y,z)→(x,-z,y)` is compensated automatically |
+| Issue                                        | Solution                                                                                   |
+| -------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| Sources at zenith/nadir silent               | Use `--elevation_mode compress` (RescaleFullSphere)                                        |
+| Zero output / silent channels                | Verify `LayoutLoader.cpp` converts radians → degrees: `azimuth * 180.0f / M_PI`            |
+| LFE too loud/quiet                           | Tune `dbap_sub_compensation` in `SpatialRenderer.cpp` (TODO: make CLI option)              |
+| DBAP sounds wrong/reversed                   | AlloLib DBAP coordinate transform `(x,y,z)→(x,-z,y)` is compensated automatically          |
 | Render truncated (e.g. 166s instead of 566s) | RF64 auto-selection in `WavUtils.cpp` handles files > 4 GB — ensure you're on current code |
 
 ### Build
 
-| Issue | Solution |
-|---|---|
-| CMake can't find AlloLib | `git submodule update --init --recursive` |
-| Build fails "C++17 required" | CMake 3.20+ required; ensure compiler supports C++17 |
-| Changes not reflected after rebuild | Clean build: `rm -rf build/ && ./build.sh` |
+| Issue                                      | Solution                                                            |
+| ------------------------------------------ | ------------------------------------------------------------------- |
+| CMake can't find AlloLib                   | `git submodule update --init --recursive`                           |
+| Build fails "C++17 required"               | CMake 3.20+ required; ensure compiler supports C++17                |
+| Changes not reflected after rebuild        | Clean build: `rm -rf build/ && ./build.sh`                          |
 | Layout/device channel mismatch (fast-fail) | Match speaker layout channel count to hardware output channel count |
 
 ### LUSID Scene
 
-| Issue | Solution |
-|---|---|
+| Issue                                | Solution                                           |
+| ------------------------------------ | -------------------------------------------------- |
 | Parser warnings about unknown fields | Parser is permissive — non-fatal. Check for typos. |
-| Frames not sorted | Parser auto-sorts — informational only |
-| Duplicate node IDs in frame | Parser keeps last occurrence — fix upstream data |
+| Frames not sorted                    | Parser auto-sorts — informational only             |
+| Duplicate node IDs in frame          | Parser keeps last occurrence — fix upstream data   |
 
 ---
 
@@ -234,12 +237,12 @@ spatialroot/
 
 ### Build Targets Reference
 
-| Target | Flag | Description |
-|---|---|---|
-| `spatialroot_realtime` | `--engine-only` | Realtime engine CLI |
+| Target                       | Flag             | Description            |
+| ---------------------------- | ---------------- | ---------------------- |
+| `spatialroot_realtime`       | `--engine-only`  | Realtime engine CLI    |
 | `spatialroot_spatial_render` | `--offline-only` | Offline batch renderer |
-| `cult-transcoder` | `--cult-only` | ADM → LUSID transcoder |
-| `spatialroot_gui` | `--gui` | Dear ImGui + GLFW GUI |
+| `cult-transcoder`            | `--cult-only`    | ADM → LUSID transcoder |
+| `spatialroot_gui`            | `--gui`          | Dear ImGui + GLFW GUI  |
 
 ---
 
@@ -258,6 +261,7 @@ Opt-in sparse tree: `./scripts/sparse-allolib.sh`
 **Objective:** Add a profile adaptation layer inside LUSID to accept a wider range of ADM variants (Sony 360RA, edge-case Atmos exports).
 
 **Planned work:**
+
 - C++ classes inside `cult-transcoder/src/adm_profiles/`: `detect_profile.cpp`, `atmos_adapter.cpp`, `sony360_adapter.cpp`, `common.cpp`
 - Sony 360RA needs: opaque string IDs (hex-like suffixes `...0a`), `rtime/duration` with `S####` suffix, mute-block handling (gain=0 segments), block compaction to avoid massive frame counts
 

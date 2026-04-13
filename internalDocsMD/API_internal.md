@@ -20,7 +20,7 @@
 | `EngineStatus` | Side-effect-free snapshot of current state (playhead, CPU load, active voices) |
 | `DiagnosticMessage` | Structured warning/error payload for async events |
 
-> **Note:** Core structs (`EngineOptions`, `SceneInput`, etc.) are deliberately outside the `spatial::` namespace to avoid polluting public interfaces with internal legacy types — they are global structs.
+> **Note:** Core structs are deliberately outside the `spatial::` namespace to avoid polluting public interfaces with internal legacy types — they are global structs.
 
 ### Lifecycle & Public Methods
 
@@ -46,7 +46,7 @@ The engine enforces a strict, linear initialization sequence:
 
 | Method | Writes |
 |---|---|
-| `setMasterGain(float)` | `mConfig.masterGain` (linear 0.0–1.0) |
+| `setMasterGain(float)` | `mConfig.masterGain` (linear 0.1–3.0) |
 | `setDbapFocus(float)` | `mConfig.dbapFocus` + sets `mPendingAutoComp` if auto-comp enabled |
 | `setSpeakerMixDb(float)` | `mConfig.loudspeakerMix` (dB→linear) |
 | `setSubMixDb(float)` | `mConfig.subMix` (dB→linear) |
@@ -117,7 +117,7 @@ Audio thread strictness forbids heavy configuration matrix recalculation during 
 
 **What was validated:** `EngineSessionCore` extracted into a distinct linkable CMake library (`EngineSessionCore` static target). Type definitions restructured to prevent `AlloLib`/threading leakage. `internal_validation_runner.cpp` smoke test proved robust execution and clean teardown.
 
-**Layout vs. device channel count mismatch:** Mismatches between layout channel counts and hardware channel counts trigger a fatal fast-fail (e.g., attempting a 7-channel layout on a 2-channel audio device). Public docs must describe `EngineOptions` device fallback behavior and layout configuration dependency.
+**Layout vs. device channel count mismatch:** Mismatches between layout channel counts and hardware channel counts trigger a fatal fast-fail (e.g., attempting a 7-channel layout on a 2-channel audio device). Public docs must describe `EngineConfig` device fallback behavior and layout configuration dependency.
 
 **`uint64_t` bitmask channel cap:** `EngineStatus` uses `uint64_t` bitmasks, implicitly capping the engine at 64 output channels.
 

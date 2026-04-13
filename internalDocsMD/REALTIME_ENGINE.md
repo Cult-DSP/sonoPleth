@@ -35,6 +35,37 @@ The engine follows a sequential agent model. Each agent owns one stage of the pr
 
 > `4_1_bug_audit.md` — All bugs closed as of this date.
 
+### Bug numbering convention
+
+Each distinct root-cause problem is assigned a bug number (integer). Each patch attempt for that bug is a sub-number:
+
+- `8` — Bug 8: the problem description
+- `8.1` — First patch attempt for Bug 8 (may be plan, partial fix, or full fix)
+- `8.2` — Second attempt (if 8.1 was insufficient or revised)
+
+### Change Log Template
+
+Use this format for every new patch attempt:
+
+```
+### Bug N.M — [Short description] — STATUS (date)
+
+**Problem:** One-paragraph description of the failure mode and observable symptom.
+
+**Root cause:** Where in the code the problem originates. File path and approximate location.
+
+**Approach:** What this patch does and why.
+
+**Files changed:**
+- `path/to/file.hpp`: description of change
+
+**RT-safety:** Any concerns and why they are acceptable (or not).
+
+**Test result:** What happened when tested. Pass / partial / fail. Relevant log output.
+
+**Status:** PATCHED | REVERTED | PLAN | IN PROGRESS
+```
+
 ### Build / Run Quick Reference
 
 ```bash
