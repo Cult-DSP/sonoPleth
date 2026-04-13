@@ -39,7 +39,7 @@ cmake --build build --parallel
 - `spatialroot_spatial_render` — offline batch renderer
 - `cult-transcoder` — ADM → LUSID transcoder
 
-**GUI is explicitly disabled.** `gui/imgui/CMakeLists.txt` does not exist yet; enabling `SPATIALROOT_BUILD_GUI` causes `FATAL_ERROR`.
+**GUI is explicitly disabled.** The GUI build exists, but it is kept off in CI pending integration verification.
 
 ### Submodules
 
@@ -95,7 +95,7 @@ libsndfile is built with `ENABLE_EXTERNAL_LIBS=OFF` and `BUILD_PROGRAMS/EXAMPLES
 
 Natural next steps in priority order:
 1. Add build caching (`actions/cache` on `build/` or ccache)
-2. Add GUI build once `gui/imgui/CMakeLists.txt` exists
+2. Add GUI build (CMakeLists exists; verify integration and runner requirements)
 3. Add smoke tests if binaries gain `--help`/`--version` flags
 4. Add artifact upload for release testing
 
@@ -201,4 +201,4 @@ Presence check: `cult_transcoder/thirdparty/libbw64/include/bw64/bw64.hpp` — t
 
 ### SPATIALROOT_BUILD_GUI Flag
 
-`SPATIALROOT_BUILD_GUI=OFF` (default) disables GUI build. Setting it ON while `gui/imgui/CMakeLists.txt` does not exist causes a CMake `FATAL_ERROR`. Enable only after that file is created.
+`SPATIALROOT_BUILD_GUI=OFF` (default) disables GUI build. Enable with `SPATIALROOT_BUILD_GUI=ON`. GUI build is not yet enabled in CI — verify `gui/imgui/CMakeLists.txt` integration before enabling there.

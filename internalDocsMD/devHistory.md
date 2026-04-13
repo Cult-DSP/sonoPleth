@@ -50,7 +50,7 @@
 
 **Task 2.3 — OSC port=0 guard** (03-30): `al::ParameterServer` with `port=0` binds to OS-assigned ephemeral port — does NOT disable OSC. Added `if (mOscPort > 0)` guard in `start()`.
 
-**Task 2.4 — `ElevationMode` type fix** (03-30): Changed `EngineOptions::elevationMode` from `int` to `ElevationMode` enum with default `ElevationMode::RescaleAtmosUp`.
+**Task 2.4 — `ElevationMode` type fix** (03-30): Changed `EngineOptions::elevationMode` from `int` to `ElevationMode` enum with default `ElevationMode::RescaleAtmosUp` (struct subsequently renamed to `EngineConfig`).
 
 **Embedding test** (03-30): `embedding_test.cpp` — compile+link verification, no test data. Calls full V1.1 API surface, expects `loadScene()` to fail gracefully with non-existent path.
 
@@ -331,7 +331,7 @@ Locked v1 design decisions documented at the time:
 **Goal:** Evolve past `void` arguments, resolve Mismatch 5 (Error Handlers).
 
 **Key changes:**
-1. Defined typed structs: `EngineOptions`, `SceneInput`, `LayoutInput`, `RuntimeParams`
+1. Defined typed structs: `EngineOptions`, `SceneInput`, `LayoutInput`, `RuntimeParams` *(These structs were renamed to `EngineConfig`, `SceneConfig`, `LayoutConfig`, `RuntimeConfig` before handoff — see "Completed milestones" below.)*
 2. Updated all lifecycle method signatures to use const-ref struct injection
 3. Added `std::string getLastError() const` for explicit error propagation
 4. `main.cpp`: removed all `session.config()` direct mutations; documented struct grouping inline

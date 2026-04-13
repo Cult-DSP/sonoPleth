@@ -5,7 +5,7 @@
 **Primary entry points:** `spatialroot_realtime` CLI binary, `gui/imgui/` (embeds `EngineSessionCore` in-process)
 
 All phases complete: Phases 1–10 + OSC timing fix + Phase 11 bug-fix pass.  
-See [API.md](API.md) for the `EngineSession` public API contract.
+See [API_internal.md](API_internal.md) for the `EngineSession` public API contract.
 
 ---
 
