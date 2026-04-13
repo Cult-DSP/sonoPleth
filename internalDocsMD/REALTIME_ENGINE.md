@@ -339,7 +339,7 @@ All `RealtimeConfig` atomics use `std::memory_order_relaxed` for reads on the au
 
 > `allolib_parameters_reference.md` — OSC addresses and parameter specs.
 
-OSC is the **secondary** control surface (primary is direct `EngineSession` setters). Default port: `9009`. Disable: `oscPort=0` in `RuntimeConfig`.
+OSC is the **secondary** control surface (primary is direct `EngineSession` setters). Default port: `9009`. Disable: `oscPort=0` in `EngineOptions` (passed to `configureEngine()`).
 
 | Parameter | OSC Address | Type | Range | Default | Notes |
 |---|---|---|---|---|---|

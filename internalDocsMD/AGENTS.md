@@ -120,7 +120,7 @@ Renders a LUSID scene + sources to an N-channel WAV file (offline, not real-time
 
 ### `EngineSession` — C++ Embeddable Engine API
 
-`EngineSessionCore` static library. Strict 5-stage lifecycle. See [API.md](API.md) for full contract, hard constraints, and threading rules.
+`EngineSessionCore` static library. Strict 5-stage lifecycle. See [API_internal.md](API_internal.md) for full contract, hard constraints, and threading rules.
 
 ### LUSID Schema
 
@@ -170,7 +170,7 @@ spatialroot/
 
 **Secondary (optional OSC):** Remains available for external tooling/remote control.
 
-- Default port: `9009`; disable with `oscPort=0` in `RuntimeConfig`
+- Default port: `9009`; disable with `oscPort=0` in `EngineOptions`
 - See [REALTIME_ENGINE.md § OSC Parameter Reference](REALTIME_ENGINE.md#osc-parameter-reference) for full address/range table
 
 ---
