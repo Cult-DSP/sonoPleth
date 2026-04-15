@@ -12,7 +12,7 @@
 - autocomp math
 - move spatial transformation math into seperate file potentially
 
-- minimal allolib fork - and test builds
+- minimal allolib fork - and test builds - remove shallow clone scripts
 
 ## tasks
 
@@ -20,7 +20,7 @@
 
 - configure dbap to have more presense in large spaces
 
-- have engine delete old lusid files on startup / boot up
+- have engine delete old lusid files on startup / boot up / when engine is re run
 
 - use fork of allolib that only has necessary components
   - adjust main build to not use all of allolib build components
@@ -30,8 +30,7 @@
   - consolidate dev history and testing docs
 - clean up repo
   - move offline render code [spatial_engine/src] into spatial_engine/spatialRender and adjust cmake and other code
-  - clean up the random run files and shell scripts at project root
-  - clean up old branches
+
 - bugs to fix:
   - auto comp and overal runtime debug focus
 
@@ -52,6 +51,8 @@
 - make sure all layouts are available from gui dropdown
 
 - allow for setting dbap focus metadata in layout or lusid
+
+- make im gui look nicer
 
 # Transcoder
 
