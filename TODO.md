@@ -2,9 +2,10 @@
 
 ## immediate
 
+- merge transcoder with spatial seed version
+
 - deprecate remap csv - use internal mapping logic (virtual linear channels array remapped to input channels at the end) - redocument and test -- planning in md doc currently
 
-- merge transcoder with spatial seed version
 - debug windows build
 
 - test runtime now that everything builds via ci
@@ -38,8 +39,9 @@
 
 # Crucial CLI / GUI Features:
 
-- add more volume decrease support
+- add more volume decrease and increase support
 - select output at run time - seems to work
+- allow for setting runtime params prior to starting engine
 - limit buffer size selectiom - potentially dangerous / produce warnings
 - add fetch examples to gui - using examples .sh - update to using hugging face links
 - update available example audio files
@@ -48,6 +50,8 @@
 - add binueral mixdown using ear
 
 - make sure all layouts are available from gui dropdown
+
+- allow for setting dbap focus metadata in layout or lusid
 
 # Transcoder
 
