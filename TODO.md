@@ -15,6 +15,12 @@
 
 ## tasks
 
+- update LUSID - deprecate old python components. update documentation
+
+- configure dbap to have more presense in large spaces
+
+- have engine delete old lusid files on startup / boot up
+
 - use fork of allolib that only has necessary components
   - adjust main build to not use all of allolib build components
 
