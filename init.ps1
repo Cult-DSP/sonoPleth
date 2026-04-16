@@ -131,8 +131,8 @@ $LibSndFileCMake = Join-Path $ProjectRoot "thirdparty\libsndfile\CMakeLists.txt"
 if (Test-Path $LibSndFileCMake) {
     Write-Host "✓ thirdparty/libsndfile already initialized"
 } else {
-    Write-Host "Fetching thirdparty/libsndfile (shallow, depth=1)..."
-    git submodule update --init --depth 1 thirdparty/libsndfile
+    Write-Host "Fetching thirdparty/libsndfile..."
+    git submodule update --init thirdparty/libsndfile
     if ($LASTEXITCODE -ne 0) {
         Write-Host "✗ Failed to initialize thirdparty/libsndfile" -ForegroundColor Red
         exit 1
