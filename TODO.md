@@ -11,6 +11,7 @@
 - move spatial transformation math into seperate file potentially
 
 - minimal allolib fork - and test builds - remove shallow clone scripts
+- make sure all submodules are checked out at specific current commits
 
 ## tasks
 

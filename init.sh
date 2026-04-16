@@ -73,14 +73,15 @@ else
     echo "✓ cult_transcoder initialized"
 fi
 
-# cult_transcoder owns its own libbw64 submodule (required before CMake configure)
+# cult_transcoder owns nested vendored deps that must be present before configure.
 LIBBW64_HEADER="${PROJECT_ROOT}/cult_transcoder/thirdparty/libbw64/include/bw64/bw64.hpp"
-if [ -f "${LIBBW64_HEADER}" ]; then
-    echo "✓ cult_transcoder/thirdparty/libbw64 already initialized"
+R8BRAIN_HEADER="${PROJECT_ROOT}/cult_transcoder/thirdparty/r8brain/CDSPResampler.h"
+if [ -f "${LIBBW64_HEADER}" ] && [ -f "${R8BRAIN_HEADER}" ]; then
+    echo "✓ cult_transcoder nested submodules already initialized"
 else
-    echo "Fetching cult_transcoder/thirdparty/libbw64..."
-    git -C "${PROJECT_ROOT}/cult_transcoder" submodule update --init --depth 1 thirdparty/libbw64
-    echo "✓ cult_transcoder/thirdparty/libbw64 initialized"
+    echo "Fetching cult_transcoder nested submodules recursively..."
+    git -C "${PROJECT_ROOT}/cult_transcoder" submodule update --init --recursive --depth 1
+    echo "✓ cult_transcoder nested submodules initialized"
 fi
 echo ""
 

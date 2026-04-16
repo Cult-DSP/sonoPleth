@@ -106,21 +106,22 @@ if (Test-Path $CultCMake) {
     Write-Host "✓ cult_transcoder initialized"
 }
 
-# cult_transcoder owns its own libbw64 submodule (required before CMake configure)
+# cult_transcoder owns nested vendored deps that must be present before configure.
 $Libbw64Header = Join-Path $ProjectRoot "cult_transcoder\thirdparty\libbw64\include\bw64\bw64.hpp"
-if (Test-Path $Libbw64Header) {
-    Write-Host "✓ cult_transcoder/thirdparty/libbw64 already initialized"
+$R8brainHeader = Join-Path $ProjectRoot "cult_transcoder\thirdparty\r8brain\CDSPResampler.h"
+if ((Test-Path $Libbw64Header) -and (Test-Path $R8brainHeader)) {
+    Write-Host "✓ cult_transcoder nested submodules already initialized"
 } else {
-    Write-Host "Fetching cult_transcoder/thirdparty/libbw64..."
+    Write-Host "Fetching cult_transcoder nested submodules recursively..."
     Push-Location (Join-Path $ProjectRoot "cult_transcoder")
-    git submodule update --init --depth 1 thirdparty/libbw64
+    git submodule update --init --recursive --depth 1
     $exitCode = $LASTEXITCODE
     Pop-Location
     if ($exitCode -ne 0) {
-        Write-Host "✗ Failed to initialize cult_transcoder/thirdparty/libbw64" -ForegroundColor Red
+        Write-Host "✗ Failed to initialize cult_transcoder nested submodules" -ForegroundColor Red
         exit 1
     }
-    Write-Host "✓ cult_transcoder/thirdparty/libbw64 initialized"
+    Write-Host "✓ cult_transcoder nested submodules initialized"
 }
 Write-Host ""
 
