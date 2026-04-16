@@ -91,8 +91,8 @@ LIBSNDFILE_CMAKE="${PROJECT_ROOT}/thirdparty/libsndfile/CMakeLists.txt"
 if [ -f "${LIBSNDFILE_CMAKE}" ]; then
     echo "✓ thirdparty/libsndfile already initialized"
 else
-    echo "Fetching thirdparty/libsndfile (shallow, depth=1)..."
-    git submodule update --init --depth 1 thirdparty/libsndfile
+    echo "Fetching thirdparty/libsndfile..."
+    git submodule update --init thirdparty/libsndfile
     echo "✓ thirdparty/libsndfile initialized"
 fi
 echo ""
