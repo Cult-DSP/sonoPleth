@@ -78,6 +78,8 @@ After `init()` returns `true`:
 9. All DBAP math, proximity guard, onset fade, fast-mover sub-stepping are untouched.
 10. `init()` returns `false`, logs a descriptive error, and refuses to start on any validation failure.
 11. Every call to `buildAuto()` after a successful validation gate produces exactly `internalChannelCount` routing entries. Fewer entries after validation is a hard internal error, not a silent drop.
+12. The scatter routing path (Phase 7, non-identity) owns its own output-bus clear. It must not rely on the caller having zeroed `io.outBuffer()`. The identity copy path relies on the backend pre-zero, which is valid because identity guarantees no unmapped output channels exist.
+13. The offline renderer (`SpatialRenderer`) is not subject to any invariant here — it is a separate code path with its own channel model and is out of scope for this patch.
 
 ---
 
@@ -106,44 +108,75 @@ Located at the top of `Spatializer::init()`, before routing construction. Return
 
 ## 5. Phase 7: Routing Stage — Explicit Behavior
 
+### 5.0 Zeroing ownership audit
+
+**Realtime path:**  
+`RealtimeBackend::processBlock()` Step 1 explicitly zeroes all `io.channelsOut()` channels via `std::memset` before calling `renderBlock()`. `numChannels = io.channelsOut()` at that point equals `outputChannelCount` (the physical output bus). The zero runs every block unconditionally — including during pause fades, which have their own additional zeroing after the fact. This guarantee is present and labeled.
+
+However, it is a *caller contract across a function boundary*: `renderBlock()` itself has no self-sufficiency. Any future backend, test harness, or alternate entry path that calls `renderBlock()` without prior zeroing would silently produce additive stale output on every scatter block.
+
+**Offline path:**  
+`SpatialRenderer::renderPerBlock()` calls `audioIO.zeroOut()` before rendering. However, `audioIO` is sized to `numSpeakers` (consecutive 0-based), and the offline renderer does not use `OutputRemap`, does not read `deviceChannel`, and explicitly documents this: *"We use array index i as the channel and ignore the original deviceChannel numbers."* The offline renderer is a completely separate code path — it has no routing table and is entirely out of scope for this patch. Do not attempt to unify the two paths.
+
+**Decision — scatter path owns its own clearing:**  
+The scatter path must self-clear the full output bus before scattering. It must not rely on the backend precondition. Reasons:
+
+1. `renderBlock()` can in principle be called from any context (tests, alternative backends).
+2. The guarantee's scope is bounded to the current single-backend implementation.
+3. A scatter-path clear is cheap (one `memset` per block on `outputChannelCount` channels) and eliminates the cross-boundary contract entirely.
+
+The identity path continues to rely on the backend pre-zero (which is always present in the realtime path) and does not need its own clear — because identity is only valid when `outputChannelCount == internalChannelCount`, so there are no unmapped output channels and no stale data risk.
+
 ### 5.1 Identity copy (fast path)
 
 **Condition:** `mRemap->identity() == true`  
-This is valid only when `outputChannelCount == internalChannelCount` AND all routing entries are diagonal (`entry.internalChannel == entry.outputChannel`) AND full bijective coverage holds.
+Valid only when `outputChannelCount == internalChannelCount` AND all routing entries are diagonal AND full bijective coverage holds.
 
-**Behavior:** Direct contiguous copy, internal channel N → output channel N, for N in `0..internalChannelCount-1`. No clearing required — the backend already zeroes `io.outBuffer()` before `renderBlock()` is called.
+**Behavior:** Direct contiguous copy, internal channel N → output channel N, for N in `0..internalChannelCount-1`.
 
-**No additional output-bus clearing needed:** since `outputChannelCount == internalChannelCount`, no output channels are left unmapped.
+**Zeroing:** Relies on the backend pre-zero (`RealtimeBackend::processBlock()` Step 1). No additional clearing needed — identity guarantees no unmapped output channels exist.
+
+**Width handling:** Do not use `std::min(renderChannels, numOutputChannels)` in the new code. Since identity requires `outputChannelCount == internalChannelCount`, use the internal count explicitly. The `std::min()` silently masks a mismatch that should never occur in a validated state.
 
 ### 5.2 Scatter routing (non-identity path)
 
 **Condition:** `mRemap->identity() == false`
 
-**Behavior — mandatory two-step:**
+**Behavior — self-contained two-step:**
 
-**Step A — Clear the full output bus before scatter:**  
-Before scattering, all `outputChannelCount` channels in `io.outBuffer()` must contain only zeros. The backend zeroes `io.outBuffer()` before `renderBlock()` is called, so this is already satisfied by existing backend behavior. This guarantee **must be explicitly documented as a contract between the backend and `renderBlock()`** — not assumed. If the backend contract ever changes, the scatter path must clear the output bus itself before scattering.
-
-The revised plan must add an explicit comment at the Phase 7 scatter block:
+**Step A — Self-clear the full output bus:**  
+At the start of the scatter branch, `renderBlock()` zeros all `outputChannelCount` channels of `io.outBuffer()` itself:
+```cpp
+// Scatter path owns its own output-bus clear.
+// Do NOT rely on the backend pre-zero — renderBlock() must be
+// self-sufficient regardless of calling context.
+const unsigned int numOutputChannels = io.channelsOut(); // == outputChannelCount
+for (unsigned int ch = 0; ch < numOutputChannels; ++ch)
+    std::memset(io.outBuffer(ch), 0, numFrames * sizeof(float));
 ```
-// PRECONDITION: all io.outBuffer(ch) for ch in 0..outputChannelCount-1
-// are zeroed by the backend before renderBlock() is called.
-// Unmapped output channels remain silent by this guarantee.
-// If this precondition ever changes, add an explicit zero-fill here.
+
+**Step B — Scatter:** For each routing entry `{internalCh, outputCh}`, assign `mRenderIO.outBuffer(internalCh)` into `io.outBuffer(outputCh)`. Use `=` (assignment), not `+=` (accumulate), since Step A guarantees a clean slate:
+```cpp
+for (const auto& entry : mRemap->entries()) {
+    // Post-validation guards: should never fire, but kept as last-resort protection.
+    if (static_cast<unsigned int>(entry.layout) >= renderChannels) continue;
+    if (static_cast<unsigned int>(entry.device) >= numOutputChannels) continue;
+    const float* src = mRenderIO.outBuffer(entry.layout);
+    float* dst = io.outBuffer(entry.device);
+    std::memcpy(dst, src, numFrames * sizeof(float));
+}
 ```
 
-**Step B — Scatter:** For each routing entry `{internalCh, outputCh}`, accumulate `mRenderIO.outBuffer(internalCh)` into `io.outBuffer(outputCh)`.
+**Unmapped output channels:** Zeroed by Step A. Their silence is enforced by this path's own code, not by any caller contract.
 
-**Unmapped output channels:** Any output channel index not present as an `outputCh` in the routing table receives no samples and remains at zero from the backend's pre-clear. This is correct and intentional — it must never be left to chance.
-
-**The current Phase 7 implementation has a latent risk in the identity path:** `std::min(renderChannels, numOutputChannels)` is used as the copy limit. After this patch, `renderChannels` (internal) and `numOutputChannels` (output) are different variables. The identity path is only entered when `outputChannelCount == internalChannelCount`, so `min()` should produce the same value — but the code must explicitly use `internalChannelCount` on the internal side and `outputChannelCount` on the output side. Do not carry the `std::min()` guard silently into the new code; make both widths explicit.
+**Note on `+=` vs `=`:** The existing scatter implementation uses `+=` to support many-to-one fan-in (multiple internal channels accumulating into one output channel). The routing table in this patch maps each internal channel to exactly one output channel with no fan-in, so `memcpy` (`=`) is correct and slightly faster. If fan-in is ever required (e.g., a future mix-down scenario), revert to the `+=` loop form.
 
 ### 5.3 Summary table
 
-| Layout type | Path | Output bus cleared | Unmapped channels |
+| Layout type | Path | Output bus cleared by | Unmapped channels |
 |---|---|---|---|
-| Identity (translab) | Fast copy | By backend pre-zero (no gaps exist) | None — all output channels mapped |
-| Non-identity (allosphere) | Scatter routing | By backend pre-zero, confirmed by precondition comment | Remain zero from pre-zero |
+| Identity (translab) | Fast copy | Backend pre-zero (Step 1) — no gaps possible | None — all output channels mapped |
+| Non-identity (allosphere) | Scatter routing | `renderBlock()` self-clear at Phase 7 start | Zeroed by self-clear |
 
 ---
 
@@ -283,43 +316,65 @@ These iterate `ch = 0..outputChannelCount-1` (output space). (3 call-sites.)
 
 **`renderBlock()` — Phase 7 copy block (lines 830–867)**
 
-The identity path currently uses `std::min(renderChannels, numOutputChannels)` as the copy limit. After this patch, identity is only entered when `outputChannelCount == internalChannelCount`, so they are equal. However, make both widths explicit in the code rather than relying on `std::min()` to hide any discrepancy:
+Replace the existing Phase 7 block in full:
+
 ```cpp
-// Identity path: direct copy, internal ch N → output ch N.
-// Valid only because checkIdentity() guarantees outputChannelCount == internalChannelCount.
-for (unsigned int ch = 0; ch < renderChannels; ++ch) {
-    const float* src = mRenderIO.outBuffer(ch);
-    float* dst = io.outBuffer(ch);
-    for (unsigned int f = 0; f < numFrames; ++f)
-        dst[f] += src[f];
-}
-```
-```cpp
-// Scatter routing path:
-// PRECONDITION: all io.outBuffer(ch) for ch in 0..outputChannelCount-1
-// are zeroed by the backend before renderBlock() is called.
-// Unmapped output channels remain silent by this guarantee.
-// If this precondition ever changes, add an explicit zero-fill here.
-for (const auto& entry : mRemap->entries()) {
-    // These bounds checks are last-resort guards; they should never fire
-    // after a successful validation + buildAuto(). If they do, it is a bug.
-    if (static_cast<unsigned int>(entry.layout) >= renderChannels) continue;
-    if (static_cast<unsigned int>(entry.device) >= numOutputChannels) continue;
-    const float* src = mRenderIO.outBuffer(entry.layout);
-    float* dst = io.outBuffer(entry.device);
-    for (unsigned int f = 0; f < numFrames; ++f)
-        dst[f] += src[f];
+// ── Phase 7: Route internal bus → output bus ─────────────────────────────
+const unsigned int numOutputChannels = io.channelsOut(); // == outputChannelCount
+
+bool useIdentity = (mRemap == nullptr) || mRemap->identity();
+
+if (useIdentity) {
+    // Identity copy: internal ch N → output ch N, contiguous.
+    // Valid only because checkIdentity() guarantees
+    // outputChannelCount == internalChannelCount (no gaps).
+    // Relies on backend pre-zero (RealtimeBackend::processBlock() Step 1).
+    // No std::min() guard — both widths are equal by invariant.
+    for (unsigned int ch = 0; ch < renderChannels; ++ch) {
+        const float* src = mRenderIO.outBuffer(ch);
+        float*       dst = io.outBuffer(ch);
+        for (unsigned int f = 0; f < numFrames; ++f)
+            dst[f] += src[f];
+    }
+} else {
+    // Scatter routing: self-clear the full output bus, then scatter.
+    // renderBlock() owns this clear — do not rely on the caller.
+    for (unsigned int ch = 0; ch < numOutputChannels; ++ch)
+        std::memset(io.outBuffer(ch), 0, numFrames * sizeof(float));
+
+    for (const auto& entry : mRemap->entries()) {
+        // Last-resort guards. These should never fire after a successful
+        // validation + buildAuto(). If they do, it is an internal engine bug.
+        if (static_cast<unsigned int>(entry.layout) >= renderChannels)   continue;
+        if (static_cast<unsigned int>(entry.device) >= numOutputChannels) continue;
+        const float* src = mRenderIO.outBuffer(entry.layout);
+        float*       dst = io.outBuffer(entry.device);
+        std::memcpy(dst, src, numFrames * sizeof(float));
+    }
 }
 ```
 
-**Accessor rename:**
+Note: the identity path retains `+=` (add into pre-zeroed buffer) for behavioral consistency with pre-patch code. The scatter path uses `std::memcpy` (`=`) because the self-clear guarantees a clean slate and there is no fan-in in the layout-derived routing table.
+
+**Accessor staging — `numInternalChannels()` + deprecated alias:**
+
+Add `numInternalChannels()` as the canonical accessor and keep `numRenderChannels()` as a `[[deprecated]]` forwarding alias. There are currently zero external callers of `numRenderChannels()` (confirmed by grep — only the definition in `Spatializer.hpp:952`), so the alias is cheap insurance rather than a necessity. It lets any future caller or test that references the old name produce a compile-time warning rather than a hard error, and allows the removal to be a separate trivial commit.
 
 ```cpp
-// Renamed from numRenderChannels()
+/// Width of the internal bus (numSpeakers + numSubwoofers).
+/// Safe to call from the main thread after init().
 unsigned int numInternalChannels() const {
     return static_cast<unsigned int>(mRenderIO.channelsOut());
 }
+
+/// @deprecated Use numInternalChannels().
+[[deprecated("Use numInternalChannels()")]]
+unsigned int numRenderChannels() const {
+    return numInternalChannels();
+}
 ```
+
+Internal code in `Spatializer.hpp` itself should call `numInternalChannels()` directly — do not call the alias from within the same file. The alias exists for external callers only.
 
 **`isSubwooferChannel()` — remove and replace (line 1049):**
 
@@ -522,6 +577,10 @@ std::string mRemapPath; // DEPRECATED — remove after layout-routing validation
 ---
 
 ## 9. Remaining Single-Bus Assumptions — Audit List
+
+### 9.0 Offline renderer — out of scope (confirmed)
+
+`SpatialRenderer::renderPerBlock()` (`spatial_engine/src/renderer/SpatialRenderer.cpp`) sizes its `audioIO` to `numSpeakers` (consecutive 0-based) and calls `audioIO.zeroOut()` unconditionally. It does not use `OutputRemap`, does not read `deviceChannel`, and explicitly documents that device channel numbering is ignored: output channels in the offline WAV are consecutive and can be remapped externally. This is a completely separate code path with its own channel model. This patch must not touch it.
 
 The following are likely sites of residual single-bus assumptions outside the already-identified list. These must be verified by grep before coding begins.
 
