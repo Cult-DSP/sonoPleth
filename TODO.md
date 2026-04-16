@@ -2,8 +2,6 @@
 
 ## immediate
 
-- merge transcoder with spatial seed version
-
 - debug windows build
 
 - test runtime now that everything builds via ci
