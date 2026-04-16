@@ -1,42 +1,30 @@
-// OutputRemap.hpp — Agent 6: Output Channel Remapping
+// OutputRemap.hpp — Output Channel Routing Table
 //
-// Maps internal render-buffer channel indices ("layout") to physical
-// AudioIO output channel indices ("device") at the very end of the audio
-// callback, replacing the current identity-copy loop in Spatializer::renderBlock().
+// Maps internal channel indices (compact, 0-based, DBAP-owned) to physical
+// AudioIO output channel indices (sparse, layout-derived) at the end of each
+// audio block in Spatializer::renderBlock() Phase 7.
 //
-// RESPONSIBILITIES:
-// - Load a CSV file (once, at startup) specifying layout→device channel pairs.
-// - Expose an RT-safe, immutable remap table to the audio thread.
-// - Apply the remap in the Spatializer copy step: identity fast-path when no
-//   CSV is provided; accumulate loop otherwise.
+// TWO CONSTRUCTION PATHS:
+//   buildAuto() — primary path. Called by Spatializer::init() with entries
+//     derived from the speaker layout JSON's deviceChannel fields. This is
+//     the only supported public routing source. Entries are one-to-one and
+//     validated before this call; out-of-range entries after validation are
+//     an internal engine error, not a user error, and are treated as such.
 //
-// CSV FORMAT (agent_output_remap.md spec):
-//   layout,device
-//   0,0
-//   1,16
-//   ...
-//   - Both columns 0-based.
-//   - Extra columns ignored.
-//   - Lines starting with '#' and empty lines skipped.
-//   - Out-of-range entries are dropped (logged once to stderr, never per-frame).
-//   - Multiple layout → same device rows are valid (accumulated/summed).
+//   load() — legacy CSV path. DEPRECATED. Retained temporarily as internal
+//     scaffolding during layout-routing validation. Out-of-range CSV entries
+//     are silently dropped (untrusted external input).
 //
 // IDENTITY FAST PATH:
-//   If no CSV is provided, or the CSV maps exactly layout==device for all
-//   active channels with no gaps, `identity=true` is set and the Spatializer
-//   falls back to its existing direct-copy loop (zero overhead vs. Phase 6).
+//   When internalChannelCount == outputChannelCount and all entries are
+//   diagonal (entry.layout == entry.device with full coverage), identity=true
+//   is set and Spatializer uses a direct contiguous copy. checkIdentity()
+//   enforces the width-equality condition explicitly.
 //
 // REAL-TIME SAFETY:
 //   - No allocation, no file I/O, no locks in the audio path.
-//   - The entries vector and identity flag are set once during load() and
-//     are read-only during playback. The audio thread holds a const pointer.
-//
-// PROVENANCE:
-//   - CSV schema: agent_output_remap.md
-//   - Allosphere-specific layout reference: channelMapping.hpp (reference only,
-//     not included here — the CSV externalises that knowledge).
-//   - Accumulate pattern: adapted from channelMapping.hpp's defaultChannelMap
-//     iteration in mainplayer.hpp.
+//   - Entries and identity flag are set once (buildAuto or load), then
+//     read-only during playback. The audio thread holds a const pointer.
 
 #pragma once
 
@@ -66,14 +54,18 @@ public:
     // Default constructor → identity mapping (no CSV).
     OutputRemap() = default;
 
-    // ── Load from CSV ─────────────────────────────────────────────────────
+    // ── Load from CSV (DEPRECATED — legacy scaffolding only) ─────────────
+    // DEPRECATED: layout-derived routing via buildAuto() is the supported path.
+    // This method is retained temporarily for internal validation only.
+    // Will be removed after layout-routing validation is complete.
+    //
     // Call once on the main thread before the audio callback starts.
     // Returns true on success (even if some rows were skipped).
     // On failure (file not found / no valid rows) falls back to identity.
     //
-    // renderChannels: number of channels in the internal render buffer.
+    // renderChannels: internal bus width (numSpeakers + numSubwoofers).
     //   Out-of-range `layout` entries (>= renderChannels) are dropped.
-    // deviceChannels: number of channels AudioIO was opened with.
+    // deviceChannels: output bus width (max deviceChannel + 1).
     //   Out-of-range `device` entries (>= deviceChannels) are dropped.
     bool load(const std::string& csvPath,
               int renderChannels,
@@ -178,6 +170,44 @@ public:
         return true;
     }
 
+    // ── Build from layout-derived entries (primary path) ─────────────────
+    // Called once by Spatializer::init() on the main thread, before start().
+    // internalChannels: width of the internal bus (numSpeakers + numSubwoofers).
+    // outputChannels:   width of the physical output bus (max deviceChannel + 1).
+    // Entries are produced from validated layout data — all values are in range
+    // by construction. Out-of-range entries after validation are a hard engine
+    // bug: log loudly and leave the table empty (triggers init() guard).
+    void buildAuto(std::vector<RemapEntry> entries,
+                   int internalChannels,
+                   int outputChannels) {
+        mEntries.clear();
+        mMaxDeviceIndex = -1;
+        for (const auto& e : entries) {
+            if (e.layout < 0 || e.layout >= internalChannels) {
+                std::cerr << "[OutputRouting] INTERNAL ERROR: out-of-range internal channel "
+                          << e.layout << " (max " << internalChannels - 1 << ") — "
+                          << "this is a bug in routing construction." << std::endl;
+                mEntries.clear();
+                return;
+            }
+            if (e.device < 0 || e.device >= outputChannels) {
+                std::cerr << "[OutputRouting] INTERNAL ERROR: out-of-range output channel "
+                          << e.device << " (max " << outputChannels - 1 << ") — "
+                          << "this is a bug in routing construction." << std::endl;
+                mEntries.clear();
+                return;
+            }
+            mEntries.push_back(e);
+            if (e.device > mMaxDeviceIndex) mMaxDeviceIndex = e.device;
+        }
+        mIdentity = checkIdentity(internalChannels, outputChannels);
+        std::cout << "[OutputRouting] " << mEntries.size()
+                  << " layout-derived routing entries"
+                  << (mIdentity ? " — identity copy active"
+                                : " — scatter routing active")
+                  << std::endl;
+    }
+
     // ── Accessors (read-only, safe to call from audio thread) ────────────
 
     bool identity() const { return mIdentity; }
@@ -206,12 +236,13 @@ private:
 
     // ── Helpers ──────────────────────────────────────────────────────────
 
-    // Check if the current entries constitute a pure identity map
-    // (entry[i] = {i, i} for i in 0..N-1, no duplicates, complete coverage).
-    bool checkIdentity(int renderChannels, int /*deviceChannels*/) const {
-        if (static_cast<int>(mEntries.size()) != renderChannels) return false;
-        // Build a coverage bitset
-        std::vector<bool> covered(renderChannels, false);
+    // Check if the current entries constitute a pure identity map.
+    // Requires internalChannels == outputChannels — any gap in output channel
+    // numbering means outputChannels > internalChannels, making scatter necessary.
+    bool checkIdentity(int internalChannels, int outputChannels) const {
+        if (outputChannels != internalChannels) return false;
+        if (static_cast<int>(mEntries.size()) != internalChannels) return false;
+        std::vector<bool> covered(internalChannels, false);
         for (const auto& e : mEntries) {
             if (e.layout != e.device) return false;
             if (covered[e.layout])   return false; // duplicate

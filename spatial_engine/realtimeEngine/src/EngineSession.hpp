@@ -73,6 +73,10 @@ struct SceneInput {
 
 struct LayoutInput {
     std::string layoutPath;
+    // DEPRECATED: physical output routing is now derived from the layout JSON's
+    // deviceChannel values via Spatializer::init(). This field is retained
+    // temporarily as internal scaffolding only. Not a supported user workflow.
+    // Will be removed after layout-routing validation is complete.
     std::string remapCsvPath;
 };
 

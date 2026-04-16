@@ -154,16 +154,16 @@ struct RealtimeConfig {
     // Run --list-devices to see what names the engine can see.
     std::string outputDeviceName;
 
-    // ── Layout-derived channel count ─────────────────────────────────────
+    // ── Physical output bus width ────────────────────────────────────────
     // COMPUTED from the speaker layout at load time — never set by the user.
-    // Formula (matches offline SpatialRenderer.cpp):
-    //   maxChannel = max(numSpeakers - 1, max(subwooferDeviceChannels))
-    //   outputChannels = maxChannel + 1
-    // This means the output buffer may contain gap channels (e.g., Allosphere
-    // channels 13-16, 47-48 are unused). A future Channel Remap agent will
-    // map these logical render channels to physical device outputs.
-    // For now, AudioIO opens with this many channels (identity mapping).
-    int    outputChannels   = 0;       // Set by Spatializer::init() from layout
+    // Formula: outputChannelCount = max(all .deviceChannel values) + 1
+    // This is the width of the physical AudioIO output bus. It may be larger
+    // than the internal bus (numSpeakers + numSubwoofers) for sparse layouts
+    // like the Allosphere where deviceChannel values are non-consecutive.
+    // Set by Spatializer::init(), read by RealtimeBackend to open AudioIO.
+    // NOT the internal bus width — that is owned by Spatializer and never
+    // stored in RealtimeConfig.
+    int    outputChannels   = 0;
 
     // ── Spatializer settings (mirrors offline RenderConfig) ──────────────
     // dbapFocus: atomic<float> so the OSC listener thread can safely write it

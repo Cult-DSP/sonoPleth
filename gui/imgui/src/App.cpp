@@ -298,18 +298,22 @@ void App::renderEngineTab() {
             if (!p.empty()) { mLayoutPath = p; mLayoutPreset = 2; }
         }
 
-        // Remap CSV
-        ImGui::TextDisabled("REMAP CSV");
-        ImGui::SameLine(120.f);
-        ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 78.f);
-        ImGui::InputText("##remap", &mRemapPath);
-        ImGui::SameLine();
-        if (ImGui::Button("Browse##remap")) {
-            std::string p = pickFile("Select Remap CSV", {"*.csv"}, "CSV files");
-            if (!p.empty()) mRemapPath = p;
+        // Legacy / Internal scaffolding — collapsed by default
+        if (ImGui::CollapsingHeader("Legacy / Internal (not a supported workflow)")) {
+            ImGui::TextDisabled("REMAP CSV");
+            ImGui::SameLine();
+            ImGui::TextDisabled("(deprecated — output routing is now layout-derived)");
+            ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 78.f);
+            ImGui::InputText("##remap", &mRemapPath);
+            ImGui::SameLine();
+            if (ImGui::Button("Browse##remap")) {
+                std::string p = pickFile("Select Remap CSV", {"*.csv"}, "CSV files");
+                if (!p.empty()) mRemapPath = p;
+            }
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Deprecated — retained for internal validation only. "
+                                  "Leave blank for standard layout-derived routing.");
         }
-        if (ImGui::IsItemHovered())
-            ImGui::SetTooltip("optional — leave blank to disable channel remapping");
 
         // Device
         ImGui::TextDisabled("DEVICE");

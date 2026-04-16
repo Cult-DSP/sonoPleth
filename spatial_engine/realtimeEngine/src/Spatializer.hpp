@@ -7,27 +7,29 @@
 // RESPONSIBILITIES:
 // 1. Build the al::Speakers array from SpeakerLayoutData at load time.
 //    - CRITICAL: al::Speaker expects degrees; layout JSON stores radians.
-//    - CRITICAL: Use consecutive 0-based channel indices, NOT hardware
-//      deviceChannel numbers (which have gaps and cause out-of-bounds).
-// 2. Compute outputChannels from the layout (matching the offline renderer):
-//    maxChannel = max(numSpeakers-1, max(subwooferDeviceChannels))
-//    outputChannels = maxChannel + 1
-//    This value is written into RealtimeConfig so the backend can open
-//    AudioIO with the correct channel count. Nothing is hardcoded.
+//    - CRITICAL: Use consecutive 0-based channel indices for al::Speaker
+//      (DBAP writes to these), NOT layout deviceChannel values.
+// 2. Derive two separate bus widths from the layout:
+//    internalChannelCount = numSpeakers + numSubwoofers   (compact, 0-based)
+//    outputChannelCount   = max(all .deviceChannel) + 1  (physical bus width)
+//    outputChannelCount is written into RealtimeConfig.outputChannels so the
+//    backend opens AudioIO with the correct physical channel count.
 // 3. Create al::Dbap with the speaker array and apply focus setting.
 // 4. For each audio block, spatialize every non-LFE source via renderBuffer().
-// 5. Route LFE sources directly to subwoofer channels (no spatialization).
+// 5. Route LFE sources directly to compact internal subwoofer channels.
 // 6. Apply loudspeaker/sub mix trims and master gain (Phase 6).
-// 7. Apply output channel remap to physical device outputs (Phase 7).
+// 7. Route from the internal bus to the physical output bus (Phase 7):
+//    - identity copy when outputChannelCount == internalChannelCount
+//    - scatter routing (self-clearing) for all non-identity layouts
 //
-// INTERNAL RENDER BUFFER:
-//   DBAP renders into an internal AudioIOData buffer (mRenderIO) sized for
-//   outputChannels (layout-derived). After rendering, channels are copied
-//   to the real AudioIO output. Phase 7 (OutputRemap) optionally re-routes
-//   logical render channels to physical device outputs (e.g., the Allosphere's
-//   non-consecutive hardware channel map). Without a remap CSV, an identity
-//   fast-path is taken (bit-identical to pre-Phase-7 behavior).
-//   See channelMapping.hpp for the Allosphere-specific mapping reference.
+// TWO-SPACE MODEL:
+//   Internal bus (mRenderIO): compact, contiguous, 0..internalChannelCount-1.
+//     - Channels 0..numSpeakers-1        → DBAP speaker outputs
+//     - Channels numSpeakers..N+M-1      → LFE subwoofer outputs
+//   Output bus (io from the backend): sparse, layout-defined, width = outputChannelCount.
+//     - mOutputRouting maps internal → output channels (one-to-one, no fan-in).
+//     - mConfig.outputChannels == outputChannelCount (backend/device-facing only).
+//   The layout JSON's deviceChannel fields are the sole source of output routing.
 //
 // ─────────────────────────────────────────────────────────────────────────────
 // THREADING MODEL (Phase 8 — Threading and Safety)
@@ -59,7 +61,8 @@
 //    - Does NOT interact with Spatializer at all.
 //
 //  READ-ONLY after init() / setRemap() (safe to read from any thread):
-//    mSpeakers, mDBap, mNumSpeakers, mSubwooferChannels, mLayoutRadius,
+//    mSpeakers, mDBap, mNumSpeakers, mSubwooferInternalChannels,
+//    mSubwooferOutputChannels, mLayoutRadius,
 //    mInitialized, mRemap (pointer value; pointed-to object is also const)
 //
 //  AUDIO-THREAD-OWNED (must not be read/written from any other thread while
@@ -92,6 +95,7 @@
 #include <cmath>
 #include <cstring>
 #include <iostream>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -146,24 +150,24 @@ public:
 
     // ── Initialize from speaker layout ───────────────────────────────────
     // Must be called BEFORE the audio stream starts.
-    // Builds the al::Speakers array, computes outputChannels from layout,
-    // and creates the DBAP panner.
+    // Builds the al::Speakers array, derives internal and output bus widths,
+    // validates the layout, builds the output routing table, and creates the
+    // DBAP panner.
     //
     // CRITICAL FIX 1 (from SpatialRenderer):
     //   al::Speaker expects angles in DEGREES. The layout JSON stores radians.
     //   We must convert: degrees = radians * 180 / π
     //
     // CRITICAL FIX 2 (from SpatialRenderer):
-    //   AlloSphere hardware uses non-consecutive channel numbers (1-60 with gaps).
-    //   al::Dbap writes to io.outBuffer(deviceChannel), so we must use
-    //   consecutive 0-based indices as the channel to avoid out-of-bounds.
-    //   Hardware channel remapping happens in a later phase (Channel Remap agent).
+    //   al::Dbap writes to io.outBuffer(channel) using the channel index from
+    //   the al::Speaker object. We assign consecutive 0-based indices so DBAP
+    //   writes into mRenderIO channels 0..numSpeakers-1. The output routing
+    //   table (mOutputRouting) maps these to physical deviceChannel slots.
     //
-    // OUTPUT CHANNEL COMPUTATION (from SpatialRenderer::render() lines 837-842):
-    //   maxChannel = max(numSpeakers - 1, max(subwoofer deviceChannels))
-    //   outputChannels = maxChannel + 1
-    //   This value is written into mConfig.outputChannels so the backend opens
-    //   AudioIO with exactly the right number of channels for this layout.
+    // TWO-SPACE CHANNEL COUNTS:
+    //   internalChannelCount = numSpeakers + numSubwoofers  (compact, DBAP-owned)
+    //   outputChannelCount   = max(all .deviceChannel) + 1  (physical bus width)
+    //   mConfig.outputChannels = outputChannelCount  (backend opens AudioIO with this)
 
     bool init(const SpeakerLayoutData& layout) {
 
@@ -198,45 +202,100 @@ public:
             mLayoutRadius = radii[radii.size() / 2];
         }
 
-        // ── Collect subwoofer hardware channels ──────────────────────────
-        // LFE sources are routed directly to these channels (no DBAP).
-        // These are raw deviceChannel indices from the layout JSON (same as
-        // the offline renderer, which indexes out.samples[deviceChannel]).
-        // The internal render buffer is sized to accommodate them.
-        mSubwooferChannels.clear();
-        for (const auto& sub : layout.subwoofers) {
-            mSubwooferChannels.push_back(sub.deviceChannel);
+        // ── Validation gate ──────────────────────────────────────────────
+        // Hard-fail before any routing construction. Returns false with a
+        // descriptive error on any layout inconsistency.
+        {
+            if (layout.speakers.empty()) {
+                std::cerr << "[Spatializer] ERROR: Speaker layout has no speakers." << std::endl;
+                return false;
+            }
+            std::set<int> speakerDevChs;
+            for (int i = 0; i < mNumSpeakers; ++i) {
+                int dc = layout.speakers[i].deviceChannel;
+                if (dc < 0) {
+                    std::cerr << "[Spatializer] ERROR: Speaker " << i
+                              << " has negative deviceChannel (" << dc << ")." << std::endl;
+                    return false;
+                }
+                if (!speakerDevChs.insert(dc).second) {
+                    std::cerr << "[Spatializer] ERROR: Duplicate speaker deviceChannel "
+                              << dc << "." << std::endl;
+                    return false;
+                }
+                if (dc > 127) {
+                    std::cerr << "[Spatializer] WARNING: Speaker " << i
+                              << " has suspiciously large deviceChannel " << dc
+                              << " — possible layout typo." << std::endl;
+                }
+            }
+            std::set<int> subDevChs;
+            for (int j = 0; j < static_cast<int>(layout.subwoofers.size()); ++j) {
+                int dc = layout.subwoofers[j].deviceChannel;
+                if (dc < 0) {
+                    std::cerr << "[Spatializer] ERROR: Subwoofer " << j
+                              << " has negative deviceChannel (" << dc << ")." << std::endl;
+                    return false;
+                }
+                if (!subDevChs.insert(dc).second) {
+                    std::cerr << "[Spatializer] ERROR: Duplicate subwoofer deviceChannel "
+                              << dc << "." << std::endl;
+                    return false;
+                }
+                if (speakerDevChs.count(dc)) {
+                    std::cerr << "[Spatializer] ERROR: Speaker and subwoofer share deviceChannel "
+                              << dc << "." << std::endl;
+                    return false;
+                }
+                if (dc > 127) {
+                    std::cerr << "[Spatializer] WARNING: Subwoofer " << j
+                              << " has suspiciously large deviceChannel " << dc
+                              << " — possible layout typo." << std::endl;
+                }
+            }
         }
 
-        std::cout << "[Spatializer] " << mSubwooferChannels.size()
-                  << " subwoofer channel(s):";
-        for (int ch : mSubwooferChannels) {
-            std::cout << " " << ch;
+        // ── Internal space: subwoofer channel indices ────────────────────
+        // LFE sources write into compact internal channels numSpeakers..N+M-1.
+        // mSubwooferOutputChannels stores the physical deviceChannel targets
+        // (used to build the routing table and for the output-space diagnostic).
+        const int numSubs = static_cast<int>(layout.subwoofers.size());
+        mSubwooferInternalChannels.clear();
+        mSubwooferOutputChannels.clear();
+        for (int j = 0; j < numSubs; ++j) {
+            mSubwooferInternalChannels.push_back(mNumSpeakers + j);
+            mSubwooferOutputChannels.push_back(layout.subwoofers[j].deviceChannel);
         }
+
+        std::cout << "[Spatializer] " << numSubs << " subwoofer(s):"
+                  << "  internal channels:";
+        for (int ic : mSubwooferInternalChannels) std::cout << " " << ic;
+        std::cout << "  output channels:";
+        for (int oc : mSubwooferOutputChannels)   std::cout << " " << oc;
         std::cout << std::endl;
 
-        // ── Compute output channel count from layout ─────────────────────
-        // Matches SpatialRenderer::render() (lines 837-842):
-        //   maxChannel = max(numSpeakers - 1, max(subwoofer deviceChannels))
-        //   outputChannels = maxChannel + 1
-        //
-        // This means the output may have gap channels (e.g. Allosphere has
-        // channels 13-16 and 47-48 unused). The future Channel Remap agent
-        // (see channelMapping.hpp) will handle mapping these to physical
-        // device outputs. For now, render channels = device channels.
-        int maxChannel = mNumSpeakers - 1;
-        for (int subCh : mSubwooferChannels) {
-            if (subCh > maxChannel) maxChannel = subCh;
-        }
-        int computedOutputChannels = maxChannel + 1;
+        // ── Compute internal and output bus widths ───────────────────────
+        // internalChannelCount: compact, owned by mRenderIO.
+        // outputChannelCount:   physical bus width for AudioIO.
+        const int internalChannelCount = mNumSpeakers + numSubs;
 
-        // Write into config so the backend opens AudioIO with the right count
-        mConfig.outputChannels = computedOutputChannels;
+        int maxOutputCh = 0;
+        for (int i = 0; i < mNumSpeakers; ++i)
+            maxOutputCh = std::max(maxOutputCh, layout.speakers[i].deviceChannel);
+        for (int oc : mSubwooferOutputChannels)
+            maxOutputCh = std::max(maxOutputCh, oc);
+        const int outputChannelCount = maxOutputCh + 1;
 
-        std::cout << "[Spatializer] Output channels derived from layout: "
-                  << computedOutputChannels
-                  << " (speakers: 0-" << (mNumSpeakers - 1)
-                  << ", max sub ch: " << maxChannel << ")." << std::endl;
+        // outputChannelCount → config so the backend opens AudioIO correctly.
+        // internalChannelCount is internal to Spatializer and never stored in config.
+        mConfig.outputChannels = outputChannelCount;
+
+        std::cout << "[Spatializer] Internal bus: " << internalChannelCount
+                  << " channels (speakers 0-" << (mNumSpeakers - 1)
+                  << ", subs " << mNumSpeakers << "-" << (internalChannelCount - 1) << ")."
+                  << std::endl;
+        std::cout << "[Spatializer] Output bus:   " << outputChannelCount
+                  << " channels (max deviceChannel=" << maxOutputCh << ")." << std::endl;
 
         // ── Create DBAP panner ───────────────────────────────────────────
         mDBap = std::make_unique<al::Dbap>(mSpeakers, mConfig.dbapFocus.load());
@@ -275,39 +334,52 @@ public:
         mSourceBuffer.resize(mConfig.bufferSize, 0.0f);
 
         // ── Pre-allocate internal render buffer ──────────────────────────
-        // DBAP renders into this buffer (sized to outputChannels).
-        // After rendering, channels are copied to the real AudioIO output.
-        //
-        // WHY: al::Dbap::renderBuffer() writes to io.outBuffer(channel)
-        // using the 0-based consecutive channel indices we assigned to
-        // speakers, plus subwoofer deviceChannels. The render buffer must
-        // be large enough for all of these.
-        //
-        // The copy step after rendering is currently an identity mapping.
-        // In the future, the Channel Remap agent will re-route logical
-        // render channels to physical hardware outputs here. This is the
-        // same pattern as channelMapping.hpp / mainplayer.hpp where the
-        // ADM player maps file channels to Allosphere output channels.
+        // Sized to internalChannelCount (compact). DBAP writes to channels
+        // 0..numSpeakers-1; LFE writes to numSpeakers..internalChannelCount-1.
+        // The output routing table (mOutputRouting) maps these to the physical
+        // output bus in Phase 7 of renderBlock().
         mRenderIO.framesPerBuffer(mConfig.bufferSize);
         mRenderIO.framesPerSecond(mConfig.sampleRate);
         mRenderIO.channelsIn(0);
-        mRenderIO.channelsOut(computedOutputChannels);
+        mRenderIO.channelsOut(internalChannelCount);
 
         std::cout << "[Spatializer] Internal render buffer: "
-                  << computedOutputChannels << " channels × "
+                  << internalChannelCount << " channels × "
                   << mConfig.bufferSize << " frames." << std::endl;
 
         // Fix 2 — size the fast-mover scratch buffer (sub-chunk render target).
+        // Also sized to internalChannelCount — it is an internal render target.
         {
             int subFrames = std::max(1, mConfig.bufferSize / kNumSubSteps);
             mFastMoverScratch.framesPerBuffer(subFrames);
             mFastMoverScratch.framesPerSecond(mConfig.sampleRate);
             mFastMoverScratch.channelsIn(0);
-            mFastMoverScratch.channelsOut(computedOutputChannels);
+            mFastMoverScratch.channelsOut(internalChannelCount);
             std::cout << "[Spatializer] Fast-mover scratch buffer: "
-                      << computedOutputChannels << " channels × "
+                      << internalChannelCount << " channels × "
                       << subFrames << " frames (" << kNumSubSteps << " sub-steps)." << std::endl;
         }
+
+        // ── Build layout-derived output routing table ────────────────────
+        // One-to-one: each internal channel maps to exactly one output channel.
+        // No fan-in. Validation gate above guarantees no duplicate deviceChannels.
+        //   Speaker i   (internal=i)             → output=layout.speakers[i].deviceChannel
+        //   Sub j       (internal=numSpeakers+j) → output=layout.subwoofers[j].deviceChannel
+        {
+            std::vector<RemapEntry> entries;
+            entries.reserve(internalChannelCount);
+            for (int i = 0; i < mNumSpeakers; ++i)
+                entries.push_back({i, layout.speakers[i].deviceChannel});
+            for (int j = 0; j < numSubs; ++j)
+                entries.push_back({mNumSpeakers + j, layout.subwoofers[j].deviceChannel});
+            mOutputRouting.buildAuto(std::move(entries), internalChannelCount, outputChannelCount);
+        }
+        if (mOutputRouting.entries().empty()) {
+            std::cerr << "[Spatializer] INTERNAL ERROR: routing table is empty after "
+                         "successful validation — this is a bug." << std::endl;
+            return false;
+        }
+        mRemap = &mOutputRouting;
 
         mInitialized = true;
         return true;
@@ -320,11 +392,12 @@ public:
     //   - Non-LFE sources → DBAP spatialize into speaker channels
     //   - LFE sources → route directly to subwoofer channels
     //
-    // After rendering, channels are copied from mRenderIO to the real
-    // AudioIO output. This copy step is the future Channel Remap point.
-    // Currently it's an identity mapping (render ch N → device ch N).
+    // After rendering, Phase 7 routes the internal bus to the output bus via
+    // mOutputRouting (identity copy or scatter depending on the layout).
+    // Scatter path owns its own output-bus clear and does not rely on the caller.
     //
-    // io output buffers must be zeroed BEFORE calling this method.
+    // io output buffers must be zeroed BEFORE calling this method (required
+    // for the identity copy fast path; the scatter path self-clears).
     //
     // REAL-TIME SAFE: no allocation, no I/O, no locks.
 
@@ -364,7 +437,7 @@ public:
             // LFE writes into the render buffer (same as non-LFE).
             // The remap step will later handle routing to physical outputs.
             if (pose.isLFE) {
-                if (mSubwooferChannels.empty()) continue;
+                if (mSubwooferInternalChannels.empty()) continue;
 
                 // Read LFE audio into pre-allocated buffer
                 streaming.getBlock(pose.name, currentFrame, numFrames,
@@ -391,10 +464,10 @@ public:
                 }
 
                 float subGain = (masterGain * kSubCompensation)
-                                / static_cast<float>(mSubwooferChannels.size());
+                                / static_cast<float>(mSubwooferInternalChannels.size());
 
-                for (int subCh : mSubwooferChannels) {
-                    // Bounds check against render buffer
+                for (int subCh : mSubwooferInternalChannels) {
+                    // Bounds check against internal render buffer
                     if (static_cast<unsigned int>(subCh) >= renderChannels) continue;
 
                     float* out = mRenderIO.outBuffer(subCh);
@@ -667,7 +740,7 @@ public:
 
         if (spkMix != 1.0f) {
             for (unsigned int ch = 0; ch < renderChannels; ++ch) {
-                if (!isSubwooferChannel(static_cast<int>(ch))) {
+                if (!isInternalSubwooferChannel(static_cast<int>(ch))) {
                     float* buf = mRenderIO.outBuffer(ch);
                     for (unsigned int f = 0; f < numFrames; ++f) {
                         buf[f] *= spkMix;
@@ -676,7 +749,7 @@ public:
             }
         }
         if (lfeMix != 1.0f) {
-            for (int subCh : mSubwooferChannels) {
+            for (int subCh : mSubwooferInternalChannels) {
                 if (static_cast<unsigned int>(subCh) < renderChannels) {
                     float* buf = mRenderIO.outBuffer(subCh);
                     for (unsigned int f = 0; f < numFrames; ++f) {
@@ -752,13 +825,13 @@ public:
                 chMs[ch] = ms;
                 if (ms > kRmsThresh) {
                     mask |= (1ULL << ch);
-                    if (isSubwooferChannel(static_cast<int>(ch)))
+                    if (isInternalSubwooferChannel(static_cast<int>(ch)))
                         subMs += ms;
                     else
                         mainMs += ms;
                 }
                 if (ms > maxMs) maxMs = ms;
-                if (!isSubwooferChannel(static_cast<int>(ch)) && ms > maxMainMs)
+                if (!isInternalSubwooferChannel(static_cast<int>(ch)) && ms > maxMainMs)
                     maxMainMs = ms;
             }
 
@@ -771,7 +844,7 @@ public:
             const float domThresh = maxMainMs * kDomRelThresh;
             if (domThresh > kRmsThresh) {
                 for (unsigned int ch = 0; ch < renderChannels && ch < 64u; ++ch) {
-                    if (!isSubwooferChannel(static_cast<int>(ch)) && chMs[ch] >= domThresh)
+                    if (!isInternalSubwooferChannel(static_cast<int>(ch)) && chMs[ch] >= domThresh)
                         domMask |= (1ULL << ch);
                 }
             }
@@ -805,7 +878,7 @@ public:
                     float best = kRmsThresh;
                     int   bestCh = -1;
                     for (unsigned int ch = 0; ch < renderChannels && ch < 64u; ++ch) {
-                        if (isSubwooferChannel(static_cast<int>(ch))) continue;
+                        if (isInternalSubwooferChannel(static_cast<int>(ch))) continue;
                         if (picked & (1ULL << ch)) continue;
                         if (chMs[ch] > best) { best = chMs[ch]; bestCh = static_cast<int>(ch); }
                     }
@@ -827,42 +900,37 @@ public:
             mState.subRmsTotal.store(std::sqrt(subMs),   std::memory_order_relaxed);
         }
 
-        // ── Phase 7: Copy render buffer → real output via OutputRemap ────
-        // If no remap is set (or remap is identity), use the direct-copy
-        // fast path (same as pre-Phase-7 behaviour, bit-identical output).
-        // Otherwise iterate the remap entries and accumulate each
-        // layout channel into its target device channel.
-        //
-        // FUTURE: The Channel Remap agent is now implemented here.
-        // To apply the Allosphere-specific channel map, generate a CSV from
-        // channelMapping.hpp's defaultChannelMap and pass it via --remap.
+        // ── Phase 7: Route internal bus → output bus ─────────────────────
+        // Identity copy: valid only when outputChannelCount == internalChannelCount
+        //   (checkIdentity() enforces this). Relies on backend pre-zero.
+        // Scatter routing: self-clears the full output bus before scattering.
+        //   Does NOT rely on the caller to have zeroed io.outBuffer().
+        //   One-to-one mapping — no fan-in; memcpy is safe.
 
         const unsigned int numOutputChannels = io.channelsOut();
 
-        bool useIdentity = (mRemap == nullptr) || mRemap->identity();
-
-        if (useIdentity) {
-            // Fast path: direct copy, render ch N → device ch N.
-            const unsigned int copyChannels = std::min(renderChannels, numOutputChannels);
-            for (unsigned int ch = 0; ch < copyChannels; ++ch) {
+        if (mRemap->identity()) {
+            // Identity copy: internal ch N → output ch N, contiguous.
+            // outputChannelCount == internalChannelCount by invariant — no std::min needed.
+            for (unsigned int ch = 0; ch < renderChannels; ++ch) {
                 const float* src = mRenderIO.outBuffer(ch);
-                float* dst = io.outBuffer(ch);
-                for (unsigned int f = 0; f < numFrames; ++f) {
+                float*       dst = io.outBuffer(ch);
+                for (unsigned int f = 0; f < numFrames; ++f)
                     dst[f] += src[f];
-                }
             }
         } else {
-            // Remap path: accumulate layout → device per entry list.
-            // Destination buffers in io were zeroed by the backend before
-            // renderBlock() was called, so accumulation is safe.
+            // Scatter routing: self-clear the full output bus, then scatter.
+            // renderBlock() owns this clear — caller pre-zero is not required.
+            for (unsigned int ch = 0; ch < numOutputChannels; ++ch)
+                std::memset(io.outBuffer(ch), 0, numFrames * sizeof(float));
+
             for (const auto& entry : mRemap->entries()) {
-                if (static_cast<unsigned int>(entry.layout) >= renderChannels) continue;
+                // Post-validation last-resort guards. Should never fire.
+                if (static_cast<unsigned int>(entry.layout) >= renderChannels)   continue;
                 if (static_cast<unsigned int>(entry.device) >= numOutputChannels) continue;
-                const float* src = mRenderIO.outBuffer(entry.layout);
-                float* dst = io.outBuffer(entry.device);
-                for (unsigned int f = 0; f < numFrames; ++f) {
-                    dst[f] += src[f];
-                }
+                std::memcpy(io.outBuffer(entry.device),
+                            mRenderIO.outBuffer(entry.layout),
+                            numFrames * sizeof(float));
             }
         }
 
@@ -888,14 +956,14 @@ public:
                 chMs[ch] = ms;
                 if (ms > kRmsThresh) mask |= (1ULL << ch);
                 if (ms > maxMs) maxMs = ms;
-                if (!isSubwooferChannel(static_cast<int>(ch)) && ms > maxMainMs)
+                if (!isOutputSubwooferChannel(static_cast<int>(ch)) && ms > maxMainMs)
                     maxMainMs = ms;
             }
 
             const float domThresh = maxMainMs * kDomRelThresh;
             if (domThresh > kRmsThresh) {
                 for (unsigned int ch = 0; ch < numOutputChannels && ch < 64u; ++ch) {
-                    if (!isSubwooferChannel(static_cast<int>(ch)) && chMs[ch] >= domThresh)
+                    if (!isOutputSubwooferChannel(static_cast<int>(ch)) && chMs[ch] >= domThresh)
                         domMask |= (1ULL << ch);
                 }
             }
@@ -924,7 +992,7 @@ public:
                     float best = kRmsThresh;
                     int   bestCh = -1;
                     for (unsigned int ch = 0; ch < numOutputChannels && ch < 64u; ++ch) {
-                        if (isSubwooferChannel(static_cast<int>(ch))) continue;
+                        if (isOutputSubwooferChannel(static_cast<int>(ch))) continue;
                         if (picked & (1ULL << ch)) continue;
                         if (chMs[ch] > best) { best = chMs[ch]; bestCh = static_cast<int>(ch); }
                     }
@@ -947,10 +1015,17 @@ public:
     // ── Accessors ────────────────────────────────────────────────────────
     int numSpeakers() const { return mNumSpeakers; }
     bool isInitialized() const { return mInitialized; }
-    /// Number of channels in the internal render bus (layout-derived).
+
+    /// Width of the internal bus (numSpeakers + numSubwoofers).
     /// Safe to call from the main thread after init().
-    unsigned int numRenderChannels() const {
+    unsigned int numInternalChannels() const {
         return static_cast<unsigned int>(mRenderIO.channelsOut());
+    }
+
+    /// @deprecated Use numInternalChannels().
+    [[deprecated("Use numInternalChannels()")]]
+    unsigned int numRenderChannels() const {
+        return numInternalChannels();
     }
 
     // ── Phase 7: Output Remap ─────────────────────────────────────────────
@@ -1044,12 +1119,20 @@ public:
 private:
 
     // ── Small helpers ─────────────────────────────────────────────────────
-    // Returns true if ch is a subwoofer channel index.
-    // Used by the Phase 6 mix-trim passes to distinguish mains from sub.
-    bool isSubwooferChannel(int ch) const {
-        for (int subCh : mSubwooferChannels) {
-            if (subCh == ch) return true;
-        }
+
+    // Internal-space: ch is in 0..internalChannelCount-1.
+    // Used by Phase 6 mix-trim and Phase 14 render-bus diagnostic.
+    bool isInternalSubwooferChannel(int ch) const {
+        for (int ic : mSubwooferInternalChannels)
+            if (ic == ch) return true;
+        return false;
+    }
+
+    // Output-space: ch is in 0..outputChannelCount-1.
+    // Used by Phase 14 output-bus diagnostic.
+    bool isOutputSubwooferChannel(int ch) const {
+        for (int oc : mSubwooferOutputChannels)
+            if (oc == ch) return true;
         return false;
     }
 
@@ -1123,7 +1206,10 @@ private:
     al::Speakers                mSpeakers;          // AlloLib speaker objects (0-based channels)
     std::unique_ptr<al::Dbap>   mDBap;              // DBAP panner instance
     int                         mNumSpeakers = 0;   // Number of main speakers
-    std::vector<int>            mSubwooferChannels; // Subwoofer channel indices (from layout)
+    // Internal subwoofer channel indices: numSpeakers, numSpeakers+1, …
+    // Output subwoofer channel values: layout.subwoofers[j].deviceChannel
+    std::vector<int>            mSubwooferInternalChannels;
+    std::vector<int>            mSubwooferOutputChannels;
     float                       mLayoutRadius = 1.0f; // Median speaker radius (for focus compensation ref position)
     bool                        mInitialized = false;
 
@@ -1150,10 +1236,12 @@ private:
     // AUDIO-THREAD-OWNED: filled from Streaming::getBlock() inside renderBlock().
     std::vector<float>          mSourceBuffer;
 
-    // ── Phase 7: Output remap table ──────────────────────────────────────
-    // Non-owning pointer. nullptr → identity fast-path.
-    // Set once before start() (main thread), then read-only on audio thread.
-    // The pointed-to OutputRemap object is also immutable after load().
+    // ── Phase 7: Output routing table ────────────────────────────────────
+    // mOutputRouting: owned layout-derived routing table, built by init().
+    // mRemap: non-owning pointer, set to &mOutputRouting after init().
+    //   May be overridden by EngineSession::configureRuntime() for legacy CSV.
+    //   Never nullptr after init() returns true.
+    OutputRemap                 mOutputRouting;
     const OutputRemap*          mRemap = nullptr;
 
     // ── Phase 11: Focus auto-compensation value ───────────────────────────

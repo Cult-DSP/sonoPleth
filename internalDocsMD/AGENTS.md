@@ -17,6 +17,7 @@
 | EngineSession API contract, structs, lifecycle, hard constraints | [API_internal.md](API_internal.md)       | [Contract](API_internal.md#contract) · [Hard Constraints](API_internal.md#hard-constraints) · [Validation & Gotchas](API_internal.md#validation--known-gotchas)                                                                          |
 | CI config, vendored deps, Windows fixes, CMake wiring            | [BUILD_AND_CI.md](BUILD_AND_CI.md)       | [CI Overview](BUILD_AND_CI.md#ci-overview) · [Dep Audit](BUILD_AND_CI.md#dependency-audit) · [Build Notes](BUILD_AND_CI.md#build-system-notes)                                                                                           |
 | LUSID scene format, speaker layout JSON, LUSID package import    | [DEPENDENCIES.md](DEPENDENCIES.md)       | [LUSID Scene](DEPENDENCIES.md#lusid-scene-json-format) · [Speaker Layout](DEPENDENCIES.md#speaker-layout-json-format) · [Package Import](DEPENDENCIES.md#lusid-package-import-contract-spatialseed)                                      |
+| Output routing architecture, two-space model, CSV deprecation    | [REMAP.md](REMAP.md)                     | [Two-Space Model](REMAP.md#two-space-model) · [Phase 7](REMAP.md#phase-7-routing-stage) · [Validation Gate](REMAP.md#validation-gate) · [Files Changed](REMAP.md#files-changed) · [Verification](REMAP.md#verification-checklist)        |
 | Realtime engine agents, bug audit, OSC params, threading         | [REALTIME_ENGINE.md](REALTIME_ENGINE.md) | [Agent Table](REALTIME_ENGINE.md#agent-architecture-overview) · [Bug Audit](REALTIME_ENGINE.md#bug-audit-april-1-2026) · [OSC Params](REALTIME_ENGINE.md#osc-parameter-reference) · [Threading](REALTIME_ENGINE.md#threading-and-safety) |
 | Repo cleanup, AlloLib lightweighting                             | [REPO_AUDITING.md](REPO_AUDITING.md)     | [Cleanup Audit](REPO_AUDITING.md#repository-cleanup-audit) · [AlloLib Audit](REPO_AUDITING.md#allolib-dependency-audit)                                                                                                                  |
 | Spatializers, DBAP/VBAP/LBAP, elevation, rendering CLI           | [SPATIALIZATION.md](SPATIALIZATION.md)   | [Rendering System](SPATIALIZATION.md#rendering-system) · [DBAP Testing](SPATIALIZATION.md#dbap-field-testing-notes)                                                                                                                      |
@@ -61,6 +62,8 @@ ADM BWF WAV File
 ```
 
 **LUSID `scene.lusid.json` is the source of truth** for spatial data. The C++ renderer reads LUSID directly — no intermediate format conversion. See [DEPENDENCIES.md § LUSID Scene JSON Format](DEPENDENCIES.md#lusid-scene-json-format).
+
+**The speaker layout JSON is the sole routing source.** The engine renders to a compact internal bus (numSpeakers + numSubwoofers channels) and routes to a layout-defined output bus via a one-to-one routing table built from the layout's `deviceChannel` fields. CSV-based routing is deprecated. See [REMAP.md](REMAP.md).
 
 ---
 
@@ -203,7 +206,9 @@ spatialroot/
 | CMake can't find AlloLib                   | `git submodule update --init --recursive`                           |
 | Build fails "C++17 required"               | CMake 3.20+ required; ensure compiler supports C++17                |
 | Changes not reflected after rebuild        | Clean build: `rm -rf build/ && ./build.sh`                          |
-| Layout/device channel mismatch (fast-fail) | Match speaker layout channel count to hardware output channel count |
+| Validation error: duplicate deviceChannel  | Each speaker/subwoofer must have a unique `deviceChannel` in the layout JSON |
+| Validation error: shared speaker/sub ch    | A speaker and subwoofer share a `deviceChannel` — fix the layout JSON |
+| Output bus wrong width / silent channels   | Verify all `deviceChannel` values in layout; engine derives output bus from `max(deviceChannel)+1` |
 
 ### LUSID Scene
 

@@ -88,7 +88,9 @@ static void printUsage(const char* progName) {
               << "  --auto_compensation Enable focus auto-compensation (default: off)\n"
               << "  --elevation_mode <n> Vertical rescaling mode (default: 0):\n"
               << "                       0 = RescaleAtmosUp, 1 = RescaleFullSphere, 2 = Clamp\n"
-              << "  --remap <path>      CSV file mapping internal layout channels to device\n"
+              << "  --remap <path>      [DEPRECATED] CSV override for output routing. Not a\n"
+              << "                       supported workflow — routing is now layout-derived.\n"
+              << "                       Retained as internal scaffolding during validation.\n"
               << "  --osc_port <int>    UDP port for al::ParameterServer OSC control (default: 9009)\n"
               << "  --device <name>     Exact name of the output audio device to open.\n"
               << "  --list-devices      List available output audio devices and exit.\n"
@@ -156,6 +158,8 @@ int main(int argc, char* argv[]) {
     // 3) Define layout mapping.
     LayoutInput layoutIn;
     layoutIn.layoutPath   = getArgString(argc, argv, "--layout");
+    // DEPRECATED: CSV remap is not a supported user workflow.
+    // Retained temporarily as internal scaffolding. Will be removed.
     layoutIn.remapCsvPath = getArgString(argc, argv, "--remap");
 
     // 4) Define realtime DSP constants.

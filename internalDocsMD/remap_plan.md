@@ -169,7 +169,7 @@ for (const auto& entry : mRemap->entries()) {
 
 **Unmapped output channels:** Zeroed by Step A. Their silence is enforced by this path's own code, not by any caller contract.
 
-**Note on `+=` vs `=`:** The existing scatter implementation uses `+=` to support many-to-one fan-in (multiple internal channels accumulating into one output channel). The routing table in this patch maps each internal channel to exactly one output channel with no fan-in, so `memcpy` (`=`) is correct and slightly faster. If fan-in is ever required (e.g., a future mix-down scenario), revert to the `+=` loop form.
+**One-to-one routing — no fan-in:** Layout-derived routing is strictly one internal channel → one output channel. Each speaker maps to exactly one `deviceChannel`, and each subwoofer maps to exactly one `deviceChannel`. No two entries in the routing table share an output channel (enforced by the duplicate-deviceChannel validation gate). There is no accumulation. `std::memcpy` is therefore correct for the scatter step. If fan-in is ever needed in a future mix-down or down-mix scenario, the scatter loop must revert to the `+=` accumulate form and the self-clear in Step A must be retained to avoid additive stale data.
 
 ### 5.3 Summary table
 
@@ -660,6 +660,9 @@ When layout-derived routing has been verified against all target layouts (transl
 **Trailing gap test:**
 - Layout where `outputChannelCount` is larger than the highest speaker index (e.g. speakers at 0–7, subwoofer at 16, outputChannelCount = 17).
 - Expected: output channels 8–15 are silent.
+
+**Sparse-gap silence test (new):**
+- Build a layout where `deviceChannel` values are non-contiguous, leaving one or more output channels unmapped. Run the engine and capture the physical output bus. Assert that every unmapped output channel index contains only zero-valued samples for the duration of the test. This test must pass for each gap position: leading (gap before first speaker), middle (gap between speakers), and trailing (gap above the last speaker up to `outputChannelCount - 1`). This test explicitly validates the scatter-path self-clear invariant (§5.2 Step A) and must not pass by coincidence — use a non-silent audio source to confirm that the engine is genuinely rendering into the non-gap channels.
 
 **Validation failures:**
 - Layout with duplicate speaker `deviceChannel` → hard fail, engine refuses to start, descriptive error logged.

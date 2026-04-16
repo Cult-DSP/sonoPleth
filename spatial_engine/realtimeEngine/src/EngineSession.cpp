@@ -154,14 +154,27 @@ bool EngineSession::configureRuntime(const RuntimeParams& params)
 
     mOutputRemap = std::make_unique<OutputRemap>();
     if (!mRemapCsv.empty()) {
-        std::cout << "[EngineSession] Loading output remap CSV: " << mRemapCsv << std::endl;
-        bool remapOk = mOutputRemap->load(mRemapCsv, mConfig.outputChannels, mConfig.outputChannels);
-        if (!remapOk) {
-            std::cout << "[EngineSession] Warning: Remap load failed or resulted in identity." << std::endl;
+        // DEPRECATED: CSV remap is not a supported user workflow.
+        // Layout-derived output routing (built during Spatializer::init()) is
+        // now standard. This path remains temporarily as internal scaffolding
+        // during validation and will be removed once layout routing is verified.
+        std::cerr << "[EngineSession] WARNING: --remap CSV is deprecated. "
+                  << "Physical output routing is now derived from the speaker layout JSON. "
+                  << "CSV support will be removed after validation." << std::endl;
+        bool remapOk = mOutputRemap->load(mRemapCsv,
+                                          mSpatializer->numInternalChannels(),
+                                          mConfig.outputChannels);
+        if (remapOk) {
+            mSpatializer->setRemap(mOutputRemap.get());
+        } else {
+            std::cout << "[EngineSession] CSV load failed — retaining layout-derived routing."
+                      << std::endl;
         }
-        mSpatializer->setRemap(mOutputRemap.get());
     } else {
-        std::cout << "[EngineSession] No --remap provided." << std::endl;
+        std::cout << "[EngineSession] Layout-derived output routing active ("
+                  << mSpatializer->numInternalChannels() << " internal → "
+                  << mConfig.outputChannels << " output channels)." << std::endl;
+        // mRemap is already set to &mOutputRouting by Spatializer::init().
     }
 
     return true;
