@@ -30,18 +30,22 @@ This was confirmed by the DBAP Focus Investigation Report (April 2026). The acad
 Full plan: `internalDocsMD/alloRootPlan.md`
 
 Phases:
-1. Create `cult-allolib` fork — **DONE** (`internal/cult-allolib` submodule, `heads/main`)
-2. Add L2 normalization to DBAP in-place — **NEXT**
+1. Create `cult-allolib` fork — **DONE**
+2. Add L2 normalization to DBAP in-place — **DONE 2026-04-17**
 3. Switch Spatial Root build to use `cult-allolib` — **DONE 2026-04-17**
-4. Runtime validation
-5. Remove auto-compensation
+4. Runtime validation — **NEXT**
+5. Remove auto-compensation — **DONE 2026-04-17**
 6. Prune unused AlloLib parts
 
 ---
 
 ## Current state (as of 2026-04-17)
 
-Phases 1 and 3 are complete. The build is fully on `internal/cult-allolib`. `thirdparty/allolib` has been removed from the repo entirely.
+Phases 1, 2, 3, and 5 are complete. The build is fully on `internal/cult-allolib`. `thirdparty/allolib` has been removed from the repo entirely. Focus auto-compensation has been removed from engine, GUI, OSC, and all docs. **Phase 4 (runtime validation) is next.**
+
+**What was done in Phase 2:**
+- `internal/cult-allolib/src/sound/al_Dbap.cpp` — L2 normalization added to `renderSample()` and `renderBuffer()` using max-scaled weights (see Locked decisions below)
+- `internal/cult-allolib/include/al/sound/al_Dbap.hpp` — `setFocus()` doc updated; minimum focus 0.1 enforced
 
 **What was done in Phase 3:**
 - `CMakeLists.txt`, `spatial_engine/realtimeEngine/CMakeLists.txt`, `spatial_engine/spatialRender/CMakeLists.txt` — all `add_subdirectory` and `target_include_directories` paths switched to `internal/cult-allolib`
@@ -50,7 +54,8 @@ Phases 1 and 3 are complete. The build is fully on `internal/cult-allolib`. `thi
 - `scripts/sparse-allolib.sh`, `scripts/shallow-submodules.sh` — updated to reference cult-allolib
 - `thirdparty/allolib` submodule — deinited, `git rm`'d, removed from `.gitmodules` and `.git/modules`
 
-**Phase 2 is next.** The DBAP source files in `internal/cult-allolib` still have the original unnormalized implementation. That is the only remaining work before runtime validation.
+**What was done in Phase 5:**
+- `computeFocusCompensation()`, `mAutoCompValue`, `focusAutoCompensation` atomic, `mPendingAutoComp`, `setAutoCompensation()`, and the `autoComp` OSC parameter were all removed from engine, GUI, CLI, and docs
 
 ---
 
@@ -60,46 +65,65 @@ Phases 1 and 3 are complete. The build is fully on `internal/cult-allolib`. `thi
 
 Paper equation (2): `I = Σ v_i² = 1`
 
-The correct modified gain computation is:
+The implemented gain computation uses **max-scaled L2 normalization** to avoid large intermediate values when all raw weights are very small (extreme focus + distant speakers):
 
 ```cpp
-// Step 1: compute unnormalized weights (keep existing AlloLib distance loop unchanged)
-float w[N];
+// Step 1: compute unnormalized weights (original AlloLib distance loop, unchanged)
+float w[DBAP_MAX_NUM_SPEAKERS];
 for each speaker k:
     float dist = |relpos - speakerVec_k|
-    w[k] = pow(1.0f / (1.0f + dist), mFocus)
+    w[k] = powf(1.0f / (1.0f + dist), mFocus)
 
-// Step 2: L2 normalizer
+// Step 2: max-scaled L2 normalization
+// Dividing by maxW before squaring keeps sumSq in [1, N] — no large intermediate factors.
+// Guard is on maxW: if the loudest raw weight is negligible, output silence.
+float maxW = max over k of w[k]
+if maxW < 1e-6f: return  // silence
+
 float sumSq = 0.0f;
-for each k: sumSq += w[k] * w[k];
-float kNorm = (sumSq > 1e-12f) ? (1.0f / sqrt(sumSq)) : 0.0f;
+for each k: sumSq += (w[k] / maxW) * (w[k] / maxW)
+float kNorm = 1.0f / (maxW * sqrt(sumSq))
+// kNorm * w[k] = w[k] / sqrt(Σ w[j]²) — identical to simple L2, computed stably
 
-// Step 3: apply normalized gain to output
+// Step 3 (renderBuffer only): precompute per-speaker gains outside the sample loop
+float gain[DBAP_MAX_NUM_SPEAKERS];
+for each k: gain[k] = kNorm * w[k]
+
+// Step 4: apply to output
 for each k:
-    out[k] += kNorm * w[k] * sample
+    out[k] += gain[k] * sample
 ```
 
-This makes `Σ v_k² = 1` for any source position and any focus value.
+This guarantees `Σ v_k² = 1` for any source position and any focus value ≥ 0.1.
 
 ### Focus semantics
 
 Focus is a rolloff exponent (= `a` in the paper). It controls spatial sharpening only. With normalization:
-- focus=0 → all speakers equal weight (1/sqrt(N) each), sumG² = 1
+- focus=0.1 → nearly equal weight across all speakers, sumG² = 1
 - focus=high → energy concentrates on nearest speaker(s), sumG² still = 1
 - No global attenuation at any focus value
+- **Minimum enforced: 0.1** — clamped at `setFocus()` in `al_Dbap.hpp` and at `setDbapFocus()` / OSC callback in `EngineSession.cpp`. Values below 0.1 invert distance weighting (far speakers louder than near) and are not a supported mode.
 
 ### No legacy comparison path needed
 
-The normalization is two additional lines (sumSq loop + divide). The original per-speaker distance loop is preserved. No compile-time switch is needed.
+The normalization adds a max-scan pass, a sumSq pass, and a gain-precompute pass after the existing per-speaker weight loop. The original loop is preserved. No compile-time switch is needed.
 
 ---
 
-## Files to touch for Phase 2
+## Known latent safety issue — `mNumSpeakers > DBAP_MAX_NUM_SPEAKERS`
 
-- `internal/cult-allolib/src/sound/al_Dbap.cpp` — add L2 normalization to `renderBuffer()` and `renderSample()`
-- `internal/cult-allolib/include/al/sound/al_Dbap.hpp` — update doc comment for `setFocus()` to reflect normalized semantics
+`DBAP_MAX_NUM_SPEAKERS = 192` is a compile-time cap. The constructor loops up to `mNumSpeakers` writing into fixed-size arrays `mSpeakerVecs[]` and `mDeviceChannels[]`. The normalization code adds `w[DBAP_MAX_NUM_SPEAKERS]` and `gain[DBAP_MAX_NUM_SPEAKERS]` stack arrays with the same bound.
 
-Do not touch any other files for Phase 2.
+If a speaker layout with more than 192 speakers is ever loaded, all of these arrays overflow silently. This is a **pre-existing bug** inherited from the original AlloLib code — no bounds check exists in the constructor.
+
+**Do not add a bounds check during Phase 4.** Flag it in Phase 6 (pruning) when the DBAP file is being cleaned up more broadly. The current test layouts are all well under 192 speakers.
+
+---
+
+## Files modified in Phase 2
+
+- `internal/cult-allolib/src/sound/al_Dbap.cpp` — max-scaled L2 normalization in `renderBuffer()` and `renderSample()`; per-speaker gain precompute in `renderBuffer()`
+- `internal/cult-allolib/include/al/sound/al_Dbap.hpp` — `setFocus()` doc updated; 0.1 minimum enforced inline
 
 ---
 
