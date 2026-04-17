@@ -271,21 +271,25 @@ Potential pruning targets may include:
 
 ## Notes on authorship and documentation
 
+**Attribution rule (no exceptions):**
+- All original AlloLib code is attributed to **Ryan McGee**
+- All new code introduced in this fork is attributed to **Lucian Parisi**
+
 For DBAP file edits:
 
-- preserve original license and author comments
-- do not erase or overwrite original attribution
-- add clearly separated comments for Cult DSP modifications
-- identify Lucian’s additions explicitly where new behavior is introduced
-- make it obvious which parts are inherited and which parts are new
+- preserve original license header and Ryan McGee’s authorship exactly as written
+- do not erase, modify, or overwrite any original attribution
+- where original code is kept unchanged, Ryan McGee’s authorship is implicit via the file header
+- where new lines are added, mark them explicitly with Lucian Parisi’s name
 
-Suggested comment style:
+Required comment style for modification blocks:
 
-- `Original AlloLib behavior: ...`
-- `Cult DSP modification: ...`
-- `Added by Lucian Parisi: ...`
+```cpp
+// Original AlloLib behavior (Ryan McGee): <describe what the original code does>
+// Cult DSP modification (Lucian Parisi): <describe what the new code does and why>
+```
 
-This keeps provenance clean and avoids confusion later.
+This makes provenance unambiguous for anyone reading the fork later.
 
 ---
 

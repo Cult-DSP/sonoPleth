@@ -105,12 +105,19 @@ Do not touch any other files for Phase 2.
 
 ## Authorship / comment style for DBAP edits
 
-Preserve the original AlloLib license header and Ryan McGee's authorship. Mark all new code clearly:
+**Attribution rule (no exceptions):**
+- All original AlloLib code is attributed to **Ryan McGee**
+- All new code (including the normalization addition) is attributed to **Lucian Parisi**
+
+Preserve the original AlloLib license header and Ryan McGee's authorship exactly as they appear. Do not remove or modify any existing attribution. Where original code is kept unchanged, it carries Ryan McGee's authorship implicitly via the file header. Where new lines are added, mark them explicitly with Lucian Parisi's name.
+
+Comment style for the normalization block:
 
 ```cpp
-// Original AlloLib behavior: raw exponent, no normalization.
-// Cult DSP modification (Added by Lucian Parisi): L2 normalization added
-//   so that sum(v_k^2) = 1 for all source positions and focus values.
+// Original AlloLib behavior (Ryan McGee): raw exponent on per-speaker inverse-distance gain,
+//   no normalization — total power decreases as focus increases.
+// Cult DSP modification (Lucian Parisi): L2 normalization added so that sum(v_k^2) = 1
+//   for all source positions and focus values.
 //   This matches equation (2) of Lossius et al., ICMC 2009.
 ```
 
