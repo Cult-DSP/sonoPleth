@@ -2,7 +2,7 @@
 
 ## immediate
 
-- test
+- fix channel reloc and pop artifacts after dbap changes
 - fix windows build after cult-allolib change
 - re organize custom submodules into internal/ and update cmake and shell scripts
 
