@@ -73,20 +73,20 @@ if (Test-Path $vswhere) {
 }
 Write-Host ""
 
-# ── Step 2: Initialize allolib submodule ──────────────────────────────────────
-Write-Host "Step 2: Initializing allolib submodule..."
+# ── Step 2: Initialize cult-allolib submodule ────────────────────────────────
+Write-Host "Step 2: Initializing cult-allolib submodule..."
 
-$AlloInclude = Join-Path $ProjectRoot "thirdparty\allolib\include"
+$AlloInclude = Join-Path $ProjectRoot "internal\cult-allolib\include"
 if (Test-Path $AlloInclude) {
-    Write-Host "✓ thirdparty/allolib already initialized"
+    Write-Host "✓ internal/cult-allolib already initialized"
 } else {
-    Write-Host "Fetching thirdparty/allolib (shallow, depth=1)..."
-    git submodule update --init --recursive --depth 1 thirdparty/allolib
+    Write-Host "Fetching internal/cult-allolib (shallow, depth=1)..."
+    git submodule update --init --recursive --depth 1 internal/cult-allolib
     if ($LASTEXITCODE -ne 0) {
-        Write-Host "✗ Failed to initialize thirdparty/allolib" -ForegroundColor Red
+        Write-Host "✗ Failed to initialize internal/cult-allolib" -ForegroundColor Red
         exit 1
     }
-    Write-Host "✓ thirdparty/allolib initialized"
+    Write-Host "✓ internal/cult-allolib initialized"
 }
 Write-Host ""
 
@@ -142,8 +142,53 @@ if (Test-Path $LibSndFileCMake) {
 }
 Write-Host ""
 
-# ── Step 5: Build all C++ components ─────────────────────────────────────────
-Write-Host "Step 5: Building all C++ components..."
+# ── Step 5: Initialize Dear ImGui submodule (optional — needed for GUI build) ─
+Write-Host "Step 5: Initializing Dear ImGui submodule..."
+
+$GitmodulesPath = Join-Path $ProjectRoot ".gitmodules"
+$ImGuiDir = Join-Path $ProjectRoot "thirdparty\imgui"
+if ((Test-Path $GitmodulesPath) -and (Select-String -Path $GitmodulesPath -Pattern "thirdparty/imgui" -Quiet)) {
+    $ImGuiHeader = Join-Path $ImGuiDir "imgui.h"
+    if (Test-Path $ImGuiHeader) {
+        Write-Host "✓ thirdparty/imgui already initialized"
+    } else {
+        Write-Host "Fetching thirdparty/imgui..."
+        git submodule update --init --depth 1 thirdparty/imgui
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "✗ Failed to initialize thirdparty/imgui" -ForegroundColor Red
+            exit 1
+        }
+        Write-Host "✓ thirdparty/imgui initialized"
+    }
+} else {
+    Write-Host "ℹ  thirdparty/imgui not registered (GUI build not enabled)"
+}
+Write-Host ""
+
+# ── Step 6: Initialize GLFW submodule (optional — needed for GUI build) ──────
+Write-Host "Step 6: Initializing GLFW submodule..."
+
+$GlfwDir = Join-Path $ProjectRoot "thirdparty\glfw"
+if ((Test-Path $GitmodulesPath) -and (Select-String -Path $GitmodulesPath -Pattern "thirdparty/glfw" -Quiet)) {
+    $GlfwCMake = Join-Path $GlfwDir "CMakeLists.txt"
+    if (Test-Path $GlfwCMake) {
+        Write-Host "✓ thirdparty/glfw already initialized"
+    } else {
+        Write-Host "Fetching thirdparty/glfw..."
+        git submodule update --init --depth 1 thirdparty/glfw
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "✗ Failed to initialize thirdparty/glfw" -ForegroundColor Red
+            exit 1
+        }
+        Write-Host "✓ thirdparty/glfw initialized"
+    }
+} else {
+    Write-Host "ℹ  thirdparty/glfw not registered (GUI build not enabled)"
+}
+Write-Host ""
+
+# ── Step 7: Build all C++ components ─────────────────────────────────────────
+Write-Host "Step 7: Building all C++ components..."
 Write-Host ""
 
 $buildScript = Join-Path $ProjectRoot "build.ps1"

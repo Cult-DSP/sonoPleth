@@ -1,6 +1,6 @@
 # Build System & CI — Internal Reference
 
-**Last Updated:** April 11, 2026  
+**Last Updated:** April 17, 2026  
 **Source files:** `init.sh`, `build.sh`, `init.ps1`, `build.ps1`, `.github/workflows/ci.yml`
 
 ---
@@ -46,7 +46,7 @@ cmake --build build --parallel
 
 `actions/checkout@v4` with `submodules: recursive`:
 
-- `thirdparty/allolib` (shallow)
+- `internal/cult-allolib`
 - `cult_transcoder` → `thirdparty/libbw64`, `thirdparty/libadm`
 - `LUSID`
 - `thirdparty/imgui`, `thirdparty/glfw` — checked out but unused (GUI off)
@@ -70,7 +70,7 @@ All C++ dependencies are git submodules — no package manager installs required
 
 | Library    | Path                                 | Purpose                                        |
 | ---------- | ------------------------------------ | ---------------------------------------------- |
-| AlloLib    | `thirdparty/allolib`                 | Audio I/O, DBAP, OSC                           |
+| AlloLib    | `internal/cult-allolib`              | Internal fork: audio I/O, DBAP, OSC            |
 | libsndfile | `thirdparty/libsndfile`              | WAV file I/O; built static, no external codecs |
 | libbw64    | `cult_transcoder/thirdparty/libbw64` | BW64 container reader (transcoder)             |
 | pugixml    | FetchContent (transcoder)            | XML parsing                                    |
@@ -164,6 +164,25 @@ MSVC requires explicit `.string()` call. Five call sites in `main.cpp` (lines 23
 **7. `sscanf` deprecation warnings → errors on MSVC (`/WX`)**
 `cult-transcoder` target has `/WX`. `sscanf` is C4996 (deprecated) on MSVC → C2220 (error). Applied `#pragma warning(suppress: 4996)` at each call site (3 sites across 2 files), guarded by `#ifdef _MSC_VER`. Also added `_CRT_SECURE_NO_WARNINGS` to `CMakeLists.txt` compile definitions (belt-and-suspenders).
 
+### Windows Fixes Applied April 17, 2026
+
+**1. `init.ps1` still initialized `thirdparty/allolib` after the fork switch**
+Root CMake had already moved to `internal/cult-allolib`, but the Windows bootstrap still checked and fetched `thirdparty/allolib`. Fresh Windows clones could therefore fail before the active AlloLib fork was initialized. Fixed: `init.ps1` Step 2 now checks `internal\cult-allolib\include` and initializes `internal/cult-allolib`.
+
+**2. `init.ps1` did not initialize GUI submodules**
+The PowerShell init path always invoked `build.ps1 -GuiBuild` but did not initialize `thirdparty/imgui` or `thirdparty/glfw`. Fixed: `init.ps1` now mirrors `init.sh` and conditionally initializes `thirdparty/imgui` and `thirdparty/glfw` when they are registered in `.gitmodules`.
+
+**3. GUI logo embedding depended on `xxd`**
+`gui/imgui/CMakeLists.txt` previously used `xxd -i` to generate `miniLogo_data.h`. `xxd` is common on Unix-like systems but not a standard Windows/Visual Studio tool. Fixed: logo embedding now uses a portable CMake script (`gui/imgui/cmake/EmbedBinaryAsHeader.cmake`), removing the external `xxd` dependency from Windows GUI builds.
+
+**4. Live engine / renderer files still used `M_PI` without MSVC opt-in**
+Some active realtime and offline spatialization files still used `M_PI` directly, but only a historical test-file fix was documented. MSVC requires `_USE_MATH_DEFINES` before `<cmath>` for `M_PI` to exist. Fixed in the active code paths by adding the MSVC guard before `<cmath>` in:
+
+- `spatial_engine/realtimeEngine/src/Pose.hpp`
+- `spatial_engine/realtimeEngine/src/Spatializer.hpp`
+- `spatial_engine/src/renderer/SpatialRenderer.cpp`
+- `spatial_engine/src/vbap_src/VBAPRenderer.cpp`
+
 ### Stale Submodule Entries
 
 `thirdparty/libbw64` and `thirdparty/libadm` are registered in `.gitmodules` at the spatialroot level but not used by any active `CMakeLists.txt` (`spatialroot_adm_extract` was archived in Phase 3). Not harmful but potentially confusing.
@@ -209,3 +228,21 @@ Presence check: `cult_transcoder/thirdparty/libbw64/include/bw64/bw64.hpp` — t
 ### SPATIALROOT_BUILD_GUI Flag
 
 `SPATIALROOT_BUILD_GUI=OFF` (default) disables GUI build. Enable with `SPATIALROOT_BUILD_GUI=ON`. GUI build is not yet enabled in CI — verify `gui/imgui/CMakeLists.txt` integration before enabling there.
+
+### Current Bootstrap Expectations
+
+**macOS / Linux**
+
+- `init.sh` initializes `internal/cult-allolib`, `cult_transcoder` plus nested dependencies, `thirdparty/libsndfile`, and optional GUI submodules when they are registered
+- GUI-enabled builds use the same portable logo-embedding path as Windows; no `xxd` dependency remains
+
+**Windows**
+
+- `init.ps1` initializes `internal/cult-allolib`, `cult_transcoder` plus nested dependencies, `thirdparty/libsndfile`, and optional GUI submodules when they are registered
+- `build.ps1` remains the canonical Windows build entry point
+- GUI-enabled builds no longer require `xxd`; logo embedding is handled entirely by CMake
+
+### Known Windows Limitations
+
+- `build.ps1` passes both `-DCMAKE_BUILD_TYPE=Release` and `--config Release`; on Visual Studio generators only `--config Release` is authoritative
+- GUI remains disabled in CI, so the Windows GUI bootstrap path is now self-contained but not yet continuously verified by CI

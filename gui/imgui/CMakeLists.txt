@@ -24,14 +24,17 @@ endif()
 find_package(OpenGL REQUIRED)
 
 # ── Embed miniLogo.png as a C byte array (path-independent) ──────────────────
-# xxd -i generates miniLogo_png[] / miniLogo_png_len in miniLogo_data.h.
+# Generated via a portable CMake script so Windows does not depend on `xxd`.
 # Used by App.cpp (GL texture via stbi_load_from_memory) and
 # FileDialog_macOS.mm (Dock icon via NSData). Avoids any runtime path lookup.
 set(MINILOGO_DATA_H "${CMAKE_CURRENT_BINARY_DIR}/miniLogo_data.h")
 add_custom_command(
     OUTPUT  "${MINILOGO_DATA_H}"
-    COMMAND xxd -i miniLogo.png "${MINILOGO_DATA_H}"
-    WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/src"
+    COMMAND "${CMAKE_COMMAND}"
+            -DINPUT="${CMAKE_CURRENT_SOURCE_DIR}/src/miniLogo.png"
+            -DOUTPUT="${MINILOGO_DATA_H}"
+            -DVAR_NAME=miniLogo_png
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/EmbedBinaryAsHeader.cmake"
     DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/src/miniLogo.png"
     COMMENT "Embedding miniLogo.png as C byte array"
 )

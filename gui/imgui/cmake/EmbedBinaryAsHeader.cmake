@@ -1,0 +1,40 @@
+if(NOT DEFINED INPUT)
+    message(FATAL_ERROR "EmbedBinaryAsHeader.cmake requires -DINPUT=<path>")
+endif()
+
+if(NOT DEFINED OUTPUT)
+    message(FATAL_ERROR "EmbedBinaryAsHeader.cmake requires -DOUTPUT=<path>")
+endif()
+
+if(NOT DEFINED VAR_NAME)
+    message(FATAL_ERROR "EmbedBinaryAsHeader.cmake requires -DVAR_NAME=<symbol base>")
+endif()
+
+file(READ "${INPUT}" HEX_DATA HEX)
+string(LENGTH "${HEX_DATA}" HEX_LEN)
+math(EXPR LAST_INDEX "${HEX_LEN} - 2")
+
+set(BYTE_LINES "")
+set(BYTE_COUNT 0)
+set(LINE "")
+
+foreach(IDX RANGE 0 ${LAST_INDEX} 2)
+    string(SUBSTRING "${HEX_DATA}" ${IDX} 2 BYTE)
+    if(LINE STREQUAL "")
+        set(LINE "0x${BYTE}")
+    else()
+        set(LINE "${LINE}, 0x${BYTE}")
+    endif()
+    math(EXPR BYTE_COUNT "${BYTE_COUNT} + 1")
+    math(EXPR POS_IN_LINE "${BYTE_COUNT} % 12")
+    if(POS_IN_LINE EQUAL 0)
+        string(APPEND BYTE_LINES "    ${LINE},\n")
+        set(LINE "")
+    endif()
+endforeach()
+
+if(NOT LINE STREQUAL "")
+    string(APPEND BYTE_LINES "    ${LINE},\n")
+endif()
+
+file(WRITE "${OUTPUT}" "unsigned char ${VAR_NAME}[] = {\n${BYTE_LINES}};\nunsigned int ${VAR_NAME}_len = ${BYTE_COUNT};\n")
