@@ -1,7 +1,21 @@
 # Development History
 
-**Last Updated:** March 31, 2026  
+**Last Updated:** April 17, 2026  
 **Note:** Newest entries at top, oldest at bottom.
+
+---
+
+## DBAP Normalization / cult-allolib Integration (April 17, 2026)
+
+**Status:** Complete through normalization, fork integration, and auto-compensation removal. Runtime validation remains the next live phase.
+
+- `thirdparty/allolib` was removed and replaced by the internal fork at `internal/cult-allolib`
+- `al_Dbap.cpp` now uses max-scaled L2 normalization in both `renderSample()` and `renderBuffer()`, enforcing `sum(v_k^2) = 1`
+- DBAP focus now has a minimum supported value of `0.1`, clamped across construction, runtime configuration, direct setters, and OSC callbacks
+- Focus auto-compensation was removed from engine, GUI, CLI, OSC, and current API-facing docs because normalized DBAP no longer needs a corrective gain layer
+- `internalDocsMD/dbapMath.md` was established as the DBAP math source of truth; onboarding and plan docs were updated to match
+
+Historical note: older entries below may mention `autoCompensation`, `mPendingAutoComp`, or `thirdparty/allolib` because they describe the pre-normalization engine state at the time those entries were written.
 
 ---
 
@@ -37,7 +51,7 @@
 
 **ImGui + GLFW CMake target** (03-30): Created `gui/imgui/CMakeLists.txt`. Uses `imgui_impl_opengl3_loader.h` — no GLAD or GLEW needed. Links `EngineSessionCore + glfw + OpenGL::GL`.
 
-**App class** (`App.hpp`/`App.cpp`) (03-30): `AppState` enum, `EngineSession mSession` (unique_ptr for restart), UI state, runtime controls (gain/focus/spkMixDb/subMixDb/autoComp/elevMode), `SubprocessRunner` for cult-transcoder invocation, thread-safe log. Full `tick()` → `tickEngine()` + `renderUI()`. `doLaunchEngine()` implements 5-stage lifecycle. `findCultTranscoder()` checks `build/cult_transcoder/cult-transcoder` then `cult_transcoder/build/cult-transcoder`.
+**App class** (`App.hpp`/`App.cpp`) (03-30): `AppState` enum, `EngineSession mSession` (unique_ptr for restart), UI state, runtime controls (gain/focus/spkMixDb/subMixDb/autoComp/elevMode), `SubprocessRunner` for cult-transcoder invocation, thread-safe log. Full `tick()` → `tickEngine()` + `renderUI()`. `doLaunchEngine()` implements 5-stage lifecycle. `findCultTranscoder()` checks `build/cult_transcoder/cult-transcoder` then `cult_transcoder/build/cult-transcoder`. Historical note: the `autoComp` control mentioned here was removed on 2026-04-17 after DBAP normalization landed.
 
 **Aesthetic overhaul** (03-30): Menlo 13.5px font. `StyleColorsLight()` base + dark/cream palette. Workflow breadcrumb header. Four bordered card layout for engine tab: INPUT CONFIGURATION (186px), TRANSPORT (108px), RUNTIME CONTROLS (220px), ENGINE LOG.
 
@@ -49,7 +63,7 @@
 
 **GUI framework decision**: Dear ImGui + GLFW chosen over Qt. Qt cannot be used as a git submodule (multi-GB source, complex bootstrap). All dependencies must be open-source submodules. ImGui (MIT, ~5 MB) + GLFW (zlib, ~1 MB).
 
-**Task 2.1 — Runtime setters** (03-30): Added six V1.1 setter methods to `EngineSession.hpp/.cpp`: `setMasterGain`, `setDbapFocus`, `setSpeakerMixDb`, `setSubMixDb`, `setAutoCompensation`, `setElevationMode`. All use `std::memory_order_relaxed`. `setDbapFocus` and `setAutoCompensation(true)` set `mPendingAutoComp`.
+**Task 2.1 — Runtime setters** (03-30): Added six V1.1 setter methods to `EngineSession.hpp/.cpp`: `setMasterGain`, `setDbapFocus`, `setSpeakerMixDb`, `setSubMixDb`, `setAutoCompensation`, `setElevationMode`. All use `std::memory_order_relaxed`. `setDbapFocus` and `setAutoCompensation(true)` set `mPendingAutoComp`. Historical note: `setAutoCompensation()` and the pending-auto-comp path were removed on 2026-04-17 after normalized DBAP made them obsolete.
 
 **Task 2.3 — OSC port=0 guard** (03-30): `al::ParameterServer` with `port=0` binds to OS-assigned ephemeral port — does NOT disable OSC. Added `if (mOscPort > 0)` guard in `start()`.
 

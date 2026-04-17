@@ -149,8 +149,10 @@ spatialroot/
 │   ├── src/                                       # Shared loaders (JSONLoader, LayoutLoader, WavUtils)
 │   └── spatialRender/                             # Offline renderer source
 ├── cult_transcoder/                               # ADM↔LUSID transcoder (submodule)
+├── internal/
+│   ├── cult-allolib/                              # Internal AlloLib fork: Audio I/O, DBAP, OSC
+│   └── ...                                        # Other internal dependencies / forks
 ├── thirdparty/
-│   ├── allolib/                                   # Audio I/O, DBAP, OSC (shallow submodule)
 │   ├── libsndfile/                                # WAV/RF64 I/O
 │   ├── imgui/                                     # Dear ImGui
 │   └── glfw/                                      # GLFW window/GL context
@@ -174,6 +176,7 @@ spatialroot/
 **Secondary (optional OSC):** Remains available for external tooling/remote control.
 
 - Default port: `9009`; disable with `oscPort=0` in `EngineOptions`
+- DBAP focus minimum is `0.1`; normalized DBAP preserves `sum(v_k^2) = 1`
 - See [REALTIME_ENGINE.md § OSC Parameter Reference](REALTIME_ENGINE.md#osc-parameter-reference) for full address/range table
 
 ---
