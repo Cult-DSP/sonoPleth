@@ -2,39 +2,41 @@
 
 ## immediate
 
-- fix channel reloc and pop artifacts after dbap changes
+- fix channel reloc and pop artifacts after dbap changes - next step in cult_dbap
 - fix windows build after cult-allolib change
-- re organize custom submodules into internal/ and update cmake and shell scripts
+- re organize custom submodules into internal/ and update cmake and shell scripts,
+- make sure all submodules are checked out at specific current commits
+- audit what can be removed from cult-allolib
+- have engine delete old lusid files on startup / boot up / when engine is re run
 
-- debug windows build
+- debug overall windows build
+
+## next tasks
 
 - move spatial transformation math into seperate file potentially
-
-- minimal allolib fork - and test builds - remove shallow clone scripts
-- make sure all submodules are checked out at specific current commits
-
-## tasks
-
 - update LUSID - deprecate old python components. update documentation
-
-- configure dbap to have more presense in large spaces
-
-- have engine delete old lusid files on startup / boot up / when engine is re run
 
 - use fork of allolib that only has necessary components
   - adjust main build to not use all of allolib build components
+
+  - deprecate vbap render
 
 - clean up documentation
   - public facing
   - consolidate dev history and testing docs
 - clean up repo
   - move offline render code [spatial_engine/src] into spatial_engine/spatialRender and adjust cmake and other code
+  - deprecate vbap renderer
 
 - bugs to fix:
   - auto comp and overal runtime debug focus
     - focus high can cause artifacts
 
 - code signing
+
+# after that:
+
+- configure dbap to have more presense in large spaces
 
 # Crucial CLI / GUI Features:
 
