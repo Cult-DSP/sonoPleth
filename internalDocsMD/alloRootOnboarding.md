@@ -12,14 +12,14 @@ Spatial Root is a real-time spatial audio engine. It uses AlloLib's DBAP panner 
 
 ## The problem being solved
 
-The AlloLib DBAP implementation (`thirdparty/allolib/src/sound/al_Dbap.cpp`) applies focus as a raw exponent on per-speaker inverse-distance gain with no normalization:
+The original AlloLib DBAP implementation applied focus as a raw exponent on per-speaker inverse-distance gain with no normalization:
 
 ```
 gain_k = pow(1.0f / (1.0f + dist_k), focus)
 out_k += gain_k * sample
 ```
 
-Because `1/(1+dist) < 1` for all speakers with dist > 0, raising it to any positive power shrinks the gain. As focus increases, all speaker gains decrease — including the loudest one. Total power is not conserved. Focus was supposed to sharpen spatial distribution; instead it also attenuates the entire output.
+Because `1/(1+dist) < 1` for all speakers with dist > 0, raising it to any positive power shrinks the gain. As focus increases, all speaker gains decrease — including the loudest one. Total power is not conserved. Focus was supposed to sharpen spatial distribution; instead it also attenuated the entire output.
 
 This was confirmed by the DBAP Focus Investigation Report (April 2026). The academic DBAP paper (Lossius et al., ICMC 2009) specifies a normalization step that the AlloLib implementation omitted.
 
@@ -32,10 +32,25 @@ Full plan: `internalDocsMD/alloRootPlan.md`
 Phases:
 1. Create `cult-allolib` fork — **DONE** (`internal/cult-allolib` submodule, `heads/main`)
 2. Add L2 normalization to DBAP in-place — **NEXT**
-3. Switch Spatial Root build to use `cult-allolib` instead of `thirdparty/allolib` — **DONE 2026-04-17**
+3. Switch Spatial Root build to use `cult-allolib` — **DONE 2026-04-17**
 4. Runtime validation
 5. Remove auto-compensation
 6. Prune unused AlloLib parts
+
+---
+
+## Current state (as of 2026-04-17)
+
+Phases 1 and 3 are complete. The build is fully on `internal/cult-allolib`. `thirdparty/allolib` has been removed from the repo entirely.
+
+**What was done in Phase 3:**
+- `CMakeLists.txt`, `spatial_engine/realtimeEngine/CMakeLists.txt`, `spatial_engine/spatialRender/CMakeLists.txt` — all `add_subdirectory` and `target_include_directories` paths switched to `internal/cult-allolib`
+- `init.sh` Step 2 — now initializes `internal/cult-allolib` (sentinel: `internal/cult-allolib/include`)
+- `gui/imgui/CMakeLists.txt` — stb include path updated to `internal/cult-allolib/external/stb/stb`
+- `scripts/sparse-allolib.sh`, `scripts/shallow-submodules.sh` — updated to reference cult-allolib
+- `thirdparty/allolib` submodule — deinited, `git rm`'d, removed from `.gitmodules` and `.git/modules`
+
+**Phase 2 is next.** The DBAP source files in `internal/cult-allolib` still have the original unnormalized implementation. That is the only remaining work before runtime validation.
 
 ---
 
@@ -79,34 +94,12 @@ The normalization is two additional lines (sumSq loop + divide). The original pe
 
 ---
 
-## Current wiring state
+## Files to touch for Phase 2
 
-The `cult-allolib` submodule exists but the build still points to `thirdparty/allolib`. Three CMake files need updating as part of Phase 1.5 / Phase 3:
-
-| File | Line(s) | Change |
-|---|---|---|
-| `CMakeLists.txt` | 56 | `thirdparty/allolib` → `internal/cult-allolib` |
-| `spatial_engine/realtimeEngine/CMakeLists.txt` | 22–23, 36 | same path change |
-| `spatial_engine/spatialRender/CMakeLists.txt` | 20, include path | same path change |
-| `init.sh` | Step 2 (line 131–139) | initialize `internal/cult-allolib` instead of `thirdparty/allolib` |
-
-The `init.sh` should check for `internal/cult-allolib/include` as its sentinel, not `thirdparty/allolib/include`.
-
----
-
-## Files you will touch
-
-For Phase 2 (DBAP modification):
 - `internal/cult-allolib/src/sound/al_Dbap.cpp` — add L2 normalization to `renderBuffer()` and `renderSample()`
 - `internal/cult-allolib/include/al/sound/al_Dbap.hpp` — update doc comment for `setFocus()` to reflect normalized semantics
 
-For Phase 1.5 / 3 (build wiring):
-- `CMakeLists.txt`
-- `spatial_engine/realtimeEngine/CMakeLists.txt`
-- `spatial_engine/spatialRender/CMakeLists.txt`
-- `init.sh`
-
-Do not touch `thirdparty/allolib/` — it is the upstream submodule and must not be modified.
+Do not touch any other files for Phase 2.
 
 ---
 
@@ -126,10 +119,11 @@ Preserve the original AlloLib license header and Ryan McGee's authorship. Mark a
 ## What NOT to do
 
 - Do not rewrite DBAP from scratch
-- Do not modify `thirdparty/allolib/` (upstream submodule)
 - Do not remove the `1+dist` distance floor — it is AlloLib's spatial blur mechanism
-- Do not touch `computeFocusCompensation()` in `Spatializer.hpp` yet — that is Phase 5
-- Do not remove auto-compensation UI or plumbing yet — Phase 5 only
+- Do not add a compile-time legacy/normalized switch — not needed (locked decision)
+- Do not touch `computeFocusCompensation()` in `Spatializer.hpp` — that is Phase 5
+- Do not remove auto-compensation UI or plumbing — Phase 5 only
+- Do not touch `thirdparty/allolib/` — it no longer exists in this repo
 
 ---
 
@@ -137,9 +131,9 @@ Preserve the original AlloLib license header and Ryan McGee's authorship. Mark a
 
 | Symbol | File | Line |
 |---|---|---|
-| `Dbap::renderBuffer()` | `internal/cult-allolib/src/sound/al_Dbap.cpp` | 38 |
 | `Dbap::renderSample()` | `internal/cult-allolib/src/sound/al_Dbap.cpp` | 17 |
+| `Dbap::renderBuffer()` | `internal/cult-allolib/src/sound/al_Dbap.cpp` | 38 |
 | `Dbap::setFocus()` | `internal/cult-allolib/include/al/sound/al_Dbap.hpp` | 81 |
 | `Spatializer::renderBlock()` | `spatial_engine/realtimeEngine/src/Spatializer.hpp` | 404 |
 | `computeFocusCompensation()` | `spatial_engine/realtimeEngine/src/Spatializer.hpp` | 1092 |
-| Root CMake AlloLib block | `CMakeLists.txt` | 49–59 |
+| Root CMake cult-allolib block | `CMakeLists.txt` | 49–59 |

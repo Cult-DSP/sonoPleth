@@ -28,7 +28,7 @@ Source of truth for this motivation: the DBAP Focus Investigation Report. :conte
 
 ---
 
-## Phase 1 — Create the `cult-allolib` fork
+## Phase 1 — Create the `cult-allolib` fork ✓ DONE
 
 ### Objective
 
@@ -98,20 +98,6 @@ Modify the existing DBAP implementation to add normalization and corrected focus
 
 The new implementation should eliminate the current global attenuation behavior caused by raw exponentiation without normalization. The investigation showed that the existing implementation preserves no useful invariant across focus changes. :contentReference[oaicite:2]{index=2}
 
-### Recommended safety measure
-
-Keep a temporary comparison path during implementation:
-
-- legacy behavior path
-- normalized Cult behavior path
-
-This can be:
-
-- a compile-time switch, or
-- a temporary alternate code path used only during validation
-
-Do not keep this indefinitely unless it proves useful.
-
 ### Deliverables
 
 - updated `al_Dbap.hpp/.cpp`
@@ -132,36 +118,23 @@ Do not keep this indefinitely unless it proves useful.
 
 Move Spatial Root fully onto the new fork with clean build integration.
 
-### Actions
+### What was done
 
-- update submodule or dependency reference to `cult-allolib`
-- update init scripts
-- update build scripts
-- update CMake references
-- update any README or setup docs that mention upstream AlloLib directly
-- confirm no accidental references remain to the old AlloLib source
-- verify CI / bootstrap logic still works with the fork
+- `CMakeLists.txt` (root) — `add_subdirectory` switched from `thirdparty/allolib` to `internal/cult-allolib`
+- `spatial_engine/realtimeEngine/CMakeLists.txt` — `add_subdirectory` and `target_include_directories` updated
+- `spatial_engine/spatialRender/CMakeLists.txt` — same path changes
+- `init.sh` Step 2 — now initializes `internal/cult-allolib`; sentinel is `internal/cult-allolib/include`
+- `gui/imgui/CMakeLists.txt` — stb include path updated to `internal/cult-allolib/external/stb/stb`
+- `scripts/sparse-allolib.sh` — all references updated to `internal/cult-allolib`
+- `scripts/shallow-submodules.sh` — header and footer examples updated
+- `spatial_engine/realtimeEngine/src/RealtimeBackend.hpp` — comment reference updated
+- `thirdparty/allolib` submodule — deinited, `git rm`'d from index and working tree, removed from `.gitmodules`, `.git/modules` entry deleted
 
-### Areas to check
+### Exit criteria (met)
 
-- repo submodule declarations
-- `init` or setup scripts
-- `build.sh`
-- CMakeLists files
-- CI workflow files
-- any documentation describing dependency setup
-
-### Deliverables
-
-- Spatial Root builds against `cult-allolib`
-- setup and bootstrap scripts work with the new fork
-- docs updated to reflect the dependency change
-
-### Exit criteria
-
-- clean build on the main supported development machine
-- clean fresh-clone bootstrap using the new fork
-- no hidden dependency on the old AlloLib path remains
+- clean build confirmed against `internal/cult-allolib` (verified via CMake cache)
+- zero remaining references to `thirdparty/allolib` in any source, CMake, or script file
+- `thirdparty/allolib` no longer exists in the repo
 
 ---
 
