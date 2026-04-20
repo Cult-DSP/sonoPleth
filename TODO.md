@@ -51,6 +51,7 @@
 - add gui for creating speaker layout
 - add binueral mixdown using ear
 
+
 - make sure all layouts are available from gui dropdown
 
 - allow for setting dbap focus metadata in layout or lusid
@@ -62,3 +63,11 @@
 # Transcoder
 
 - update transcoder to reflect paper status
+
+
+# Future Work 
+
+## transcoding:
+* ambisonic encoding with - https://www.matthiaskronlachner.com/?p=2015 
+(standalone app + jack)
+
