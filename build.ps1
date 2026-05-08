@@ -83,13 +83,16 @@ Write-Host "============================================================"
 Write-Host "✓ Build complete!"
 Write-Host ""
 if ($BuildEngine -eq "ON") {
-    Write-Host "  spatialroot_realtime       : $BuildDir\spatial_engine\realtimeEngine\Release\spatialroot_realtime.exe"
+    Write-Host "  spatialroot_realtime       : $BuildDir\source\spatial_engine\realtimeEngine\Release\spatialroot_realtime.exe"
 }
 if ($BuildOffline -eq "ON") {
-    Write-Host "  spatialroot_spatial_render : $BuildDir\spatial_engine\spatialRender\Release\spatialroot_spatial_render.exe"
+    Write-Host "  spatialroot_spatial_render : $BuildDir\source\spatial_engine\spatialRender\Release\spatialroot_spatial_render.exe"
 }
 if ($BuildCult -eq "ON") {
-    Write-Host "  cult-transcoder            : $BuildDir\cult_transcoder\Release\cult-transcoder.exe"
+    Write-Host "  cult-transcoder            : $BuildDir\internal\cult_transcoder\Release\cult-transcoder.exe"
+}
+if ($BuildGUI -eq "ON") {
+    Write-Host "  spatialroot_gui            : $BuildDir\source\gui\imgui\Release\Spatial Root.exe"
 }
 Write-Host "============================================================"
 Write-Host ""

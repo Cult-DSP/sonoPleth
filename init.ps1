@@ -93,12 +93,12 @@ Write-Host ""
 # ── Step 3: Initialize cult_transcoder submodule ──────────────────────────────
 Write-Host "Step 3: Initializing cult_transcoder submodule..."
 
-$CultCMake = Join-Path $ProjectRoot "cult_transcoder\CMakeLists.txt"
+$CultCMake = Join-Path $ProjectRoot "internal\cult_transcoder\CMakeLists.txt"
 if (Test-Path $CultCMake) {
     Write-Host "✓ cult_transcoder already initialized"
 } else {
     Write-Host "Fetching cult_transcoder..."
-    git submodule update --init --depth 1 --checkout cult_transcoder
+    git submodule update --init --depth 1 --checkout internal/cult_transcoder
     if ($LASTEXITCODE -ne 0) {
         Write-Host "✗ Failed to initialize cult_transcoder" -ForegroundColor Red
         exit 1
@@ -107,13 +107,13 @@ if (Test-Path $CultCMake) {
 }
 
 # cult_transcoder owns nested vendored deps that must be present before configure.
-$Libbw64Header = Join-Path $ProjectRoot "cult_transcoder\thirdparty\libbw64\include\bw64\bw64.hpp"
-$R8brainHeader = Join-Path $ProjectRoot "cult_transcoder\thirdparty\r8brain\CDSPResampler.h"
+$Libbw64Header = Join-Path $ProjectRoot "internal\cult_transcoder\thirdparty\libbw64\include\bw64\bw64.hpp"
+$R8brainHeader = Join-Path $ProjectRoot "internal\cult_transcoder\thirdparty\r8brain\CDSPResampler.h"
 if ((Test-Path $Libbw64Header) -and (Test-Path $R8brainHeader)) {
     Write-Host "✓ cult_transcoder nested submodules already initialized"
 } else {
     Write-Host "Fetching cult_transcoder nested submodules recursively..."
-    Push-Location (Join-Path $ProjectRoot "cult_transcoder")
+    Push-Location (Join-Path $ProjectRoot "internal\cult_transcoder")
     git submodule update --init --recursive --depth 1 --checkout
     $exitCode = $LASTEXITCODE
     Pop-Location
@@ -203,9 +203,10 @@ Write-Host ""
 Section "✓ Initialization complete!"
 
 Write-Host "Binaries:"
-Write-Host "  spatialroot_realtime       : build\spatial_engine\realtimeEngine\Release\spatialroot_realtime.exe"
-Write-Host "  spatialroot_spatial_render : build\spatial_engine\spatialRender\Release\spatialroot_spatial_render.exe"
-Write-Host "  cult-transcoder            : build\cult_transcoder\Release\cult-transcoder.exe"
+Write-Host "  spatialroot_realtime       : build\source\spatial_engine\realtimeEngine\Release\spatialroot_realtime.exe"
+Write-Host "  spatialroot_spatial_render : build\source\spatial_engine\spatialRender\Release\spatialroot_spatial_render.exe"
+Write-Host "  cult-transcoder            : build\internal\cult_transcoder\Release\cult-transcoder.exe"
+Write-Host "  spatialroot_gui            : build\source\gui\imgui\Release\Spatial Root.exe"
 Write-Host ""
 Write-Host "For subsequent full builds:"
 Write-Host "  .\build.ps1"

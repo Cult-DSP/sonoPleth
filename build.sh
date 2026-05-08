@@ -104,7 +104,7 @@ if [ "${BUILD_CULT}" = "ON" ]; then
     echo "  cult-transcoder            : ${BUILD_DIR}/internal/cult_transcoder/cult-transcoder"
 fi
 if [ "${BUILD_GUI}" = "ON" ]; then
-    echo "  spatialroot_gui            : ${BUILD_DIR}/source/gui/imgui/spatialroot_gui"
+    echo "  spatialroot_gui            : ${BUILD_DIR}/source/gui/imgui/Spatial Root"
 fi
 echo "============================================================"
 echo ""

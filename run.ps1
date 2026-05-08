@@ -13,8 +13,8 @@ $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 # Visual Studio multi-config generators place binaries under a config subfolder;
 # single-config generators (Ninja, NMake) place them directly in the output dir.
 $candidates = @(
-    "$ScriptDir\build\gui\imgui\Release\Spatial Root.exe",
-    "$ScriptDir\build\gui\imgui\Spatial Root.exe"
+    "$ScriptDir\build\source\gui\imgui\Release\Spatial Root.exe",
+    "$ScriptDir\build\source\gui\imgui\Spatial Root.exe"
 )
 
 $Binary = $null
