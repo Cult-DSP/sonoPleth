@@ -16,13 +16,16 @@
 //   iteration. For V1, always-on is simplest and matches current behaviour.
 
 #include "EngineSession.hpp"
+#include "SpatialRootPaths.hpp"
 #include "SubprocessRunner.hpp"
 #include "imgui.h"
 
 #include <atomic>
 #include <deque>
+#include <filesystem>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -46,7 +49,9 @@ public:
     // projectRoot: path to the spatialroot project root directory.
     // Used to resolve speaker layouts, build output paths, and cult-transcoder.
     // Defaults to "." (current working directory — works when run from project root).
-    explicit App(std::string projectRoot = ".");
+    explicit App(std::string projectRoot = ".",
+                 bool keepTempSessions = false,
+                 std::string tempRootOverride = "");
     ~App();
 
     // Called once per render frame by main.cpp.
@@ -62,6 +67,8 @@ public:
 private:
     // ── Project root & paths ─────────────────────────────────────────────
     std::string mProjectRoot;
+    bool        mKeepTempSessions = false;
+    std::string mTempRootOverride;
 
     // ── Engine ───────────────────────────────────────────────────────────
     std::unique_ptr<EngineSession> mSession;
@@ -98,6 +105,10 @@ private:
     SubprocessRunner mTranscoder;
     std::string      mTranscodeScene;  // output scene.lusid.json path
     std::string      mTranscodeAdm;    // original ADM WAV path (for loadScene)
+    std::optional<std::filesystem::path> mActiveTempSessionRoot;
+    TempSessionManifest     mActiveTempManifest;
+    bool                    mLastGeneratedSceneAvailable = false;
+    bool                    mLastFailureHasDiagnostics = false;
 
     // ── Engine log ────────────────────────────────────────────────────────
     std::deque<LogEntry> mEngineLog;
@@ -118,6 +129,8 @@ private:
     std::deque<LogEntry> mTcLog;
     std::mutex           mTcLogMutex;
     bool                 mTcLogAutoScroll = true;
+    std::optional<std::filesystem::path> mTcTempSessionRoot;
+    TempSessionManifest     mTcTempManifest;
 
     // ── Logo texture (loaded once at startup; 0 = not loaded, ⊙ fallback used) ──
     unsigned int mLogoTexId = 0;  // GLuint — avoids pulling GL headers into App.hpp
@@ -175,6 +188,18 @@ private:
     std::string resolveProjectPath(const std::string& relPath) const;
     std::string findCultTranscoder() const;
     std::string transcodeOutputPath(const std::string& admPath) const;
+    std::filesystem::path tempSessionsRoot() const;
+    std::filesystem::path createOwnedTempSession(const std::string& sessionType,
+                                                 const std::string& sourcePath,
+                                                 TempSessionManifest& manifestOut);
+    void                  updateManifest(const std::filesystem::path& sessionRoot, TempSessionManifest& manifest,
+                                         const std::string& status, bool saved, bool preserved);
+    bool                  saveSessionCopy(const std::filesystem::path& sessionRoot, TempSessionManifest& manifest,
+                                          const std::string& dialogTitle, const std::string& successLabel);
+    void         cleanupOwnedTempSessions(bool forceNow = false);
+    void         clearTempSessionState();
+    void         clearStandaloneTranscodeTempState();
+    static std::string pathString(const std::filesystem::path& path);
 
     // Log helpers (main thread only for mEngineLog)
     void appendEngineLog(const std::string& text,

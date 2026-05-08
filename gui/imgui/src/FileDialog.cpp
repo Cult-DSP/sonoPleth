@@ -15,6 +15,7 @@
 #endif
 #include <windows.h>
 #include <commdlg.h>    // GetOpenFileName — linked via Comdlg32 (see CMakeLists.txt)
+#include <shlobj.h>
 
 std::string pickFile(const std::string&              title,
                      const std::vector<std::string>& filterPatterns,
@@ -52,6 +53,19 @@ std::string pickFileOrDirectory(const std::string& title) {
     return pickFile(title, {}, "All files");
 }
 
+std::string pickDirectory(const std::string& title) {
+    BROWSEINFOA bi = {};
+    bi.lpszTitle = title.c_str();
+    bi.ulFlags = BIF_RETURNONLYFSDIRS | BIF_NEWDIALOGSTYLE;
+    PIDLIST_ABSOLUTE pidl = SHBrowseForFolderA(&bi);
+    if (!pidl) return {};
+
+    char path[MAX_PATH] = {};
+    const bool ok = SHGetPathFromIDListA(pidl, path);
+    CoTaskMemFree(pidl);
+    return ok ? std::string(path) : std::string();
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Linux — zenity --file-selection
 // Falls back to empty string if zenity is not installed.
@@ -87,6 +101,23 @@ std::string pickFile(const std::string&              title,
 
 std::string pickFileOrDirectory(const std::string& title) {
     return pickFile(title, {}, "All files");
+}
+
+std::string pickDirectory(const std::string& title) {
+    std::string cmd = "zenity --file-selection --directory --title=\"" + title + "\" 2>/dev/null";
+    FILE* pipe = popen(cmd.c_str(), "r");
+    if (!pipe) return {};
+
+    char buf[4096] = {};
+    bool got = (std::fgets(buf, sizeof(buf), pipe) != nullptr);
+    pclose(pipe);
+    if (!got) return {};
+
+    std::string result(buf);
+    while (!result.empty() &&
+           (result.back() == '\n' || result.back() == '\r'))
+        result.pop_back();
+    return result;
 }
 
 #endif  // !defined(__APPLE__)

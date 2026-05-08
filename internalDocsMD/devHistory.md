@@ -5,6 +5,20 @@
 
 ---
 
+## Temporary Session Cache Cleanup (May 7, 2026)
+
+**Status:** Complete in the ImGui GUI layer.
+
+- Added `SpatialRootPaths` as the centralized cache/temp-session path utility using platform app-cache defaults and `std::filesystem`
+- Generated GUI-owned ADM→LUSID sessions now live under `<cacheRoot>/temp-sessions/session_<timestamp>_<shortid>/`
+- Each owned temp session writes `.spatialroot_temp_session` plus `manifest.json`; generated `scene.lusid.json` and `reports/` are added only when produced by the workflow
+- App shutdown cleanup deletes only owned temp sessions that are inside the temp-sessions root and carry the marker file
+- `Save Generated Scene...` and `Save Diagnostic Files...` copy temp-session contents to a user-selected durable location; the original temp session still remains eligible for deletion
+- Added `--keep-temp-sessions` and GUI `Keep temporary generated files for debugging`
+- Broad `processedData` cleanup was intentionally avoided. Deletion applies only to Spatial Root temp sessions the GUI created and can prove it owns
+
+---
+
 ## Pause / Stop Click Transient Fixes (May 7, 2026)
 
 **Status:** Fixes 11.1–11.5 patched and confirmed. Residual intermittent soft clicks deferred.

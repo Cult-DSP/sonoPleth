@@ -227,6 +227,16 @@ Then launch from the project root:
 
 The GUI controls the spatial audio engine directly via the `EngineSessionCore` C++ API (no OSC). It supports ADM WAV and LUSID package sources, speaker layout selection, and real-time parameter control.
 
+Generated GUI-owned scenes now use an app-cache temp-session root instead of normal `processedData/` paths:
+
+- macOS: `~/Library/Caches/CultDSP/SpatialRoot/temp-sessions/`
+- Linux: `$XDG_CACHE_HOME/CultDSP/SpatialRoot/temp-sessions/` or `~/.cache/CultDSP/SpatialRoot/temp-sessions/`
+- Windows: `%LOCALAPPDATA%/CultDSP/SpatialRoot/Cache/temp-sessions/`
+
+Each temp session is created as `session_<timestamp>_<shortid>/` and includes `.spatialroot_temp_session` and `manifest.json`. Generated `scene.lusid.json` and `reports/` are added only when that workflow produces them.
+
+Temporary generated sessions are deleted when the app closes unless you preserve them for debugging. Use `Save Generated Scene...` to copy generated output to a durable location, or `Save Diagnostic Files...` after a failed import/transcode. Developers can pass `--keep-temp-sessions` to the GUI, or use `--temp-root <path>` as a temp-root override.
+
 ## Project Structure
 
 ```

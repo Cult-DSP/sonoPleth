@@ -56,6 +56,7 @@ set(IMGUI_SOURCES
 set(APP_SOURCES
     src/main.cpp
     src/App.cpp
+    src/SpatialRootPaths.cpp
     src/SubprocessRunner.cpp
     src/FileDialog.cpp
     src/stb_image_impl.cpp
@@ -100,5 +101,5 @@ target_link_libraries(spatialroot_gui PRIVATE
 
 # Windows: GetOpenFileName lives in Comdlg32 (FileDialog.cpp)
 if(WIN32)
-    target_link_libraries(spatialroot_gui PRIVATE Comdlg32)
+    target_link_libraries(spatialroot_gui PRIVATE Comdlg32 Shell32)
 endif()

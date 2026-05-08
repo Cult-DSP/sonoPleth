@@ -1,5 +1,5 @@
 #pragma once
-// FileDialog — native OS file picker (open file only).
+// FileDialog — native OS file picker helpers.
 //
 // Thin cross-platform wrapper:
 //   macOS  — AppleScript "choose file" via osascript
@@ -27,3 +27,7 @@ std::string pickFile(const std::string&              title,
 // Windows/Linux — falls back to file-only (no standard cross-platform
 //                 combined file+folder API without additional dependencies).
 std::string pickFileOrDirectory(const std::string& title);
+
+// Open a native picker that accepts directories only.
+// Returns the selected absolute path, or empty string if cancelled.
+std::string pickDirectory(const std::string& title);

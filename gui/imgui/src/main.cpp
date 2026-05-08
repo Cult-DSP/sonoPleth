@@ -43,32 +43,48 @@ static void glfwErrorCallback(int error, const char* description) {
 
 // ── Argument parsing ──────────────────────────────────────────────────────────
 static void printUsage(const char* prog) {
-    printf("Usage: %s [--root <project_root>] [--help]\n", prog);
+    printf("Usage: %s [--root <project_root>] [--keep-temp-sessions] [--temp-root <path>] [--help]\n", prog);
     printf("\n");
     printf("  --root <path>   Path to the spatialroot project root.\n");
     printf("                  Defaults to '.' (current directory).\n");
     printf("                  Run from the project root for layouts and\n");
     printf("                  cult-transcoder to resolve correctly.\n");
+    printf("  --keep-temp-sessions\n");
+    printf("                  Preserve generated temp sessions for debugging.\n");
+    printf("                  By default they are deleted on app close.\n");
+    printf("  --temp-root <path>\n");
+    printf("                  Developer override for the temp session root.\n");
     printf("  --help          Show this message.\n");
     printf("\n");
 }
 
-static std::string parseProjectRoot(int argc, char* argv[]) {
+struct AppLaunchOptions {
+    std::string projectRoot = ".";
+    bool keepTempSessions = false;
+    std::string tempRootOverride;
+};
+
+static AppLaunchOptions parseLaunchOptions(int argc, char* argv[]) {
+    AppLaunchOptions opts;
     for (int i = 1; i < argc; ++i) {
         if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
             printUsage(argv[0]);
             exit(0);
         }
         if ((strcmp(argv[i], "--root") == 0) && (i + 1 < argc)) {
-            return std::string(argv[i + 1]);
+            opts.projectRoot = argv[++i];
+        } else if (strcmp(argv[i], "--keep-temp-sessions") == 0) {
+            opts.keepTempSessions = true;
+        } else if ((strcmp(argv[i], "--temp-root") == 0) && (i + 1 < argc)) {
+            opts.tempRootOverride = argv[++i];
         }
     }
-    return ".";
+    return opts;
 }
 
 // ── Main ──────────────────────────────────────────────────────────────────────
 int main(int argc, char* argv[]) {
-    std::string projectRoot = parseProjectRoot(argc, argv);
+    const AppLaunchOptions launchOptions = parseLaunchOptions(argc, argv);
 
     glfwSetErrorCallback(glfwErrorCallback);
     if (!glfwInit()) {
@@ -200,7 +216,9 @@ int main(int argc, char* argv[]) {
     ImGui_ImplOpenGL3_Init(glsl_version);
 
     // ── App setup ────────────────────────────────────────────────────────────
-    App app(projectRoot);
+    App app(launchOptions.projectRoot,
+            launchOptions.keepTempSessions,
+            launchOptions.tempRootOverride);
 
     // Wire GLFW window close callback → App::requestShutdown()
     // IMPORTANT: Must call session.shutdown() before the process exits to avoid

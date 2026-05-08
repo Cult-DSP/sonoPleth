@@ -58,6 +58,18 @@ std::string pickFileOrDirectory(const std::string& title) {
     return {};
 }
 
+std::string pickDirectory(const std::string& title) {
+    NSOpenPanel* panel            = [NSOpenPanel openPanel];
+    panel.title                   = [NSString stringWithUTF8String:title.c_str()];
+    panel.canChooseFiles          = NO;
+    panel.canChooseDirectories    = YES;
+    panel.allowsMultipleSelection = NO;
+
+    if ([panel runModal] == NSModalResponseOK)
+        return std::string(panel.URL.path.UTF8String ?: "");
+    return {};
+}
+
 // Set the macOS Dock and application-switcher icon from embedded PNG bytes.
 // Must be called after NSApplication is initialised (i.e. after glfwInit()).
 // Using raw bytes avoids any runtime path lookup — works from any working directory.
