@@ -43,6 +43,7 @@
 
 #include <cmath>    // std::exp (used for per-block smoothing in processBlock)
 #include <chrono>   // std::chrono::steady_clock (wall-clock CPU meter)
+#include <thread>   // std::this_thread::sleep_for (stop fade drain)
 #include <iostream>
 #include <string>
 #include <functional>
@@ -254,8 +255,17 @@ public:
     void stop() {
         if (mAudioIO.isRunning()) {
             std::cout << "[Backend] Stopping audio stream..." << std::endl;
+            // Arm a fade-out before the hard stop to avoid a content-dependent click.
+            // mAudioIO.stop() cuts the stream at whatever amplitude the audio is at;
+            // setting paused=true first lets the 8ms pause-fade ramp output to zero.
+            // 50ms gives kPauseFadeMs (8ms) plus two max-buffer durations of margin.
+            if (!mConfig.paused.load(std::memory_order_relaxed)) {
+                mConfig.paused.store(true, std::memory_order_relaxed);
+                std::this_thread::sleep_for(std::chrono::milliseconds(50));
+            }
             mAudioIO.stop();
             mConfig.playing.store(false);
+            mConfig.paused.store(false);  // reset so next start() begins unpaused
             std::cout << "[Backend] Audio stream stopped." << std::endl;
         }
     }
