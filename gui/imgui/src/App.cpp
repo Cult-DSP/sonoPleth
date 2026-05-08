@@ -254,8 +254,8 @@ void App::renderEngineTab() {
     const ImVec4 kRed    = {0.72f, 0.18f, 0.15f, 1.f};
 
     // ── INPUT CONFIGURATION card ──────────────────────────────────────────
-    // 5 widget rows + card label + spacing + source hint line ≈ 206px
-    if (ImGui::BeginChild("##inputcard", {0.f, 206.f}, true)) {
+    // 6 widget rows + card label + spacing + source hint line ≈ 244px
+    if (ImGui::BeginChild("##inputcard", {0.f, 244.f}, true)) {
         ImGui::TextDisabled("INPUT CONFIGURATION");
         ImGui::Spacing();
 
@@ -298,22 +298,36 @@ void App::renderEngineTab() {
             if (!p.empty()) { mLayoutPath = p; mLayoutPreset = 2; }
         }
 
-        // Legacy / Internal scaffolding — collapsed by default
-        if (ImGui::CollapsingHeader("Legacy / Internal (not a supported workflow)")) {
-            ImGui::TextDisabled("REMAP CSV");
-            ImGui::SameLine();
-            ImGui::TextDisabled("(deprecated — output routing is now layout-derived)");
-            ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 78.f);
-            ImGui::InputText("##remap", &mRemapPath);
-            ImGui::SameLine();
-            if (ImGui::Button("Browse##remap")) {
-                std::string p = pickFile("Select Remap CSV", {"*.csv"}, "CSV files");
-                if (!p.empty()) mRemapPath = p;
-            }
-            if (ImGui::IsItemHovered())
-                ImGui::SetTooltip("Deprecated — retained for internal validation only. "
-                                  "Leave blank for standard layout-derived routing.");
+        // Layout Builder button (opens in browser)
+        ImGui::SetCursorPosX(120.f);
+        if (ImGui::Button("Layout Builder##layoutbuilder")) {
+#ifdef __APPLE__
+            system("open https://cultdsp.com/layout-builder/");
+#elif defined(_WIN32)
+            system("start https://cultdsp.com/layout-builder/");
+#else
+            system("xdg-open https://cultdsp.com/layout-builder/");
+#endif
         }
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Build or modify a custom layout here");
+
+        // // Legacy / Internal scaffolding — collapsed by default
+        // if (ImGui::CollapsingHeader("Legacy / Internal (not a supported workflow)")) {
+        //     ImGui::TextDisabled("REMAP CSV");
+        //     ImGui::SameLine();
+        //     ImGui::TextDisabled("(deprecated — output routing is now layout-derived)");
+        //     ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 78.f);
+        //     ImGui::InputText("##remap", &mRemapPath);
+        //     ImGui::SameLine();
+        //     if (ImGui::Button("Browse##remap")) {
+        //         std::string p = pickFile("Select Remap CSV", {"*.csv"}, "CSV files");
+        //         if (!p.empty()) mRemapPath = p;
+        //     }
+        //     if (ImGui::IsItemHovered())
+        //         ImGui::SetTooltip("Deprecated — retained for internal validation only. "
+        //                           "Leave blank for standard layout-derived routing.");
+        // }
 
         // Device
         ImGui::TextDisabled("DEVICE");
