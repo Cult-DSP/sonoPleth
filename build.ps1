@@ -35,6 +35,7 @@ $BuildEngine  = if ($OfflineOnly -or $CultOnly)  { "OFF" } else { "ON" }
 $BuildOffline = if ($EngineOnly  -or $CultOnly)   { "OFF" } else { "ON" }
 $BuildCult    = if ($EngineOnly  -or $OfflineOnly) { "OFF" } else { "ON" }
 $BuildGUI     = if ($GuiBuild) { "ON" } else { "OFF" }
+$BuildDevtools = "OFF"
 
 $NumCores = [Environment]::ProcessorCount
 
@@ -60,6 +61,7 @@ cmake `
     "-DSPATIALROOT_BUILD_OFFLINE=$BuildOffline" `
     "-DSPATIALROOT_BUILD_CULT=$BuildCult" `
     "-DSPATIALROOT_BUILD_GUI=$BuildGUI" `
+    "-DSPATIALROOT_BUILD_DEVTOOLS=$BuildDevtools" `
     $ProjectRoot
 
 if ($LASTEXITCODE -ne 0) {

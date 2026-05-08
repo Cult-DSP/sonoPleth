@@ -24,7 +24,11 @@ option(SPATIALROOT_BUILD_ENGINE   "Build spatialroot_realtime engine"    ON)
 option(SPATIALROOT_BUILD_OFFLINE  "Build spatialroot_spatial_render"     ON)
 option(SPATIALROOT_BUILD_CULT     "Build cult-transcoder CLI"            ON)
 option(SPATIALROOT_BUILD_GUI      "Build ImGui + GLFW desktop GUI"       OFF)
-# SPATIALROOT_BUILD_GUI is OFF by default until gui/imgui/ is created in Stage 3.
+if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+    option(SPATIALROOT_BUILD_DEVTOOLS "Build non-shipping developer tools and smoke-test executables" ON)
+else()
+    option(SPATIALROOT_BUILD_DEVTOOLS "Build non-shipping developer tools and smoke-test executables" OFF)
+endif()
 
 # ── libsndfile — vendored, built before AlloLib so Gamma's find module picks it up ──
 # AlloLib's bundled Gamma uses find_package(LibSndFile QUIET) with old-style
@@ -109,5 +113,6 @@ message(STATUS "  ENGINE   (spatialroot_realtime)       : ${SPATIALROOT_BUILD_EN
 message(STATUS "  OFFLINE  (spatialroot_spatial_render) : ${SPATIALROOT_BUILD_OFFLINE}")
 message(STATUS "  CULT     (cult-transcoder)            : ${SPATIALROOT_BUILD_CULT}")
 message(STATUS "  GUI      (ImGui + GLFW desktop app)   : ${SPATIALROOT_BUILD_GUI}")
+message(STATUS "  DEVTOOLS (validation/smoke helpers)   : ${SPATIALROOT_BUILD_DEVTOOLS}")
 message(STATUS "=======================================")
 message(STATUS "")

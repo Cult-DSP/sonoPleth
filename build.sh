@@ -23,6 +23,7 @@ BUILD_ENGINE=ON
 BUILD_OFFLINE=ON
 BUILD_CULT=ON
 BUILD_GUI=OFF  # Use --gui flag to enable (requires imgui + glfw submodules)
+BUILD_DEVTOOLS=OFF
 
 for arg in "$@"; do
     case "$arg" in
@@ -82,6 +83,7 @@ cmake \
     -DSPATIALROOT_BUILD_OFFLINE="${BUILD_OFFLINE}" \
     -DSPATIALROOT_BUILD_CULT="${BUILD_CULT}" \
     -DSPATIALROOT_BUILD_GUI="${BUILD_GUI}" \
+    -DSPATIALROOT_BUILD_DEVTOOLS="${BUILD_DEVTOOLS}" \
     "${PROJECT_ROOT}"
 
 echo ""
