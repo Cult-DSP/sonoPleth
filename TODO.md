@@ -2,14 +2,13 @@
 
 ## immediate
 
+- transcode tab
 - debug overall windows build
 
 ## next tasks
 
 - create a cache for default speaker layout
-- check if gain smoothing is necessary
-- duplicate api docs in internal and public, which is most up to date?
-
+- duplicate api docs in internal and public, which is most up to date? ---
 - clean up documentation
   - public facing
   - consolidate dev history and testing docs
@@ -23,7 +22,7 @@
 
 ## Other Tasks for final packaging:
 
-- add render tab, dont bundle with transcoder ? fix rendering code in spatial_engine/spatialRender and spatial_engine/src
+- add render tab - update render code to match non linear channel handeling, give it render params
 
 # Future Work - move to future work md
 
