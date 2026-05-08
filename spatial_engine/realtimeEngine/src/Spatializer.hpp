@@ -636,6 +636,16 @@ public:
                     // ── Fast-mover path ───────────────────────────────────
                     // Render 4 sub-chunks, each at a lerp'd position that is
                     // renormalised to the layout-radius sphere, then guarded.
+                    //
+                    // Bug 10 (normalized DBAP): track the last sub-step's guarded
+                    // position so the state update below can write an accurate
+                    // continuity anchor (mPrevSafePos) for the next block.
+                    // Under normalized DBAP the gain function is sensitive to the
+                    // normalization basin boundary, so the block-center safePos
+                    // (written by the old unconditional update) could represent a
+                    // 4× different gain state from what the ear actually heard at
+                    // the end of this block.
+                    al::Vec3f lastSubSafePos = safePos;  // fallback: block-center
 
                     for (int j = 0; j < kNumSubSteps; ++j) {
                         // Sub-chunk center interpolation weight (0.125, 0.375, 0.625, 0.875)
@@ -683,6 +693,10 @@ public:
                         }
                         al::Vec3f subSafePos(subRelpos.x, subRelpos.z, -subRelpos.y);
 
+                        // Capture the last sub-step's guarded position as the
+                        // continuity anchor for the next block.
+                        if (j == kNumSubSteps - 1) lastSubSafePos = subSafePos;
+
                         // Render sub-chunk into scratch, then accumulate into
                         // mRenderIO at the correct frame offset.
                         mFastMoverScratch.zeroOut();
@@ -696,17 +710,28 @@ public:
                                 dst[j * subFrames + f] += src[f];
                         }
                     }
+
+                    // Write corrected anchor for next block's doBlend.
+                    // mPrevGuardFired is cleared: block-center guard state is
+                    // irrelevant for fast-mover blocks and must not trigger a
+                    // doBlend anchored to the wrong position on the next block.
+                    if (si < mPrevSafePos.size()) {
+                        mPrevSafePos[si]      = lastSubSafePos;
+                        mPrevSafeValid[si]    = 1u;
+                        mPrevGuardFired[si]   = 0u;
+                        mPrevWasFastMover[si] = 1u;
+                    }
                 }
 
                 // Bug 9.1 — update guard-transition blending state for next block.
-                // safePos is the block-center guard-resolved position (normal path).
-                // Written unconditionally so a following normal-path block always
-                // has a fresh anchor, regardless of whether this block was a
-                // fast-mover or not.
-                if (si < mPrevSafePos.size()) {
-                    mPrevSafePos[si]    = safePos;
-                    mPrevSafeValid[si]  = 1u;
-                    mPrevGuardFired[si] = guardFiredForSource ? 1u : 0u;
+                // Fast-mover blocks write their own state (lastSubSafePos as anchor,
+                // mPrevGuardFired=0, mPrevWasFastMover=1) inside the fast-mover
+                // branch above. Only the normal path writes here.
+                if (!isFastMover && si < mPrevSafePos.size()) {
+                    mPrevSafePos[si]      = safePos;
+                    mPrevSafeValid[si]    = 1u;
+                    mPrevGuardFired[si]   = guardFiredForSource ? 1u : 0u;
+                    mPrevWasFastMover[si] = 0u;
                 }
             }
         }
@@ -1039,6 +1064,7 @@ public:
         mPrevSafePos.assign(numSources, al::Vec3f(0.0f, 0.0f, 0.0f));
         mPrevSafeValid.assign(numSources, 0u);
         mPrevGuardFired.assign(numSources, 0u);
+        mPrevWasFastMover.assign(numSources, 0u);
 
         std::cout << "[Spatializer] prepareForSources: " << numSources
                   << " per-source state slots allocated (onset-fade + guard-blend)." << std::endl;
@@ -1222,15 +1248,25 @@ private:
     // ── Bug 9.1: Per-source guard-transition blending state ───────────────
     // Indexed by stable pose order (si) — same slot each block.
     // mPrevSafePos[si]    — guard-resolved position written at end of last
-    //                       block (normal path only). Used as the blend-start
-    //                       anchor for the next block's doBlend path.
+    //                       block. For normal-path blocks: block-center safePos.
+    //                       For fast-mover blocks: last sub-step guarded position
+    //                       (near positionEnd). This ensures doBlend in the
+    //                       following normal-path block anchors from the actual
+    //                       last-rendered position, not block-center.
     // mPrevSafeValid[si]  — 1 = mPrevSafePos[si] holds a valid value (at
     //                       least one block has completed for this source).
     // mPrevGuardFired[si] — 1 = hard-floor Pass 2 fired on last block
-    //                       (normal path). Triggers blend even when the
-    //                       current block is guard-free (exit transition).
+    //                       (normal path only; cleared to 0 after fast-mover
+    //                       blocks to avoid false doBlend triggers).
+    // mPrevWasFastMover[si] — 1 = last block used the fast-mover sub-step path.
+    //                       Used to gate doBlend: if the previous block was a
+    //                       fast-mover and the anchor is now the correct last
+    //                       sub-step position, doBlend can safely fire. If
+    //                       normalization basin changes make even the corrected
+    //                       anchor unreliable, this flag lets us suppress.
     // Allocated once by prepareForSources(). AUDIO-THREAD-OWNED after start().
     std::vector<al::Vec3f>      mPrevSafePos;
     std::vector<uint8_t>        mPrevSafeValid;
     std::vector<uint8_t>        mPrevGuardFired;
+    std::vector<uint8_t>        mPrevWasFastMover;
 };

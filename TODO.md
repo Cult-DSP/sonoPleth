@@ -3,6 +3,9 @@
 ## immediate
 
 - fix channel reloc and pop artifacts after dbap changes - next step in cult_dbap
+- pause is not a smooth fade like stop iis
+- add more gain control in api / engine then in gui
+-
 - fix windows build after cult-allolib change
 - re organize custom submodules into internal/ and update cmake and shell scripts,
 - make sure all submodules are checked out at specific current commits

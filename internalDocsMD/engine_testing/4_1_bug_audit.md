@@ -266,7 +266,51 @@ Use this format for every new patch attempt. Copy and fill in.
 
 ## Open bugs
 
-*(none — see deferred items below)*
+---
+
+### Bug 10 — Normalized DBAP breaks fast-mover continuity anchor
+
+**Problem:** After the normalized DBAP upgrade (`al_Dbap.cpp`), fast-moving sources produce audible pops or gain steps. Under normalized DBAP, `sum(gain_k²) = 1` for all positions — total power is constant but the per-speaker gain distribution changes sharply at normalization basin boundaries (where one speaker becomes clearly dominant). A source sweeping across such a boundary can jump from `gain_dominant ≈ 0.25` (equidistant, N=16) to `≈1.0` (clearly nearest), a 4× step.
+
+**Root cause:** The state update block that feeds Bug 9.1's `doBlend` mechanism always wrote `mPrevSafePos[si] = safePos` (block-center guard-resolved position), even when the block was rendered by the fast-mover path. For fast-mover blocks, the last audio actually rendered corresponds to the last sub-step (alpha ≈ 0.875, near `positionEnd`), not block center. Under the old unnormalized DBAP, the gain function was smooth enough that block-center ≈ positionEnd gains. Under normalized DBAP, these two positions can straddle a normalization basin boundary — causing `doBlend` on the following normal-path block to interpolate from the wrong gain state, injecting the discontinuity instead of removing it.
+
+A second consequence: `mPrevGuardFired[si]` was written as the block-center guard result, which is unrelated to whether any fast-mover sub-step triggered the guard. A false `mPrevGuardFired` could trigger `doBlend` on the next block with a wrong anchor.
+
+---
+
+### Bug 10.1 — Correct fast-mover continuity anchor — PATCHED (2026-05-07)
+
+**Approach:** Inside the fast-mover render loop, capture the last sub-step's guarded position (`lastSubSafePos`, initialized to `safePos` as a safe fallback). The fast-mover branch now writes its own state block immediately after the sub-step loop:
+- `mPrevSafePos[si] = lastSubSafePos` — the actual last-rendered position
+- `mPrevGuardFired[si] = 0` — cleared; block-center guard state is meaningless for fast-mover blocks and must not trigger a doBlend from a wrong anchor
+- `mPrevWasFastMover[si] = 1` — new flag, set for observability and future gating
+
+The unconditional state update block (Bug 9.1) is now guarded by `!isFastMover` — only the normal path writes it, and it clears `mPrevWasFastMover[si] = 0`.
+
+A new per-source state vector `mPrevWasFastMover` (same pattern as `mPrevGuardFired`) is allocated in `prepareForSources()` and defaults to 0.
+
+**Files changed:**
+- `spatial_engine/realtimeEngine/src/Spatializer.hpp`:
+  - Private section: added `mPrevWasFastMover` vector with updated comment block
+  - `prepareForSources()`: `mPrevWasFastMover.assign(numSources, 0u)`
+  - Fast-mover loop: `lastSubSafePos` capture at `j == kNumSubSteps - 1`; in-branch state write
+  - Normal-path state update: guarded by `!isFastMover`; clears `mPrevWasFastMover[si]`
+
+**RT-safety:** Zero allocation. One `al::Vec3f` local added to the fast-mover branch (stack). `mPrevWasFastMover` is audio-thread-owned after `start()`.
+
+**Test result:** Pending translab verification. Build clean.
+
+**Status:** PATCHED — awaiting test
+
+---
+
+### Bug 10 — Fast-mover per-sub-step guard variability (deferred follow-up)
+
+**Note:** Each fast-mover sub-step still applies Pass 1 + Pass 2 independently. Under normalized DBAP, sub-steps passing through the guard zone from slightly different angles produce different `kNorm` values, causing intra-block gain non-monotonicity. This is the secondary mechanism from the regression analysis. It was already deferred in Bug 9; evidence is now stronger. Do not implement unless pops persist after Bug 10.1.
+
+**Deferred plan:** Pre-guard both `positionStart` and `positionEnd` (full two-pass guard on each endpoint before the loop), then lerp between pre-guarded endpoints per sub-step. Inside the loop, apply Pass 2 only (single scan, no convergence loop, no Pass 1) as a safety net.
+
+**Status:** DEFERRED — reopen only if pops persist after Bug 10.1 testing
 
 ---
 
