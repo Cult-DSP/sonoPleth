@@ -13,10 +13,36 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <fstream>
 #include <sstream>
 #include <utility>
 
 namespace fs = std::filesystem;
+
+namespace {
+bool copyIfPresent(const fs::path& source, const fs::path& destination) {
+    std::error_code ec;
+    if (!fs::exists(source, ec)) return false;
+    fs::create_directories(destination.parent_path());
+    if (fs::is_directory(source, ec)) {
+        fs::copy(source, destination,
+                 fs::copy_options::recursive | fs::copy_options::overwrite_existing);
+        return true;
+    }
+    if (fs::is_regular_file(source, ec)) {
+        fs::copy_file(source, destination, fs::copy_options::overwrite_existing);
+        return true;
+    }
+    return false;
+}
+
+bool hasDiagnosticsFiles(const std::optional<fs::path>& sessionRoot) {
+    if (!sessionRoot) return false;
+    std::error_code ec;
+    return fs::exists(*sessionRoot / "manifest.json", ec) ||
+           fs::exists(*sessionRoot / "reports", ec);
+}
+}
 
 constexpr int         App::kBufferSizes[];
 constexpr const char* App::kBufferSizeNames[];
@@ -160,7 +186,17 @@ void App::requestShutdown() {
         mSession->shutdown();
         mState = AppState::Idle;
     }
-    cleanupOwnedTempSessions();
+    if (mState == AppState::Transcoding && mTranscoder.isRunning()) {
+        appendEngineLog("[GUI] Waiting for active transcode to finish before cleanup...",
+                        {1.f, 0.8f, 0.2f, 1.f});
+        mTranscoder.wait();
+    }
+    if (mTcRunner.isRunning()) {
+        appendEngineLog("[GUI] Waiting for manual transcode to finish before cleanup...",
+                        {1.f, 0.8f, 0.2f, 1.f});
+        mTcRunner.wait();
+    }
+    cleanupOwnedTempSessions(true);
 }
 
 void App::renderUI() {
@@ -332,26 +368,26 @@ void App::renderEngineTab() {
 
         ImGui::SameLine();
         if (!mLastGeneratedSceneAvailable || !mActiveTempSessionRoot) ImGui::BeginDisabled(true);
-        if (ImGui::Button("Save Generated Scene...")) {
-            saveSessionCopy(*mActiveTempSessionRoot, mActiveTempManifest,
-                            "Choose Folder for Generated Scene",
-                            "Generated scene saved");
+        if (ImGui::Button("Save Generated Scene")) {
+            saveGeneratedSceneCopy(*mActiveTempSessionRoot, mActiveTempManifest,
+                                   "Choose Folder for Generated Scene",
+                                   "Generated scene saved");
         }
         if (!mLastGeneratedSceneAvailable || !mActiveTempSessionRoot) ImGui::EndDisabled();
 
         ImGui::SameLine();
-        const bool hasDiagnostics = (mLastFailureHasDiagnostics &&
-                                     ((mActiveTempSessionRoot.has_value()) || (mTcTempSessionRoot.has_value())));
+        const bool hasDiagnostics = hasDiagnosticsFiles(mActiveTempSessionRoot) ||
+                                    hasDiagnosticsFiles(mTcTempSessionRoot);
         if (!hasDiagnostics) ImGui::BeginDisabled(true);
-        if (ImGui::Button("Save Diagnostic Files...")) {
+        if (ImGui::Button("Save Diagnostic Files")) {
             if (mActiveTempSessionRoot) {
-                saveSessionCopy(*mActiveTempSessionRoot, mActiveTempManifest,
-                                "Choose Folder for Diagnostic Files",
-                                "Diagnostic files saved");
+                saveDiagnosticsCopy(*mActiveTempSessionRoot, mActiveTempManifest,
+                                    "Choose Folder for Diagnostic Files",
+                                    "Diagnostic files saved");
             } else if (mTcTempSessionRoot) {
-                saveSessionCopy(*mTcTempSessionRoot, mTcTempManifest,
-                                "Choose Folder for Diagnostic Files",
-                                "Diagnostic files saved");
+                saveDiagnosticsCopy(*mTcTempSessionRoot, mTcTempManifest,
+                                    "Choose Folder for Diagnostic Files",
+                                    "Diagnostic files saved");
             }
         }
         if (!hasDiagnostics) ImGui::EndDisabled();
@@ -841,12 +877,40 @@ void App::updateManifest(const fs::path& sessionRoot, TempSessionManifest& manif
     SpatialRootPaths::writeManifest(sessionRoot, manifest);
 }
 
-bool App::saveSessionCopy(const fs::path& sessionRoot, TempSessionManifest& manifest,
-                          const std::string& dialogTitle, const std::string& successLabel) {
+bool App::saveGeneratedSceneCopy(const fs::path& sessionRoot, TempSessionManifest& manifest,
+                                 const std::string& dialogTitle, const std::string& successLabel) {
     const std::string destination = pickDirectory(dialogTitle);
     if (destination.empty()) return false;
     try {
-        SpatialRootPaths::copySessionContents(sessionRoot, fs::path(destination));
+        const fs::path scenePath = sessionRoot / "scene.lusid.json";
+        if (!copyIfPresent(scenePath, fs::path(destination) / "scene.lusid.json")) {
+            throw std::runtime_error("No generated scene.lusid.json found in the temp session.");
+        }
+        updateManifest(sessionRoot, manifest, manifest.status, true, manifest.preserved);
+        appendEngineLog("[GUI] " + successLabel + ": " + destination, {0.3f, 0.9f, 0.3f, 1.f});
+        return true;
+    } catch (const std::exception& e) {
+        mLastError = e.what();
+        mState = AppState::Error;
+        appendEngineLog("[GUI] Save failed: " + mLastError, {1.f, 0.3f, 0.3f, 1.f});
+        return false;
+    }
+}
+
+bool App::saveDiagnosticsCopy(const fs::path& sessionRoot, TempSessionManifest& manifest,
+                              const std::string& dialogTitle, const std::string& successLabel) {
+    const std::string destination = pickDirectory(dialogTitle);
+    if (destination.empty()) return false;
+    try {
+        const fs::path destinationRoot(destination);
+        bool copiedAnything = false;
+        copiedAnything = copyIfPresent(sessionRoot / "manifest.json",
+                                       destinationRoot / "manifest.json") || copiedAnything;
+        copiedAnything = copyIfPresent(sessionRoot / "reports",
+                                       destinationRoot / "reports") || copiedAnything;
+        if (!copiedAnything) {
+            throw std::runtime_error("No diagnostic files were found in the temp session.");
+        }
         updateManifest(sessionRoot, manifest, manifest.status, true, manifest.preserved);
         appendEngineLog("[GUI] " + successLabel + ": " + destination, {0.3f, 0.9f, 0.3f, 1.f});
         return true;

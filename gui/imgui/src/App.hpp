@@ -210,8 +210,14 @@ private:
                                                  TempSessionManifest& manifestOut);
     void                  updateManifest(const std::filesystem::path& sessionRoot, TempSessionManifest& manifest,
                                          const std::string& status, bool saved, bool preserved);
-    bool                  saveSessionCopy(const std::filesystem::path& sessionRoot, TempSessionManifest& manifest,
-                                          const std::string& dialogTitle, const std::string& successLabel);
+    bool                  saveGeneratedSceneCopy(const std::filesystem::path& sessionRoot,
+                                                 TempSessionManifest& manifest,
+                                                 const std::string& dialogTitle,
+                                                 const std::string& successLabel);
+    bool                  saveDiagnosticsCopy(const std::filesystem::path& sessionRoot,
+                                              TempSessionManifest& manifest,
+                                              const std::string& dialogTitle,
+                                              const std::string& successLabel);
     void         cleanupOwnedTempSessions(bool forceNow = false);
     void         clearTempSessionState();
     void         clearStandaloneTranscodeTempState();
