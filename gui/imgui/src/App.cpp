@@ -219,7 +219,7 @@ void App::renderEngineTab() {
     const ImVec4 kAmber = {0.70f, 0.45f, 0.08f, 1.f};
     const ImVec4 kRed = {0.72f, 0.18f, 0.15f, 1.f};
 
-    if (ImGui::BeginChild("##inputcard", {0.f, 266.f}, true)) {
+    if (ImGui::BeginChild("##inputcard", {0.f, 260.f}, true)) {
         ImGui::TextDisabled("INPUT CONFIGURATION");
         ImGui::Spacing();
         if (isRunning) ImGui::BeginDisabled(true);
@@ -240,7 +240,6 @@ void App::renderEngineTab() {
             ImGui::SetCursorPosX(120.f);
             ImGui::TextColored(isError ? kRed : kGreen, "%s", mSourceHint.c_str());
         }
-
         ImGui::SetCursorPosX(120.f);
         if (ImGui::Button("Download Atmos Examples##atmosdl")) {
 #ifdef __APPLE__
@@ -257,7 +256,7 @@ void App::renderEngineTab() {
         ImGui::SameLine(120.f);
         ImGui::SetNextItemWidth(110.f);
         if (ImGui::Combo("##layoutpreset", &mLayoutPreset, kLayoutNames, IM_ARRAYSIZE(kLayoutNames))) {
-            if (mLayoutPreset < 2) mLayoutPath = resolveProjectPath(kLayoutPaths[mLayoutPreset]);
+            if (mLayoutPreset < IM_ARRAYSIZE(kLayoutNames) - 1) mLayoutPath = resolveProjectPath(kLayoutPaths[mLayoutPreset]);
         }
         ImGui::SameLine();
         ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 78.f);
@@ -265,7 +264,7 @@ void App::renderEngineTab() {
         ImGui::SameLine();
         if (ImGui::Button("Browse##layout")) {
             const std::string p = pickFile("Select Speaker Layout", {"*.json"}, "JSON files");
-            if (!p.empty()) { mLayoutPath = p; mLayoutPreset = 2; }
+            if (!p.empty()) { mLayoutPath = p; mLayoutPreset = IM_ARRAYSIZE(kLayoutNames) - 1; }
         }
 
         ImGui::SetCursorPosX(120.f);
@@ -305,7 +304,7 @@ void App::renderEngineTab() {
     ImGui::EndChild();
     ImGui::Spacing();
 
-    if (ImGui::BeginChild("##transportcard", {0.f, 132.f}, true)) {
+    if (ImGui::BeginChild("##transportcard", {0.f, 110.f}, true)) {
         ImGui::TextDisabled("TRANSPORT");
         ImGui::Spacing();
 
@@ -377,7 +376,7 @@ void App::renderEngineTab() {
     ImGui::EndChild();
     ImGui::Spacing();
 
-    if (ImGui::BeginChild("##ctrlcard", {0.f, 220.f}, true)) {
+    if (ImGui::BeginChild("##ctrlcard", {0.f, 190.f}, true)) {
         ImGui::TextDisabled("RUNTIME CONTROLS");
         ImGui::Spacing();
         if (!isRunning) ImGui::BeginDisabled(true);

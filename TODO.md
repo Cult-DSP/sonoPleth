@@ -2,48 +2,46 @@
 
 ## immediate
 
-- clean up spatial_engine/src
-- fix windows build after cult-allolib change
-- re organize custom submodules into internal/ and update cmake and shell scripts,
-- make sure all submodules are checked out at specific current commits
-- have engine delete old lusid files on startup / boot up / when engine is re run
+- remove save diagnostics button, make or make it functional
+- move gui and spatial engine into source
+  move cult_transcoder and LUSID into internal
+  move scripts into source
 
-- debug overall windows build
+update all relevant build, cmake, source code, and documentation. make sure these org changes are not destructive
+
+-
+
+* clean up spatial_engine/src -> spatial render // deprecate vbap render
+* fix windows build after cult-allolib change
+* debug overall windows build
 
 ## next tasks
 
+- create a cache for default speaker layout
 - check if gain smoothing is necessary
 - duplicate api docs in internal and public, which is most up to date?
-- move spatial transformation math into seperate file potentially
-  - deprecate vbap render
 
 - clean up documentation
   - public facing
   - consolidate dev history and testing docs
-- clean up repo
-  - move offline render code [spatial_engine/src] into spatial_engine/spatialRender and adjust cmake and other code
-  - deprecate vbap renderer
-
-- code signing
-
-# after that:
 
 # Crucial CLI / GUI Features:
 
-- add more info to engine log - terminal output should be similar - option to expand engine log
-- make sure all layouts are aailable from gui dropdown
-- allow for setting runtime params prior to starting engine
+- add more info to engine log - terminal output should be similar - option to expand engine log - mostly upon failer - more info
+- allow for setting runtime params prior to starting engine, add reset button
 - limit buffer size selectiom - potentially dangerous / produce warnings
-- fix fetch add fetch examples to gui - using examples .sh - update to using hugging face links - maybe as a download button instead
-- update available example audio files
-- add render tab, dont bundle with transcoder
 
 # Other Tasks for final packaging:
 
-# Future Work
+- add render tab, dont bundle with transcoder ? fix rendering code in spatial_engine/spatialRender and spatial_engine/src
+
+# Future Work - move to future work md
+
+- code signing
 
 ## Spatial root:
 
+- move spatial transformation math into seperate file potentially
 - make im gui look nicer, add visualizer
 - queue multiple files
 - configure dbap to have more presense in large spaces
