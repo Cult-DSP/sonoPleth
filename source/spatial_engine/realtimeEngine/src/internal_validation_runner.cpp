@@ -26,7 +26,7 @@ int main() {
 
     // 3. Apply Speaker Layout
     LayoutInput lCfg;
-    lCfg.layoutPath = (repoRoot / "source/spatial_engine/speaker_layouts/stereo.json").string();
+    lCfg.layoutPath = (repoRoot / "source/speaker_layouts/stereo.json").string();
     if (!session.applyLayout(lCfg)) return 1;
 
     // 4. Bind Runtime/OSC

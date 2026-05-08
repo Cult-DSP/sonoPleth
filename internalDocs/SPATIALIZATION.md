@@ -31,7 +31,7 @@ Pipeline: Source WAVs + LUSID scene + Layout JSON → N-channel WAV
 ```bash
 # Default render with DBAP
 ./build/source/spatial_engine/spatialRender/spatialroot_spatial_render \
-  --layout source/spatial_engine/speaker_layouts/allosphere_layout.json \
+  --layout source/speaker_layouts/allosphere_layout.json \
   --positions data/processedData/stageForRender/scene.lusid.json \
   --sources data/processedData/stageForRender/ \
   --out render.wav

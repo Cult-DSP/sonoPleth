@@ -41,5 +41,5 @@ With the structural contract verified in code, the next priority is transitionin
 - **Test Asset Paths:**
   - Valid LUSID scene configuration: `/Users/lucian/projects/spatialroot/data/sourceData/lusid_package/scene.lusid.json`
   - Valid audio source directory: `/Users/lucian/projects/spatialroot/data/sourceData/lusid_package/`
-  - Stereo fallback layout (crucial for local testing on macOS built-in output): `source/spatial_engine/speaker_layouts/stereo.json`
+  - Stereo fallback layout (crucial for local testing on macOS built-in output): `source/speaker_layouts/stereo.json`
 - **Known Structural Gotcha:** In `EngineSession.hpp`, core structs like `EngineConfig` and `SceneConfig` were specifically decoupled from the `spatial::` namespace to avoid polluting public interfaces with internal legacy types; so they are global structs.

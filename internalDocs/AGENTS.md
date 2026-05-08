@@ -78,14 +78,14 @@ Runs the realtime spatial audio engine. Inputs: speaker layout (`--layout`), LUS
 ```bash
 # ADM direct streaming mode
 ./build/source/spatial_engine/realtimeEngine/spatialroot_realtime \
-    --layout source/spatial_engine/speaker_layouts/translab-sono-layout.json \
+    --layout source/speaker_layouts/translab-sono-layout.json \
     --scene data/processedData/stageForRender/scene.lusid.json \
     --adm data/sourceData/SWALE-ATMOS-LFE.wav \
     --gain 0.5 --buffersize 512
 
 # Mono file mode (LUSID package with pre-split stems)
 ./build/source/spatial_engine/realtimeEngine/spatialroot_realtime \
-    --layout source/spatial_engine/speaker_layouts/allosphere_layout.json \
+    --layout source/speaker_layouts/allosphere_layout.json \
     --scene data/processedData/stageForRender/scene.lusid.json \
     --sources data/sourceData/lusid_package \
     --gain 0.1 --buffersize 512
@@ -166,7 +166,7 @@ spatialroot/
 │   │   └── stageForRender/scene.lusid.json        # Canonical scene input for engine
 │   └── sourceData/                                # Input audio + LUSID packages
 │   └── tmpProccessedData/                         # Temp/legacy artifact area — not canonical workflow data
-├── source/spatial_engine/speaker_layouts/         # JSON speaker layout files
+├── source/speaker_layouts/                        # JSON speaker layout files
 ├── internalDocs/                                  # Internal docs (this file + consolidated files)
 └── PUBLIC_DOCS/                                   # Public-facing API docs
 ```

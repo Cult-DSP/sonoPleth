@@ -43,7 +43,7 @@ The realtime engine reads a `.lusid.json` scene file, streams audio from a multi
 
 # Run engine directly from the CLI (headless testing):
 ./build/source/spatial_engine/realtimeEngine/spatialroot_realtime \
-    --layout source/spatial_engine/speaker_layouts/translab-sono-layout.json \
+    --layout source/speaker_layouts/translab-sono-layout.json \
     --scene  data/processedData/stageForRender/SWALE-ATMOS-LFE.lusid.json \
     --adm    data/sourceData/SWALE-ATMOS-LFE.wav \
     --device "MOTU Pro Audio"     # omit to use system default
@@ -64,7 +64,7 @@ All test content lives in `data/sourceData/`. Corresponding LUSID scenes are in 
 | Canyon | `data/sourceData/CANYON-ATMOS-LFE.wav` | *(no pre-built scene — transcode via GUI TRANSCODE tab or cult-transcoder)* |
 | 360RA | `data/sourceData/360RA_test.wav` | `data/processedData/stageForRender/360RA_test.lusid.json` |
 
-Speaker layouts: `source/spatial_engine/speaker_layouts/translab-sono-layout.json` (primary test), `allosphere_layout.json` (56-ch).
+Speaker layouts: `source/speaker_layouts/translab-sono-layout.json` (primary test), `allosphere_layout.json` (56-ch).
 
 ---
 

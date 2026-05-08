@@ -69,7 +69,7 @@ The engine requires a LUSID scene JSON file. For ADM input, use `cult-transcoder
 ./build/source/spatial_engine/realtimeEngine/spatialroot_realtime \
     --scene data/processedData/stageForRender/scene.lusid.json \
     --adm   data/sourceData/myfile.wav \
-    --layout source/spatial_engine/speaker_layouts/allosphere_layout.json
+    --layout source/speaker_layouts/allosphere_layout.json
 ```
 
 ### LUSID package (mono stems) workflow
@@ -78,7 +78,7 @@ The engine requires a LUSID scene JSON file. For ADM input, use `cult-transcoder
 ./build/source/spatial_engine/realtimeEngine/spatialroot_realtime \
     --scene   data/processedData/stageForRender/scene.lusid.json \
     --sources data/processedData/stageForRender/ \
-    --layout  source/spatial_engine/speaker_layouts/allosphere_layout.json
+    --layout  source/speaker_layouts/allosphere_layout.json
 ```
 
 ### All flags

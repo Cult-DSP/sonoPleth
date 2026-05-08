@@ -78,7 +78,7 @@ Use this format for every new patch attempt:
 
 # Headless CLI testing:
 ./build/source/spatial_engine/realtimeEngine/spatialroot_realtime \
-    --layout source/spatial_engine/speaker_layouts/translab-sono-layout.json \
+    --layout source/speaker_layouts/translab-sono-layout.json \
     --scene  data/processedData/stageForRender/SWALE-ATMOS-LFE.lusid.json \
     --adm    data/sourceData/SWALE-ATMOS-LFE.wav \
     --device "MOTU Pro Audio"   # omit for system default
@@ -97,7 +97,7 @@ Use `./build.sh --engine-only` for fast current-workflow engine rebuilds. Histor
 | Canyon  | `data/sourceData/CANYON-ATMOS-LFE.wav`   | _(no pre-built scene — transcode via GUI TRANSCODE tab or cult-transcoder)_ |
 | 360RA   | `data/sourceData/360RA_test.wav`         | `data/processedData/stageForRender/360RA_test.lusid.json`                        |
 
-Speaker layouts: `source/spatial_engine/speaker_layouts/translab-sono-layout.json` (primary test), `allosphere_layout.json` (56-ch).
+Speaker layouts: `source/speaker_layouts/translab-sono-layout.json` (primary test), `allosphere_layout.json` (56-ch).
 
 ### Key Source Files
 
