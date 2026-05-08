@@ -24,8 +24,8 @@ All 79 LUSID tests pass post-removal.
 ### Items Marked to Leave
 
 Per human review annotations in the audit:
-- `processedData/` — all contents (render outputs, scene data, debug artifacts)
-- `sourceData/` — 19 GB ADM WAV test files
+- `data/processedData/` — all contents (render outputs, scene data, debug artifacts)
+- `data/sourceData/` — 19 GB ADM WAV test files
 - `quickCommands.txt` — useful dev command examples
 - `internal/LUSID/tests/fixtures/sample_scene_v0.5.json` — test fixtures
 - `internalDocs/` — all internal docs (superseded by current consolidation)
@@ -34,8 +34,8 @@ Per human review annotations in the audit:
 
 | Item | Size |
 |---|---|
-| `sourceData/` | 19 GB (ADM WAV test files) |
-| `processedData/` | 11 GB (rendered multichannel audio) |
+| `data/sourceData/` | 19 GB (ADM WAV test files) |
+| `data/processedData/` | 11 GB (rendered multichannel audio) |
 | Python venv (removed Phase 6) | was 1.6 GB |
 | Source code + submodules | ~122 MB |
 

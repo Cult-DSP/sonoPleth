@@ -63,12 +63,12 @@ The engine requires a LUSID scene JSON file. For ADM input, use `cult-transcoder
 
 ```bash
 # Step 1: transcode ADM → LUSID scene
-./build/internal/cult_transcoder/cult-transcoder transcode sourceData/myfile.wav
+./build/internal/cult_transcoder/cult-transcoder transcode data/sourceData/myfile.wav
 
 # Step 2: play with the realtime engine
 ./build/source/spatial_engine/realtimeEngine/spatialroot_realtime \
-    --scene processedData/stageForRender/scene.lusid.json \
-    --adm   sourceData/myfile.wav \
+    --scene data/processedData/stageForRender/scene.lusid.json \
+    --adm   data/sourceData/myfile.wav \
     --layout source/spatial_engine/speaker_layouts/allosphere_layout.json
 ```
 
@@ -76,8 +76,8 @@ The engine requires a LUSID scene JSON file. For ADM input, use `cult-transcoder
 
 ```bash
 ./build/source/spatial_engine/realtimeEngine/spatialroot_realtime \
-    --scene   processedData/stageForRender/scene.lusid.json \
-    --sources processedData/stageForRender/ \
+    --scene   data/processedData/stageForRender/scene.lusid.json \
+    --sources data/processedData/stageForRender/ \
     --layout  source/spatial_engine/speaker_layouts/allosphere_layout.json
 ```
 
@@ -114,7 +114,7 @@ When `--osc_port` is non-zero (default: 9009), the engine accepts OSC messages o
 ### Quick dev rebuild (engine only)
 
 ```bash
-./engine.sh
+./build.sh --engine-only
 ```
 
 ---
@@ -125,7 +125,7 @@ Converts ADM BW64 WAV files to the LUSID scene JSON format required by the engin
 
 ```bash
 # Transcode an ADM file → LUSID JSON
-./build/internal/cult_transcoder/cult-transcoder transcode sourceData/myfile.wav
+./build/internal/cult_transcoder/cult-transcoder transcode data/sourceData/myfile.wav
 
 # Show all options
 ./build/internal/cult_transcoder/cult-transcoder --help
@@ -159,7 +159,6 @@ The build system is CMake + shell scripts. No Python required.
 | `build.sh`  | macOS / Linux | CMake configure + build                        |
 | `init.ps1`  | Windows       | Initialize submodules + call `build.ps1`       |
 | `build.ps1` | Windows       | CMake configure + build                        |
-| `engine.sh` | macOS / Linux | Fast clean rebuild of the realtime engine only |
 | `run.sh`    | macOS / Linux | Launch the ImGui GUI (builds first if needed)  |
 | `run.ps1`   | Windows       | Launch the ImGui GUI                           |
 
@@ -188,8 +187,8 @@ All C++ dependencies (AlloLib, libsndfile, libbw64, pugixml, LUSID) are vendored
 ## Rebuilding after C++ source changes
 
 ```bash
-# Quick rebuild — realtime engine only (clean + rebuild)
-./engine.sh
+# Quick rebuild — realtime engine only
+./build.sh --engine-only
 
 # Full rebuild — all components
 ./build.sh
@@ -215,7 +214,7 @@ The Dear ImGui + GLFW desktop GUI at `source/gui/imgui/` is the primary GUI. Bui
 
 ```bash
 ./build.sh --gui          # macOS / Linux
-.\build.ps1 -Gui          # Windows
+.\build.ps1 -GuiBuild     # Windows
 ```
 
 Then launch from the project root:
@@ -227,7 +226,7 @@ Then launch from the project root:
 
 The GUI controls the spatial audio engine directly via the `EngineSessionCore` C++ API (no OSC). It supports ADM WAV and LUSID package sources, speaker layout selection, and real-time parameter control.
 
-Generated GUI-owned scenes now use an app-cache temp-session root instead of normal `processedData/` paths:
+Generated GUI-owned scenes now use an app-cache temp-session root instead of normal `data/processedData/` paths:
 
 - macOS: `~/Library/Caches/CultDSP/SpatialRoot/temp-sessions/`
 - Linux: `$XDG_CACHE_HOME/CultDSP/SpatialRoot/temp-sessions/` or `~/.cache/CultDSP/SpatialRoot/temp-sessions/`
@@ -257,8 +256,9 @@ spatialroot/
 ├── docs/                   # If/when public docs are split from repo root docs
 ├── examples/               # If/when shared examples are promoted from subtrees
 ├── thirdparty/             # Additional vendored dependencies
-├── processedData/          # Working outputs
-├── sourceData/             # Input audio + LUSID packages
+├── data/
+│   ├── processedData/      # Working outputs
+│   └── sourceData/         # Input audio + LUSID packages
 ├── PUBLIC_DOCS/API.md      # EngineSession C++ embedding API documentation
 ├── internalDocs/           # Internal onboarding, build, engine, and history notes
 ├── CMakeLists.txt          # Root build — all components

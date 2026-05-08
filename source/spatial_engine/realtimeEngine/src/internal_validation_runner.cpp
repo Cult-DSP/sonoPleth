@@ -1,11 +1,13 @@
 // internal_validation_runner.cpp
 #include "EngineSession.hpp"
+#include <filesystem>
 #include <iostream>
 #include <thread>
 #include <chrono>
 
 int main() {
     EngineSession session;
+    const auto repoRoot = std::filesystem::current_path();
 
     // 1. Configure Engine Resource Allocation
     EngineOptions eCfg;
@@ -18,13 +20,13 @@ int main() {
 
     // 2. Load Audio Scene
     SceneInput sCfg;
-    sCfg.scenePath = "/Users/lucian/projects/spatialroot/sourceData/lusid_package/scene.lusid.json";
-    sCfg.sourcesFolder = "/Users/lucian/projects/spatialroot/sourceData/lusid_package/";
+    sCfg.scenePath = (repoRoot / "data/sourceData/lusid_package/scene.lusid.json").string();
+    sCfg.sourcesFolder = (repoRoot / "data/sourceData/lusid_package").string();
     if (!session.loadScene(sCfg)) return 1;
 
     // 3. Apply Speaker Layout
     LayoutInput lCfg;
-    lCfg.layoutPath = "/Users/lucian/projects/spatialroot/source/spatial_engine/speaker_layouts/stereo.json";
+    lCfg.layoutPath = (repoRoot / "source/spatial_engine/speaker_layouts/stereo.json").string();
     if (!session.applyLayout(lCfg)) return 1;
 
     // 4. Bind Runtime/OSC

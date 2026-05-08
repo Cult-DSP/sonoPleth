@@ -27,7 +27,7 @@ $ProjectRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $BuildDir = Join-Path $ProjectRoot "build"
 
 if ($Help) {
-    Write-Host "Usage: .\build.ps1 [--engine-only | --offline-only | --cult-only | --gui-build]"
+    Write-Host "Usage: .\build.ps1 [-EngineOnly | -OfflineOnly | -CultOnly | -GuiBuild]"
     exit 0
 }
 

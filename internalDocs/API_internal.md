@@ -190,4 +190,4 @@ AlloLib parameters bind to internal memory topologies — exposing them directly
 - Implementation: `source/spatial_engine/realtimeEngine/src/EngineSession.cpp`
 - Core library CMake target: `source/spatial_engine/realtimeEngine/CMakeLists.txt` (`EngineSessionCore`)
 - Working reference: `source/spatial_engine/realtimeEngine/src/internal_validation_runner.cpp`
-- Test assets: `sourceData/lusid_package/scene.lusid.json`, `source/spatial_engine/speaker_layouts/stereo.json`
+- Test assets: `data/sourceData/lusid_package/scene.lusid.json`, `source/spatial_engine/speaker_layouts/stereo.json`

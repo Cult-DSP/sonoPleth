@@ -30,14 +30,14 @@ Pipeline: Source WAVs + LUSID scene + Layout JSON → N-channel WAV
 
 ```bash
 # Default render with DBAP
-./build/spatialroot_spatial_render \
+./build/source/spatial_engine/spatialRender/spatialroot_spatial_render \
   --layout source/spatial_engine/speaker_layouts/allosphere_layout.json \
-  --positions processedData/stageForRender/scene.lusid.json \
-  --sources processedData/stageForRender/ \
+  --positions data/processedData/stageForRender/scene.lusid.json \
+  --sources data/processedData/stageForRender/ \
   --out render.wav
 
 # VBAP
-./build/spatialroot_spatial_render \
+./build/source/spatial_engine/spatialRender/spatialroot_spatial_render \
   --spatializer vbap \
   --layout allosphere_layout.json \
   --positions scene.lusid.json \
@@ -45,7 +45,7 @@ Pipeline: Source WAVs + LUSID scene + Layout JSON → N-channel WAV
   --out render_vbap.wav
 
 # DBAP with tight focus
-./build/spatialroot_spatial_render \
+./build/source/spatial_engine/spatialRender/spatialroot_spatial_render \
   --spatializer dbap --dbap_focus 3.0 \
   --layout translab_layout.json \
   --positions scene.lusid.json \
@@ -53,7 +53,7 @@ Pipeline: Source WAVs + LUSID scene + Layout JSON → N-channel WAV
   --out render_tight.wav
 
 # Debug single source
-./build/spatialroot_spatial_render \
+./build/source/spatial_engine/spatialRender/spatialroot_spatial_render \
   --solo_source "11.1" \
   --debug_dir ./debug_output/ \
   --layout allosphere_layout.json \

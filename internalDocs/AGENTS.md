@@ -54,7 +54,7 @@ ADM BWF WAV File
     │
     ├─► cult-transcoder (C++) ──► scene.lusid.json (+ stems when needed)
     │                                    │
-    │              processedData/stageForRender/scene.lusid.json  (CANONICAL)
+    │              data/processedData/stageForRender/scene.lusid.json  (CANONICAL)
     │
     └─► spatialroot_realtime (C++)
               │
@@ -79,15 +79,15 @@ Runs the realtime spatial audio engine. Inputs: speaker layout (`--layout`), LUS
 # ADM direct streaming mode
 ./build/source/spatial_engine/realtimeEngine/spatialroot_realtime \
     --layout source/spatial_engine/speaker_layouts/translab-sono-layout.json \
-    --scene processedData/stageForRender/scene.lusid.json \
-    --adm sourceData/SWALE-ATMOS-LFE.wav \
+    --scene data/processedData/stageForRender/scene.lusid.json \
+    --adm data/sourceData/SWALE-ATMOS-LFE.wav \
     --gain 0.5 --buffersize 512
 
 # Mono file mode (LUSID package with pre-split stems)
 ./build/source/spatial_engine/realtimeEngine/spatialroot_realtime \
     --layout source/spatial_engine/speaker_layouts/allosphere_layout.json \
-    --scene processedData/stageForRender/scene.lusid.json \
-    --sources sourceData/lusid_package \
+    --scene data/processedData/stageForRender/scene.lusid.json \
+    --sources data/sourceData/lusid_package \
     --gain 0.1 --buffersize 512
 ```
 
@@ -112,7 +112,7 @@ Native GUI linking `EngineSessionCore` directly in-process. No subprocess, no OS
 ```bash
 build/internal/cult_transcoder/cult-transcoder transcode \
     --in <adm_wav_path> --in-format adm_wav \
-    --out processedData/stageForRender/scene.lusid.json \
+    --out data/processedData/stageForRender/scene.lusid.json \
     --out-format lusid_json \
     [--lfe-mode hardcoded|speaker-label]
 ```
@@ -137,7 +137,7 @@ Renders a LUSID scene + sources to an N-channel WAV file (offline, not real-time
 
 ```
 spatialroot/
-├── init.sh / build.sh / run.sh / engine.sh       # macOS/Linux
+├── init.sh / build.sh / run.sh                   # macOS/Linux
 ├── init.ps1 / build.ps1 / run.ps1                # Windows
 ├── build/                                         # CMake output
 │   ├── internal/cult_transcoder/cult-transcoder
@@ -161,9 +161,10 @@ spatialroot/
 │   ├── libsndfile/                                # WAV/RF64 I/O
 │   ├── imgui/                                     # Dear ImGui
 │   └── glfw/                                      # GLFW window/GL context
-├── processedData/                                 # Working outputs (scene, caches)
-│   └── stageForRender/scene.lusid.json            # Canonical scene input for engine
-├── sourceData/                                    # Input audio + LUSID packages
+├── data/
+│   ├── processedData/                             # Working outputs (scene, caches)
+│   │   └── stageForRender/scene.lusid.json        # Canonical scene input for engine
+│   └── sourceData/                                # Input audio + LUSID packages
 ├── source/spatial_engine/speaker_layouts/         # JSON speaker layout files
 ├── internalDocs/                                  # Internal docs (this file + consolidated files)
 └── PUBLIC_DOCS/                                   # Public-facing API docs

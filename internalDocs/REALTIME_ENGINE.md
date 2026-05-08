@@ -77,25 +77,25 @@ Use this format for every new patch attempt:
 ./run.sh               # launch GUI (normal path)
 
 # Headless CLI testing:
-./build/spatialroot_realtime \
+./build/source/spatial_engine/realtimeEngine/spatialroot_realtime \
     --layout source/spatial_engine/speaker_layouts/translab-sono-layout.json \
-    --scene  processedData/stageForRender/SWALE-ATMOS-LFE.lusid.json \
-    --adm    sourceData/SWALE-ATMOS-LFE.wav \
+    --scene  data/processedData/stageForRender/SWALE-ATMOS-LFE.lusid.json \
+    --adm    data/sourceData/SWALE-ATMOS-LFE.wav \
     --device "MOTU Pro Audio"   # omit for system default
     --list-devices              # enumerate output devices then exit
 ```
 
-Note: `./engine.sh` is a legacy standalone build script outputting to `source/spatial_engine/realtimeEngine/build/`. Prefer `./build.sh` — it uses the unified CMake build at `build/` and is the canonical path.
+Use `./build.sh --engine-only` for fast current-workflow engine rebuilds. Historical notes about the old standalone `engine.sh` script only apply to pre-reorg/dev-history context.
 
 ### Test Content
 
 | Content | ADM WAV                             | LUSID Scene                                                                 |
 | ------- | ----------------------------------- | --------------------------------------------------------------------------- |
-| Swale   | `sourceData/SWALE-ATMOS-LFE.wav`    | `processedData/stageForRender/SWALE-ATMOS-LFE.lusid.json`                   |
-| Ascent  | `sourceData/ASCENT-ATMOS-LFE.wav`   | `processedData/stageForRender/ASCENT-ATMOS-LFE.lusid.json`                  |
-| Eden    | `sourceData/EDEN-ATMOS-MIX-LFE.wav` | `processedData/stageForRender/EDEN-ATMOS-MIX-LFE.lusid.json`                |
-| Canyon  | `sourceData/CANYON-ATMOS-LFE.wav`   | _(no pre-built scene — transcode via GUI TRANSCODE tab or cult-transcoder)_ |
-| 360RA   | `sourceData/360RA_test.wav`         | `processedData/stageForRender/360RA_test.lusid.json`                        |
+| Swale   | `data/sourceData/SWALE-ATMOS-LFE.wav`    | `data/processedData/stageForRender/SWALE-ATMOS-LFE.lusid.json`                   |
+| Ascent  | `data/sourceData/ASCENT-ATMOS-LFE.wav`   | `data/processedData/stageForRender/ASCENT-ATMOS-LFE.lusid.json`                  |
+| Eden    | `data/sourceData/EDEN-ATMOS-MIX-LFE.wav` | `data/processedData/stageForRender/EDEN-ATMOS-MIX-LFE.lusid.json`                |
+| Canyon  | `data/sourceData/CANYON-ATMOS-LFE.wav`   | _(no pre-built scene — transcode via GUI TRANSCODE tab or cult-transcoder)_ |
+| 360RA   | `data/sourceData/360RA_test.wav`         | `data/processedData/stageForRender/360RA_test.lusid.json`                        |
 
 Speaker layouts: `source/spatial_engine/speaker_layouts/translab-sono-layout.json` (primary test), `allosphere_layout.json` (56-ch).
 

@@ -150,7 +150,7 @@ bool SpatialRootPaths::isSafeTempSessionPath(const fs::path& candidate,
     if (session == session.root_path()) return false;
     if (!home.empty() && session == home) return false;
     if (!cwd.empty() && session == cwd) return false;
-    if (!cwd.empty() && (session == cwd / "sourceData" || session == cwd / "processedData")) return false;
+    if (!cwd.empty() && (session == cwd / "data/sourceData" || session == cwd / "data/processedData")) return false;
 
     auto rel = session.lexically_relative(sessionsRoot);
     if (rel.empty() || rel.native().empty() || rel.string() == "." || rel.string().rfind("..", 0) == 0) {

@@ -13,7 +13,8 @@ URL_3="$HF_BASE/SWALE-ATMOS-LFE.wav"
 OUTPUT_NAME_3="LucianParisi_Swale_Atmos_Mix.wav"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SOURCE_DATA_DIR="$SCRIPT_DIR/../sourceData"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+SOURCE_DATA_DIR="$REPO_ROOT/data/sourceData"
 
 download_from_hf() {
     local url="$1"

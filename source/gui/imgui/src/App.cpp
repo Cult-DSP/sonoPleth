@@ -844,7 +844,7 @@ std::string App::findCultTranscoder() const {
 
 std::string App::transcodeOutputPath(const std::string& admPath) const {
     const fs::path p(admPath);
-    return resolveProjectPath("processedData/stageForRender/" + p.stem().string() + ".lusid.json");
+    return resolveProjectPath("data/processedData/stageForRender/" + p.stem().string() + ".lusid.json");
 }
 
 fs::path App::tempSessionsRoot() const {

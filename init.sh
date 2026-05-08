@@ -227,7 +227,7 @@ echo "  cult-transcoder            : build/internal/cult_transcoder/cult-transco
 echo "  spatialroot_gui            : build/source/gui/imgui/Spatial Root"
 echo ""
 echo "For quick dev rebuilds of the realtime engine only:"
-echo "  ./engine.sh"
+echo "  ./build.sh --engine-only"
 echo ""
 echo "For subsequent full builds:"
 echo "  ./build.sh"

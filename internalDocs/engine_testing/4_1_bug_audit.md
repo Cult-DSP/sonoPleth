@@ -44,25 +44,25 @@ The realtime engine reads a `.lusid.json` scene file, streams audio from a multi
 # Run engine directly from the CLI (headless testing):
 ./build/source/spatial_engine/realtimeEngine/spatialroot_realtime \
     --layout source/spatial_engine/speaker_layouts/translab-sono-layout.json \
-    --scene  processedData/stageForRender/SWALE-ATMOS-LFE.lusid.json \
-    --adm    sourceData/SWALE-ATMOS-LFE.wav \
+    --scene  data/processedData/stageForRender/SWALE-ATMOS-LFE.lusid.json \
+    --adm    data/sourceData/SWALE-ATMOS-LFE.wav \
     --device "MOTU Pro Audio"     # omit to use system default
     --list-devices                # enumerate output devices then exit
 ```
 
-Note: `./engine.sh` is a legacy standalone build script that outputs to `source/spatial_engine/realtimeEngine/build/`. Prefer `./build.sh` — it uses the unified CMake build at `build/` and is the canonical path.
+Use `./build.sh --engine-only` for fast current-workflow engine rebuilds. Historical mentions of `engine.sh` only apply to archived pre-reorg notes.
 
 ### Test content
 
-All test content lives in `sourceData/`. Corresponding LUSID scenes are in `processedData/stageForRender/`. File names match:
+All test content lives in `data/sourceData/`. Corresponding LUSID scenes are in `data/processedData/stageForRender/`. File names match:
 
 | Content | ADM WAV | LUSID scene |
 |---|---|---|
-| Swale | `sourceData/SWALE-ATMOS-LFE.wav` | `processedData/stageForRender/SWALE-ATMOS-LFE.lusid.json` |
-| Ascent | `sourceData/ASCENT-ATMOS-LFE.wav` | `processedData/stageForRender/ASCENT-ATMOS-LFE.lusid.json` |
-| Eden | `sourceData/EDEN-ATMOS-MIX-LFE.wav` | `processedData/stageForRender/EDEN-ATMOS-MIX-LFE.lusid.json` |
-| Canyon | `sourceData/CANYON-ATMOS-LFE.wav` | *(no pre-built scene — transcode via GUI TRANSCODE tab or cult-transcoder)* |
-| 360RA | `sourceData/360RA_test.wav` | `processedData/stageForRender/360RA_test.lusid.json` |
+| Swale | `data/sourceData/SWALE-ATMOS-LFE.wav` | `data/processedData/stageForRender/SWALE-ATMOS-LFE.lusid.json` |
+| Ascent | `data/sourceData/ASCENT-ATMOS-LFE.wav` | `data/processedData/stageForRender/ASCENT-ATMOS-LFE.lusid.json` |
+| Eden | `data/sourceData/EDEN-ATMOS-MIX-LFE.wav` | `data/processedData/stageForRender/EDEN-ATMOS-MIX-LFE.lusid.json` |
+| Canyon | `data/sourceData/CANYON-ATMOS-LFE.wav` | *(no pre-built scene — transcode via GUI TRANSCODE tab or cult-transcoder)* |
+| 360RA | `data/sourceData/360RA_test.wav` | `data/processedData/stageForRender/360RA_test.lusid.json` |
 
 Speaker layouts: `source/spatial_engine/speaker_layouts/translab-sono-layout.json` (primary test), `allosphere_layout.json` (56-ch).
 
@@ -521,5 +521,5 @@ Extended `Pose::computePositions()` from `(double blockCenterTimeSec)` to `(doub
 - **Bug 9 fast-mover patch (deferred):** Intra-block guard-state discontinuity in the fast-mover sub-step path is geometrically real but produced no consistent audible evidence after Bug 9.1 landed. Do not implement unless pops reappear consistently in later testing and correlate with fast-mover sources. Design is documented under the Bug 9 closed entry above.
 - **360RA isolated pop (~96 s, first run only):** Single occurrence, not reproduced on second run. Not attributed to Bug 9.1. Possible causes: content-specific guard interaction, non-guard mechanism, or one-off OS scheduling event. Monitor in future 360RA testing; do not act on single-run evidence.
 - **`kMinSpeakerDist` tuning:** 0.15 m may be too large for 360RA DirectSpeaker content (sources at 0.02–0.10 m from target speakers). Consider reducing to ~0.05 m if 360RA pops recur.
-- **Bug 10 (deferred): Numerical parity with offline renderer.** Structural parity confirmed (`3-8-bug-diagnoses.md`). Not numerically verified. Primary concern: `splitStems.py` may write mono WAVs at PCM_16 rather than FLOAT. Check: `sf.info('processedData/stageForRender/1.1.wav').subtype` should be `'FLOAT'`. Full procedure in `3-8-bug-diagnoses.md` Section 5.
+- **Bug 10 (deferred): Numerical parity with offline renderer.** Structural parity confirmed (`3-8-bug-diagnoses.md`). Not numerically verified. Primary concern: `splitStems.py` may write mono WAVs at PCM_16 rather than FLOAT. Check: `sf.info('data/processedData/stageForRender/1.1.wav').subtype` should be `'FLOAT'`. Full procedure in `3-8-bug-diagnoses.md` Section 5.
 - **Remap load-order bug:** `outputRemap.load()` passes `config.outputChannels` for both `renderChannels` and `deviceChannels`. `deviceChannels` should be the post-open actual count. Latent; only affects `--remap` path.

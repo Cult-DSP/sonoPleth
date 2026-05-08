@@ -27,7 +27,7 @@ if (-not $Binary) {
     foreach ($c in $candidates) { Write-Host "  $c" }
     Write-Host ""
     Write-Host "Build the GUI first:"
-    Write-Host "  .\build.ps1 --gui"
+    Write-Host "  .\build.ps1 -GuiBuild"
     exit 1
 }
 

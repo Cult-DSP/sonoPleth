@@ -10,7 +10,8 @@ $Files = @(
 )
 
 $ScriptDir     = Split-Path -Parent $MyInvocation.MyCommand.Definition
-$SourceDataDir = Join-Path $ScriptDir "../sourceData"
+$RepoRoot      = Resolve-Path (Join-Path $ScriptDir "../..")
+$SourceDataDir = Join-Path $RepoRoot "data/sourceData"
 
 if (-not (Test-Path $SourceDataDir)) {
     New-Item -ItemType Directory -Path $SourceDataDir | Out-Null
