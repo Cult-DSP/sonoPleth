@@ -18,6 +18,29 @@ set -e
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BUILD_DIR="${PROJECT_ROOT}/build"
 
+submodule_has_missing_recursive() {
+    local path="$1"
+    git submodule status --recursive "$path" 2>/dev/null | grep -q '^-'
+}
+
+ensure_submodule_for_build() {
+    local path="$1"
+    local sentinel="$2"
+    local recursive="${3:-no}"
+
+    if [ -e "$sentinel" ] && ! submodule_has_missing_recursive "$path"; then
+        return
+    fi
+
+    echo "Initializing required submodule: $path"
+    git submodule sync --recursive "$path"
+    if [ "$recursive" = "yes" ]; then
+        git submodule update --init --recursive --depth 1 --checkout "$path"
+    else
+        git submodule update --init --depth 1 --checkout "$path"
+    fi
+}
+
 # ── Argument parsing ──────────────────────────────────────────────────────────
 BUILD_ENGINE=ON
 BUILD_OFFLINE=ON
@@ -53,6 +76,19 @@ for arg in "$@"; do
             ;;
     esac
 done
+
+# ── Submodule bootstrap for fresh clones / moved paths ───────────────────────
+ensure_submodule_for_build "internal/cult-allolib" "${PROJECT_ROOT}/internal/cult-allolib/include" "yes"
+ensure_submodule_for_build "thirdparty/libsndfile" "${PROJECT_ROOT}/thirdparty/libsndfile/CMakeLists.txt"
+
+if [ "${BUILD_CULT}" = "ON" ]; then
+    ensure_submodule_for_build "internal/cult_transcoder" "${PROJECT_ROOT}/internal/cult_transcoder/thirdparty/libbw64/include/bw64/bw64.hpp" "yes"
+fi
+
+if [ "${BUILD_GUI}" = "ON" ]; then
+    ensure_submodule_for_build "thirdparty/imgui" "${PROJECT_ROOT}/thirdparty/imgui/imgui.h"
+    ensure_submodule_for_build "thirdparty/glfw" "${PROJECT_ROOT}/thirdparty/glfw/CMakeLists.txt"
+fi
 
 # ── CPU count ─────────────────────────────────────────────────────────────────
 if command -v nproc &>/dev/null; then

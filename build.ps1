@@ -26,6 +26,38 @@ $ErrorActionPreference = "Stop"
 $ProjectRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $BuildDir = Join-Path $ProjectRoot "build"
 
+function Test-SubmoduleMissingRecursive([string]$Path) {
+    $status = git submodule status --recursive $Path 2>$null
+    foreach ($line in $status) {
+        if ($line.StartsWith("-")) { return $true }
+    }
+    return $false
+}
+
+function Ensure-SubmoduleForBuild {
+    param(
+        [string]$Path,
+        [string]$Sentinel,
+        [switch]$Recursive
+    )
+
+    if ((Test-Path $Sentinel) -and -not (Test-SubmoduleMissingRecursive $Path)) {
+        return
+    }
+
+    Write-Host "Initializing required submodule: $Path"
+    git submodule sync --recursive $Path
+    if ($Recursive) {
+        git submodule update --init --recursive --depth 1 --checkout $Path
+    } else {
+        git submodule update --init --depth 1 --checkout $Path
+    }
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "✗ Failed to initialize $Path" -ForegroundColor Red
+        exit 1
+    }
+}
+
 if ($Help) {
     Write-Host "Usage: .\build.ps1 [-EngineOnly | -OfflineOnly | -CultOnly | -GuiBuild]"
     exit 0
@@ -36,6 +68,18 @@ $BuildOffline = if ($EngineOnly  -or $CultOnly)   { "OFF" } else { "ON" }
 $BuildCult    = if ($EngineOnly  -or $OfflineOnly) { "OFF" } else { "ON" }
 $BuildGUI     = if ($GuiBuild) { "ON" } else { "OFF" }
 $BuildDevtools = "OFF"
+
+Ensure-SubmoduleForBuild -Path "internal/cult-allolib" -Sentinel (Join-Path $ProjectRoot "internal\cult-allolib\include") -Recursive
+Ensure-SubmoduleForBuild -Path "thirdparty/libsndfile" -Sentinel (Join-Path $ProjectRoot "thirdparty\libsndfile\CMakeLists.txt")
+
+if ($BuildCult -eq "ON") {
+    Ensure-SubmoduleForBuild -Path "internal/cult_transcoder" -Sentinel (Join-Path $ProjectRoot "internal\cult_transcoder\thirdparty\libbw64\include\bw64\bw64.hpp") -Recursive
+}
+
+if ($BuildGUI -eq "ON") {
+    Ensure-SubmoduleForBuild -Path "thirdparty/imgui" -Sentinel (Join-Path $ProjectRoot "thirdparty\imgui\imgui.h")
+    Ensure-SubmoduleForBuild -Path "thirdparty/glfw" -Sentinel (Join-Path $ProjectRoot "thirdparty\glfw\CMakeLists.txt")
+}
 
 $NumCores = [Environment]::ProcessorCount
 

@@ -19,6 +19,40 @@ $ErrorActionPreference = "Stop"
 $ProjectRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 Set-Location $ProjectRoot
 
+function Test-SubmoduleMissingRecursive([string]$Path) {
+    $status = git submodule status --recursive $Path 2>$null
+    foreach ($line in $status) {
+        if ($line.StartsWith("-")) { return $true }
+    }
+    return $false
+}
+
+function Ensure-Submodule {
+    param(
+        [string]$Path,
+        [string]$Sentinel,
+        [switch]$Recursive
+    )
+
+    if ((Test-Path $Sentinel) -and -not (Test-SubmoduleMissingRecursive $Path)) {
+        Write-Host "✓ $Path already initialized"
+        return
+    }
+
+    Write-Host "Fetching $Path..."
+    git submodule sync --recursive $Path
+    if ($Recursive) {
+        git submodule update --init --recursive --depth 1 --checkout $Path
+    } else {
+        git submodule update --init --depth 1 --checkout $Path
+    }
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "✗ Failed to initialize $Path" -ForegroundColor Red
+        exit 1
+    }
+    Write-Host "✓ $Path initialized"
+}
+
 if ($Help) {
     Write-Host "Usage: .\init.ps1"
     Write-Host ""
@@ -73,122 +107,51 @@ if (Test-Path $vswhere) {
 }
 Write-Host ""
 
-# ── Step 2: Initialize cult-allolib submodule ────────────────────────────────
-Write-Host "Step 2: Initializing cult-allolib submodule..."
-
-$AlloInclude = Join-Path $ProjectRoot "internal\cult-allolib\include"
-if (Test-Path $AlloInclude) {
-    Write-Host "✓ internal/cult-allolib already initialized"
-} else {
-    Write-Host "Fetching internal/cult-allolib (shallow, depth=1)..."
-    git submodule update --init --recursive --depth 1 --checkout internal/cult-allolib
-    if ($LASTEXITCODE -ne 0) {
-        Write-Host "✗ Failed to initialize internal/cult-allolib" -ForegroundColor Red
-        exit 1
-    }
-    Write-Host "✓ internal/cult-allolib initialized"
-}
+# ── Step 2: Initialize LUSID submodule ───────────────────────────────────────
+Write-Host "Step 2: Initializing LUSID submodule..."
+Ensure-Submodule -Path "internal/LUSID" -Sentinel (Join-Path $ProjectRoot "internal\LUSID\README.md")
 Write-Host ""
 
-# ── Step 3: Initialize cult_transcoder submodule ──────────────────────────────
-Write-Host "Step 3: Initializing cult_transcoder submodule..."
-
-$CultCMake = Join-Path $ProjectRoot "internal\cult_transcoder\CMakeLists.txt"
-if (Test-Path $CultCMake) {
-    Write-Host "✓ cult_transcoder already initialized"
-} else {
-    Write-Host "Fetching cult_transcoder..."
-    git submodule update --init --depth 1 --checkout internal/cult_transcoder
-    if ($LASTEXITCODE -ne 0) {
-        Write-Host "✗ Failed to initialize cult_transcoder" -ForegroundColor Red
-        exit 1
-    }
-    Write-Host "✓ cult_transcoder initialized"
-}
-
-# cult_transcoder owns nested vendored deps that must be present before configure.
-$Libbw64Header = Join-Path $ProjectRoot "internal\cult_transcoder\thirdparty\libbw64\include\bw64\bw64.hpp"
-$R8brainHeader = Join-Path $ProjectRoot "internal\cult_transcoder\thirdparty\r8brain\CDSPResampler.h"
-if ((Test-Path $Libbw64Header) -and (Test-Path $R8brainHeader)) {
-    Write-Host "✓ cult_transcoder nested submodules already initialized"
-} else {
-    Write-Host "Fetching cult_transcoder nested submodules recursively..."
-    Push-Location (Join-Path $ProjectRoot "internal\cult_transcoder")
-    git submodule update --init --recursive --depth 1 --checkout
-    $exitCode = $LASTEXITCODE
-    Pop-Location
-    if ($exitCode -ne 0) {
-        Write-Host "✗ Failed to initialize cult_transcoder nested submodules" -ForegroundColor Red
-        exit 1
-    }
-    Write-Host "✓ cult_transcoder nested submodules initialized"
-}
+# ── Step 3: Initialize cult-allolib submodule ────────────────────────────────
+Write-Host "Step 3: Initializing cult-allolib submodule..."
+Ensure-Submodule -Path "internal/cult-allolib" -Sentinel (Join-Path $ProjectRoot "internal\cult-allolib\include") -Recursive
 Write-Host ""
 
-# ── Step 4: Initialize libsndfile submodule ──────────────────────────────────
-Write-Host "Step 4: Initializing libsndfile submodule..."
-
-$LibSndFileCMake = Join-Path $ProjectRoot "thirdparty\libsndfile\CMakeLists.txt"
-if (Test-Path $LibSndFileCMake) {
-    Write-Host "✓ thirdparty/libsndfile already initialized"
-} else {
-    Write-Host "Fetching thirdparty/libsndfile..."
-    git submodule update --init --depth 1 --checkout thirdparty/libsndfile
-    if ($LASTEXITCODE -ne 0) {
-        Write-Host "✗ Failed to initialize thirdparty/libsndfile" -ForegroundColor Red
-        exit 1
-    }
-    Write-Host "✓ thirdparty/libsndfile initialized"
-}
+# ── Step 4: Initialize cult_transcoder submodule ─────────────────────────────
+Write-Host "Step 4: Initializing cult_transcoder submodule..."
+Ensure-Submodule -Path "internal/cult_transcoder" -Sentinel (Join-Path $ProjectRoot "internal\cult_transcoder\thirdparty\libbw64\include\bw64\bw64.hpp") -Recursive
 Write-Host ""
 
-# ── Step 5: Initialize Dear ImGui submodule (optional — needed for GUI build) ─
-Write-Host "Step 5: Initializing Dear ImGui submodule..."
+# ── Step 5: Initialize libsndfile submodule ──────────────────────────────────
+Write-Host "Step 5: Initializing libsndfile submodule..."
+Ensure-Submodule -Path "thirdparty/libsndfile" -Sentinel (Join-Path $ProjectRoot "thirdparty\libsndfile\CMakeLists.txt")
+Write-Host ""
+
+# ── Step 6: Initialize Dear ImGui submodule (optional — needed for GUI build) ─
+Write-Host "Step 6: Initializing Dear ImGui submodule..."
 
 $GitmodulesPath = Join-Path $ProjectRoot ".gitmodules"
 $ImGuiDir = Join-Path $ProjectRoot "thirdparty\imgui"
 if ((Test-Path $GitmodulesPath) -and (Select-String -Path $GitmodulesPath -Pattern "thirdparty/imgui" -Quiet)) {
-    $ImGuiHeader = Join-Path $ImGuiDir "imgui.h"
-    if (Test-Path $ImGuiHeader) {
-        Write-Host "✓ thirdparty/imgui already initialized"
-    } else {
-        Write-Host "Fetching thirdparty/imgui..."
-        git submodule update --init --depth 1 --checkout thirdparty/imgui
-        if ($LASTEXITCODE -ne 0) {
-            Write-Host "✗ Failed to initialize thirdparty/imgui" -ForegroundColor Red
-            exit 1
-        }
-        Write-Host "✓ thirdparty/imgui initialized"
-    }
+    Ensure-Submodule -Path "thirdparty/imgui" -Sentinel (Join-Path $ImGuiDir "imgui.h")
 } else {
     Write-Host "ℹ  thirdparty/imgui not registered (GUI build not enabled)"
 }
 Write-Host ""
 
-# ── Step 6: Initialize GLFW submodule (optional — needed for GUI build) ──────
-Write-Host "Step 6: Initializing GLFW submodule..."
+# ── Step 7: Initialize GLFW submodule (optional — needed for GUI build) ──────
+Write-Host "Step 7: Initializing GLFW submodule..."
 
 $GlfwDir = Join-Path $ProjectRoot "thirdparty\glfw"
 if ((Test-Path $GitmodulesPath) -and (Select-String -Path $GitmodulesPath -Pattern "thirdparty/glfw" -Quiet)) {
-    $GlfwCMake = Join-Path $GlfwDir "CMakeLists.txt"
-    if (Test-Path $GlfwCMake) {
-        Write-Host "✓ thirdparty/glfw already initialized"
-    } else {
-        Write-Host "Fetching thirdparty/glfw..."
-        git submodule update --init --depth 1 --checkout thirdparty/glfw
-        if ($LASTEXITCODE -ne 0) {
-            Write-Host "✗ Failed to initialize thirdparty/glfw" -ForegroundColor Red
-            exit 1
-        }
-        Write-Host "✓ thirdparty/glfw initialized"
-    }
+    Ensure-Submodule -Path "thirdparty/glfw" -Sentinel (Join-Path $GlfwDir "CMakeLists.txt")
 } else {
     Write-Host "ℹ  thirdparty/glfw not registered (GUI build not enabled)"
 }
 Write-Host ""
 
-# ── Step 7: Build all C++ components ─────────────────────────────────────────
-Write-Host "Step 7: Building all C++ components..."
+# ── Step 8: Build all C++ components ─────────────────────────────────────────
+Write-Host "Step 8: Building all C++ components..."
 Write-Host ""
 
 $buildScript = Join-Path $ProjectRoot "build.ps1"

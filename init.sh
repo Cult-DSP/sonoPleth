@@ -15,6 +15,31 @@ set -e
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "${PROJECT_ROOT}"
 
+submodule_has_missing_recursive() {
+    local path="$1"
+    git submodule status --recursive "$path" 2>/dev/null | grep -q '^-'
+}
+
+ensure_submodule() {
+    local path="$1"
+    local sentinel="$2"
+    local recursive="${3:-no}"
+
+    if [ -e "$sentinel" ] && ! submodule_has_missing_recursive "$path"; then
+        echo "✓ $path already initialized"
+        return
+    fi
+
+    echo "Fetching $path..."
+    git submodule sync --recursive "$path"
+    if [ "$recursive" = "yes" ]; then
+        git submodule update --init --recursive --depth 1 --checkout "$path"
+    else
+        git submodule update --init --depth 1 --checkout "$path"
+    fi
+    echo "✓ $path initialized"
+}
+
 if [ "${1}" = "--help" ] || [ "${1}" = "-h" ]; then
     echo "Usage: ./init.sh"
     echo ""
@@ -127,92 +152,52 @@ else
 fi
 echo ""
 
-# ── Step 2: Initialize cult-allolib submodule ─────────────────────────────────
-echo "Step 2: Initializing cult-allolib submodule..."
-
-CULT_ALLOLIB_INCLUDE="${PROJECT_ROOT}/internal/cult-allolib/include"
-if [ -d "${CULT_ALLOLIB_INCLUDE}" ]; then
-    echo "✓ internal/cult-allolib already initialized"
-else
-    echo "Fetching internal/cult-allolib (shallow, depth=1)..."
-    git submodule update --init --recursive --depth 1 --checkout internal/cult-allolib
-    echo "✓ internal/cult-allolib initialized"
-fi
+# ── Step 2: Initialize LUSID submodule ────────────────────────────────────────
+echo "Step 2: Initializing LUSID submodule..."
+ensure_submodule "internal/LUSID" "${PROJECT_ROOT}/internal/LUSID/README.md"
 echo ""
 
-# ── Step 3: Initialize cult_transcoder submodule ──────────────────────────────
-echo "Step 3: Initializing cult_transcoder submodule..."
-
-CULT_CMAKE="${PROJECT_ROOT}/internal/cult_transcoder/CMakeLists.txt"
-if [ -f "${CULT_CMAKE}" ]; then
-    echo "✓ cult_transcoder already initialized"
-else
-    echo "Fetching cult_transcoder..."
-    git submodule update --init --depth 1 --checkout internal/cult_transcoder
-    echo "✓ cult_transcoder initialized"
-fi
-
-# cult_transcoder owns nested vendored deps that must be present before configure.
-LIBBW64_HEADER="${PROJECT_ROOT}/internal/cult_transcoder/thirdparty/libbw64/include/bw64/bw64.hpp"
-R8BRAIN_HEADER="${PROJECT_ROOT}/internal/cult_transcoder/thirdparty/r8brain/CDSPResampler.h"
-if [ -f "${LIBBW64_HEADER}" ] && [ -f "${R8BRAIN_HEADER}" ]; then
-    echo "✓ cult_transcoder nested submodules already initialized"
-else
-    echo "Fetching cult_transcoder nested submodules recursively..."
-    git -C "${PROJECT_ROOT}/internal/cult_transcoder" submodule update --init --recursive --depth 1 --checkout
-    echo "✓ cult_transcoder nested submodules initialized"
-fi
+# ── Step 3: Initialize cult-allolib submodule ─────────────────────────────────
+echo "Step 3: Initializing cult-allolib submodule..."
+ensure_submodule "internal/cult-allolib" "${PROJECT_ROOT}/internal/cult-allolib/include" "yes"
 echo ""
 
-# ── Step 4: Initialize libsndfile submodule ──────────────────────────────────
-echo "Step 4: Initializing libsndfile submodule..."
-
-LIBSNDFILE_CMAKE="${PROJECT_ROOT}/thirdparty/libsndfile/CMakeLists.txt"
-if [ -f "${LIBSNDFILE_CMAKE}" ]; then
-    echo "✓ thirdparty/libsndfile already initialized"
-else
-    echo "Fetching thirdparty/libsndfile..."
-    git submodule update --init --depth 1 --checkout thirdparty/libsndfile
-    echo "✓ thirdparty/libsndfile initialized"
-fi
+# ── Step 4: Initialize cult_transcoder submodule ──────────────────────────────
+echo "Step 4: Initializing cult_transcoder submodule..."
+ensure_submodule "internal/cult_transcoder" "${PROJECT_ROOT}/internal/cult_transcoder/thirdparty/libbw64/include/bw64/bw64.hpp" "yes"
 echo ""
 
-# ── Step 5: Initialize Dear ImGui submodule (optional — needed for GUI build) ─
+# ── Step 5: Initialize libsndfile submodule ──────────────────────────────────
+echo "Step 5: Initializing libsndfile submodule..."
+ensure_submodule "thirdparty/libsndfile" "${PROJECT_ROOT}/thirdparty/libsndfile/CMakeLists.txt"
+echo ""
+
+# ── Step 6: Initialize Dear ImGui submodule (optional — needed for GUI build) ─
 # Only initialized when thirdparty/imgui has been added via:
 #   git submodule add https://github.com/ocornut/imgui.git thirdparty/imgui
 IMGUI_DIR="${PROJECT_ROOT}/thirdparty/imgui"
 if [ -f "${PROJECT_ROOT}/.gitmodules" ] && grep -q "thirdparty/imgui" "${PROJECT_ROOT}/.gitmodules" 2>/dev/null; then
-    if [ -f "${IMGUI_DIR}/imgui.h" ]; then
-        echo "✓ thirdparty/imgui already initialized"
-    else
-        echo "Fetching thirdparty/imgui..."
-        git submodule update --init --depth 1 --checkout thirdparty/imgui
-        echo "✓ thirdparty/imgui initialized"
-    fi
+    echo "Step 6: Initializing Dear ImGui submodule..."
+    ensure_submodule "thirdparty/imgui" "${IMGUI_DIR}/imgui.h"
 else
     echo "ℹ  thirdparty/imgui not registered (GUI build not enabled)"
 fi
 echo ""
 
-# ── Step 6: Initialize GLFW submodule (optional — needed for GUI build) ───────
+# ── Step 7: Initialize GLFW submodule (optional — needed for GUI build) ───────
 # Only initialized when thirdparty/glfw has been added via:
 #   git submodule add https://github.com/glfw/glfw.git thirdparty/glfw
 GLFW_DIR="${PROJECT_ROOT}/thirdparty/glfw"
 if [ -f "${PROJECT_ROOT}/.gitmodules" ] && grep -q "thirdparty/glfw" "${PROJECT_ROOT}/.gitmodules" 2>/dev/null; then
-    if [ -f "${GLFW_DIR}/CMakeLists.txt" ]; then
-        echo "✓ thirdparty/glfw already initialized"
-    else
-        echo "Fetching thirdparty/glfw..."
-        git submodule update --init --depth 1 --checkout thirdparty/glfw
-        echo "✓ thirdparty/glfw initialized"
-    fi
+    echo "Step 7: Initializing GLFW submodule..."
+    ensure_submodule "thirdparty/glfw" "${GLFW_DIR}/CMakeLists.txt"
 else
     echo "ℹ  thirdparty/glfw not registered (GUI build not enabled)"
 fi
 echo ""
 
-# ── Step 7: Build all C++ components ─────────────────────────────────────────
-echo "Step 7: Building all C++ components..."
+# ── Step 8: Build all C++ components ─────────────────────────────────────────
+echo "Step 8: Building all C++ components..."
 echo ""
 "${PROJECT_ROOT}/build.sh" --gui "$@"
 
