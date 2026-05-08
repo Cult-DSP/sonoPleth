@@ -12,6 +12,71 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+find_program(GIT_EXECUTABLE git)
+
+function(spatialroot_ensure_submodule_ready path sentinel)
+    set(options RECURSIVE)
+    cmake_parse_arguments(SR_SUBMOD "${options}" "" "" ${ARGN})
+
+    set(_needs_update OFF)
+    if(NOT EXISTS "${sentinel}")
+        set(_needs_update ON)
+    elseif(GIT_EXECUTABLE)
+        execute_process(
+            COMMAND "${GIT_EXECUTABLE}" submodule status --recursive "${path}"
+            WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+            RESULT_VARIABLE _status_result
+            OUTPUT_VARIABLE _status_output
+            ERROR_QUIET
+            OUTPUT_STRIP_TRAILING_WHITESPACE
+        )
+        if(_status_result EQUAL 0 AND _status_output MATCHES "(^|\n)-")
+            set(_needs_update ON)
+        endif()
+    endif()
+
+    if(NOT _needs_update)
+        return()
+    endif()
+
+    if(NOT GIT_EXECUTABLE)
+        message(FATAL_ERROR
+            "Required submodule '${path}' is missing or incomplete, and git is not available to repair it automatically.\n"
+            "Install git, then re-run CMake or use ./init.sh / ./build.sh."
+        )
+    endif()
+
+    message(STATUS "Initializing required submodule: ${path}")
+    execute_process(
+        COMMAND "${GIT_EXECUTABLE}" submodule sync --recursive "${path}"
+        WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+        RESULT_VARIABLE _sync_result
+    )
+    if(NOT _sync_result EQUAL 0)
+        message(FATAL_ERROR
+            "Failed to sync submodule '${path}'.\n"
+            "Try running: git submodule sync --recursive && git submodule update --init --recursive --checkout"
+        )
+    endif()
+
+    set(_update_cmd "${GIT_EXECUTABLE}" submodule update --init --checkout)
+    if(SR_SUBMOD_RECURSIVE)
+        list(APPEND _update_cmd --recursive)
+    endif()
+    list(APPEND _update_cmd "${path}")
+    execute_process(
+        COMMAND ${_update_cmd}
+        WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+        RESULT_VARIABLE _update_result
+    )
+    if(NOT _update_result EQUAL 0 OR NOT EXISTS "${sentinel}")
+        message(FATAL_ERROR
+            "Failed to initialize required submodule '${path}'.\n"
+            "Try running: git submodule update --init --recursive --checkout ${path}"
+        )
+    endif()
+endfunction()
+
 # Default single-config generators to a production-oriented build unless the
 # caller explicitly chooses another configuration.
 if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
@@ -35,6 +100,10 @@ endif()
 # find variables (SNDFILE_INCLUDE_DIR, SNDFILE_LIBRARY). Pre-setting these as
 # cache variables before add_subdirectory(allolib) causes Gamma's find_library
 # call to short-circuit and use the vendored build instead of a system install.
+spatialroot_ensure_submodule_ready(
+    "thirdparty/libsndfile"
+    "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/libsndfile/CMakeLists.txt"
+)
 set(BUILD_PROGRAMS       OFF CACHE BOOL "Don't build libsndfile programs")
 set(BUILD_EXAMPLES       OFF CACHE BOOL "Don't build libsndfile examples")
 set(BUILD_TESTING        OFF CACHE BOOL "Don't build libsndfile tests")
@@ -58,6 +127,11 @@ set(SNDFILE_FOUND     TRUE CACHE BOOL "libsndfile found (vendored)" FORCE)
 # without a duplicate-target error. Each component CMakeLists guards its own
 # add_subdirectory(cult-allolib) with if(NOT TARGET al).
 if(SPATIALROOT_BUILD_ENGINE OR SPATIALROOT_BUILD_OFFLINE)
+    spatialroot_ensure_submodule_ready(
+        "internal/cult-allolib"
+        "${CMAKE_CURRENT_SOURCE_DIR}/internal/cult-allolib/include"
+        RECURSIVE
+    )
     set(ALLOLIB_BUILD_EXAMPLES OFF CACHE BOOL "Don't build AlloLib examples")
     set(ALLOLIB_BUILD_TESTS    OFF CACHE BOOL "Don't build AlloLib tests")
     set(AL_VERBOSE_OUTPUT      OFF CACHE BOOL "Disable verbose output")
@@ -83,6 +157,11 @@ endif()
 
 # ── Components ────────────────────────────────────────────────────────────────
 if(SPATIALROOT_BUILD_CULT)
+    spatialroot_ensure_submodule_ready(
+        "internal/cult_transcoder"
+        "${CMAKE_CURRENT_SOURCE_DIR}/internal/cult_transcoder/thirdparty/libbw64/include/bw64/bw64.hpp"
+        RECURSIVE
+    )
     add_subdirectory(internal/cult_transcoder)
 endif()
 
@@ -95,6 +174,14 @@ if(SPATIALROOT_BUILD_OFFLINE)
 endif()
 
 if(SPATIALROOT_BUILD_GUI)
+    spatialroot_ensure_submodule_ready(
+        "thirdparty/imgui"
+        "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/imgui/imgui.h"
+    )
+    spatialroot_ensure_submodule_ready(
+        "thirdparty/glfw"
+        "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/glfw/CMakeLists.txt"
+    )
     if(NOT EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/source/gui/imgui/CMakeLists.txt)
         message(FATAL_ERROR
             "SPATIALROOT_BUILD_GUI=ON but source/gui/imgui/CMakeLists.txt does not exist.\n"
