@@ -58,6 +58,7 @@ set(APP_SOURCES
     src/App.cpp
     src/SubprocessRunner.cpp
     src/FileDialog.cpp
+    src/stb_image_impl.cpp
 )
 
 add_executable(spatialroot_gui

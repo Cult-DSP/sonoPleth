@@ -254,8 +254,8 @@ void App::renderEngineTab() {
     const ImVec4 kRed    = {0.72f, 0.18f, 0.15f, 1.f};
 
     // ── INPUT CONFIGURATION card ──────────────────────────────────────────
-    // 6 widget rows + card label + spacing + source hint line ≈ 244px
-    if (ImGui::BeginChild("##inputcard", {0.f, 244.f}, true)) {
+    // 6 widget rows + card label + spacing + source hint line ≈ 266px
+    if (ImGui::BeginChild("##inputcard", {0.f, 266.f}, true)) {
         ImGui::TextDisabled("INPUT CONFIGURATION");
         ImGui::Spacing();
 
@@ -280,6 +280,20 @@ void App::renderEngineTab() {
             ImGui::SetCursorPosX(120.f);
             ImGui::TextColored(isError ? kRed : kGreen, "%s", mSourceHint.c_str());
         }
+
+        // Download Atmos Examples button
+        ImGui::SetCursorPosX(120.f);
+        if (ImGui::Button("Download Atmos Examples##atmosdl")) {
+#ifdef __APPLE__
+            system("open https://huggingface.co/datasets/lucianparisi/atmos-data/tree/main");
+#elif defined(_WIN32)
+            system("start https://huggingface.co/datasets/lucianparisi/atmos-data/tree/main");
+#else
+            system("xdg-open https://huggingface.co/datasets/lucianparisi/atmos-data/tree/main");
+#endif
+        }
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Download Atmos example files");
 
         // Speaker layout
         ImGui::TextDisabled("LAYOUT");

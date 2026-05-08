@@ -6,7 +6,6 @@
 - fix windows build after cult-allolib change
 - re organize custom submodules into internal/ and update cmake and shell scripts,
 - make sure all submodules are checked out at specific current commits
-- audit what can be removed from cult-allolib
 - have engine delete old lusid files on startup / boot up / when engine is re run
 
 - debug overall windows build
