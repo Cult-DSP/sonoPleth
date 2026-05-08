@@ -2,8 +2,6 @@
 
 ## immediate
 
-- add more gain control in api / engine then in gui
-- in prog, smooth if necessary
 -
 - fix windows build after cult-allolib change
 - re organize custom submodules into internal/ and update cmake and shell scripts,
@@ -15,6 +13,7 @@
 
 ## next tasks
 
+- check if gain smoothing is necessary
 - duplicate api docs in internal and public, which is most up to date?
 - move spatial transformation math into seperate file potentially
 - update LUSID - deprecate old python components. update documentation
