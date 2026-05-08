@@ -2,7 +2,6 @@
 
 ## immediate
 
-- clean up spatial_engine/src -> spatial render // deprecate vbap render
 - debug overall windows build
 
 ## next tasks
