@@ -57,7 +57,7 @@ Note: Python virtual environment was removed in Phase 6 (2026-03-31) as part of 
 | Item | Size | Notes |
 |---|---|---|
 | `thirdparty/allolib/` working tree | 38 MB | All source files |
-| `.git/modules/thirdparty/allolib` | **511 MB** | Full history — 1,897 commits |
+| `.git/modules/internal/cult-allolib` | **511 MB** | Full history — legacy deep-clone baseline |
 | `external/Gamma` | 2.3 MB | DSP library — **linked by spatialroot** |
 | `external/rtaudio` | 1.3 MB | Audio I/O — needed for realtime |
 | `external/imgui` | 5.1 MB | Dear ImGui — not used by spatialroot directly |
@@ -65,9 +65,9 @@ Note: Python virtual environment was removed in Phase 6 (2026-03-31) as part of 
 | `external/stb` | 2.0 MB | Image loading — not used |
 | `external/dr_libs` | 744 KB | Audio decoding — not used (spatialroot uses libsndfile) |
 
-**Primary problem:** `.git/modules` history (511 MB) dwarfs working tree (38 MB). `--depth 1` shallow clone reduces to ~a few MB.
+**Primary problem:** submodule git history dwarfed the working tree. Shallow init addresses the history cost; modular CMake now addresses the unnecessary build surface.
 
-**Status: Implemented.** `.gitmodules` has `shallow = true` for `thirdparty/allolib`. `init.sh` uses `--depth 1`. `scripts/shallow-submodules.sh` handles existing deep clones.
+**Status: Implemented.** `init.sh` initializes `internal/cult-allolib` with `--depth 1`, and `scripts/shallow-submodules.sh` remains the opt-in cleanup path for older deep clones. The current supported footprint reduction comes from the slimmed `cult-allolib` CMake defaults, not sparse checkout.
 
 ### AlloLib Modules — Usage Classification
 
@@ -79,6 +79,7 @@ Note: Python virtual environment was removed in Phase 6 (2026-03-31) as part of 
 | `math/` | `al_Vec.hpp` + transitive math headers (Mat, Quat, Constants, Functions, Spherical) |
 | `spatial/` | `al_Pose.hpp` (pulled by `al_Spatializer.hpp`) |
 | `io/AudioIOData` | `al_AudioIOData.hpp` (buffer/channel descriptor) |
+| `io/File + system/types` | low-level file, socket, thread, timing, variant, and utility support used by the kept runtime modules |
 | `external/Gamma` | DSP primitives, linked by `spatialroot_spatial_render` |
 | `external/json` | nlohmann/json — used by AlloLib CMake and spatialroot JSONLoader |
 
@@ -87,25 +88,28 @@ Note: Python virtual environment was removed in Phase 6 (2026-03-31) as part of 
 - `external/rtaudio/` — cross-platform audio device backend
 - `protocol/al_OSC.hpp` — OSC parameter server
 - `external/oscpack/` — OSC protocol impl
-- `app/` + `system/al_PeriodicThread` — real-time scheduling
 - `ui/al_Parameter.hpp` etc. — AlloLib parameter system for OSC
 
-**Safe to exclude from working tree (unused, no near-term path):**
-- `graphics/`, `sphere/`, `ui/` source — no OpenGL/sphere rendering
-- `external/glfw/` — 4.5 MB (window creation; now needed for ImGui GUI)
-- `external/imgui/` — 5.1 MB (AlloLib's copy; spatialroot uses its own `thirdparty/imgui`)
+**Disabled in the supported minimal build:**
+- `graphics/` sources and targets — no OpenGL dependency in the engine/offline path
+- `app/` sources and targets — not built by default in the slim `cult-allolib` profile
+- windowing / ImGui wrappers (`al_Window*`, `al_Imgui*`) — not built unless graphics is enabled
+- `sphere/` sources — not built in the current minimal path
+- `external/glfw/` within `cult-allolib` — not required for the minimal engine/offline build
+- `external/imgui/` within `cult-allolib` — not required; Spatial Root uses its own GUI stack under `thirdparty/imgui`
 - `external/stb/` — 2.0 MB (image loading)
 - `external/dr_libs/` — 744 KB (audio decoding; spatialroot uses libsndfile)
 - `external/glad/` — OpenGL loader
-- `external/serial/` — serial port
+- `external/serial/` — removed from the verified minimal build path
+- `external/cpptoml/` — removed from the verified minimal build path
 
 ### Lightweighting Plan
 
 | Tactic | Saving | Risk | Status |
 |---|---|---|---|
-| `--depth 1` shallow clone | ~510 MB (git history) | None | **✅ Done** — `init.sh` + `.gitmodules` |
-| Sparse checkout working tree | ~14 MB (source files) | Medium (CMake fragility) | **Opt-in only** — `scripts/sparse-allolib.sh` |
-| Minimal fork `Cult-DSP/allolib-sono` | ~20 MB + avoids graphics deps | Low (one-time effort) | **Future option** if above insufficient |
+| `--depth 1` shallow clone | large `.git/modules` reduction for new setups | None | **✅ Done** — `init.sh` |
+| Slim `cult-allolib` CMake defaults | avoids graphics/app/VR/examples/tests/docs build overhead | Low | **✅ Done** — supported path |
+| Sparse checkout working tree | modest source-tree reduction only | Medium (stale + fragile) | **Not recommended** |
 
 **To apply to an existing deep clone:** `./scripts/shallow-submodules.sh`  
-**Opt-in sparse tree:** `./scripts/sparse-allolib.sh` — read warnings in script before using.
+**Current recommendation:** use the slimmed `cult-allolib` defaults and avoid sparse checkout unless you are doing one-off local experiments.

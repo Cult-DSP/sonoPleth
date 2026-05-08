@@ -263,11 +263,11 @@ spatialroot/
 
 ## AlloLib Audit & Lightweighting
 
-**Status:** Shallow clone implemented. See [REPO_AUDITING.md § AlloLib Dependency Audit](REPO_AUDITING.md#allolib-dependency-audit) for full module keep/trim/future lists.
+**Status:** Lightweight `cult-allolib` build implemented. See [REPO_AUDITING.md § AlloLib Dependency Audit](REPO_AUDITING.md#allolib-dependency-audit) for the current keep/disable/future-work notes.
 
-`.gitmodules` has `shallow = true` for `thirdparty/allolib`. `init.sh` uses `--depth 1` (`~510 MB saved`).  
+`init.sh` initializes `internal/cult-allolib` with `--depth 1` to keep submodule history small.  
 For existing deep clones: `./scripts/shallow-submodules.sh`  
-Opt-in sparse tree: `./scripts/sparse-allolib.sh`
+Sparse checkout is no longer the recommended approach; the supported path is the slimmed CMake configuration in `internal/cult-allolib`.
 
 ---
 
