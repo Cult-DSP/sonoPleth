@@ -360,11 +360,6 @@ void App::renderEngineTab() {
         ImGui::SameLine();
         if (ImGui::Button("Clear Temporary Files")) cleanupOwnedTempSessions(true);
 
-        const char* badge = stateName(mState);
-        const float badgeW = ImGui::CalcTextSize(badge).x + 20.f;
-        ImGui::SameLine(ImGui::GetContentRegionAvail().x + ImGui::GetCursorPosX() - badgeW);
-        ImGui::TextColored(stateColor(mState), "●  %s", badge);
-
         if (isRunning) {
             ImGui::Text("t=%.1fs", mStatus.timeSec);
             ImGui::SameLine();
