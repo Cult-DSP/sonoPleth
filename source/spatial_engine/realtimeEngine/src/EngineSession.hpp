@@ -114,14 +114,23 @@ public:
 
     EngineStatus queryStatus() const;
     DiagnosticEvents consumeDiagnostics();
-    std::string getLastError() const; // Standardized error access
+    std::string getLastError() const;
+    // Returns a structured failure diagnostic block captured during the most
+    // recent failed stage (loadScene / applyLayout / start). Empty on success.
+    // The block includes stage context, input paths, error message, and the
+    // stdout+stderr output emitted during the failed operation. Content is
+    // suitable for appending directly to the GUI engine log.
+    std::string getFailureDiagnostics() const;
 
 private:
     void setLastError(const std::string& err);
+    // Builds and stores mFailureDiagnostics from captured stdout+stderr output.
+    void storeFailureDiagnostics(const std::string& stage, const std::string& capturedOutput);
 
     RealtimeConfig mConfig;
     EngineState mState;
     std::string mLastError;
+    std::string mFailureDiagnostics;
 
     std::unique_ptr<SpatialData> mSceneData; // Held securely between loadScene and applyLayout
 

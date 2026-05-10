@@ -268,6 +268,9 @@ private:
     // Log helpers (main thread only for mEngineLog)
     void appendEngineLog(const std::string& text,
                          ImVec4 color = {0.85f, 0.85f, 0.85f, 1.f});
+    // Appends a pre-formatted failure diagnostic block (from getFailureDiagnostics())
+    // to the engine log, splitting on newlines and colour-coding header/body lines.
+    void appendFailureDiagnostics(const std::string& diagnostics);
     // Thread-safe (called from mTcRunner background thread)
     void appendTcLog(const std::string& line);
 

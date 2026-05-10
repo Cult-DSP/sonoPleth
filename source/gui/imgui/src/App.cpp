@@ -16,6 +16,7 @@
 #include <fstream>
 #include <sstream>
 #include <utility>
+#include <string>
 
 namespace fs = std::filesystem;
 
@@ -1051,6 +1052,7 @@ void App::doLaunchEngine(const std::string& scenePath,
         mLastError = mSession->getLastError();
         mState = AppState::Error;
         appendEngineLog("[Engine] configureEngine failed: " + mLastError, {1.f, 0.4f, 0.4f, 1.f});
+        appendFailureDiagnostics(mSession->getFailureDiagnostics());
         return;
     }
 
@@ -1064,6 +1066,7 @@ void App::doLaunchEngine(const std::string& scenePath,
         mLastFailureHasDiagnostics = true;
         if (mActiveTempSessionRoot) updateManifest(*mActiveTempSessionRoot, mActiveTempManifest, "failed", false, mKeepTempSessions);
         appendEngineLog("[Engine] loadScene failed: " + mLastError, {1.f, 0.4f, 0.4f, 1.f});
+        appendFailureDiagnostics(mSession->getFailureDiagnostics());
         mSession->shutdown();
         return;
     }
@@ -1077,6 +1080,7 @@ void App::doLaunchEngine(const std::string& scenePath,
         mLastFailureHasDiagnostics = true;
         if (mActiveTempSessionRoot) updateManifest(*mActiveTempSessionRoot, mActiveTempManifest, "failed", false, mKeepTempSessions);
         appendEngineLog("[Engine] applyLayout failed: " + mLastError, {1.f, 0.4f, 0.4f, 1.f});
+        appendFailureDiagnostics(mSession->getFailureDiagnostics());
         mSession->shutdown();
         return;
     }
@@ -1090,6 +1094,7 @@ void App::doLaunchEngine(const std::string& scenePath,
         mLastError = mSession->getLastError();
         mState = AppState::Error;
         appendEngineLog("[Engine] configureRuntime failed: " + mLastError, {1.f, 0.4f, 0.4f, 1.f});
+        appendFailureDiagnostics(mSession->getFailureDiagnostics());
         mSession->shutdown();
         return;
     }
@@ -1098,6 +1103,7 @@ void App::doLaunchEngine(const std::string& scenePath,
         mLastError = mSession->getLastError();
         mState = AppState::Error;
         appendEngineLog("[Engine] start() failed: " + mLastError, {1.f, 0.4f, 0.4f, 1.f});
+        appendFailureDiagnostics(mSession->getFailureDiagnostics());
         mSession->shutdown();
         return;
     }
@@ -1416,6 +1422,20 @@ std::string App::pathString(const fs::path& path) {
 void App::appendEngineLog(const std::string& text, ImVec4 color) {
     mEngineLog.push_back({color, text});
     if (mEngineLog.size() > 2000) mEngineLog.pop_front();
+}
+
+void App::appendFailureDiagnostics(const std::string& diagnostics) {
+    if (diagnostics.empty()) return;
+    // Split the diagnostic block (already formatted by EngineSession) by newline
+    // and append each line as a separate log entry with a muted amber colour.
+    const ImVec4 kDiagColor = {1.f, 0.6f, 0.2f, 1.f};
+    const ImVec4 kBodyColor = {0.9f, 0.75f, 0.55f, 1.f};
+    std::istringstream iss(diagnostics);
+    std::string line;
+    while (std::getline(iss, line)) {
+        const bool isHeader = (line.find("===") != std::string::npos);
+        appendEngineLog(line, isHeader ? kDiagColor : kBodyColor);
+    }
 }
 
 void App::appendTcLog(const std::string& line) {

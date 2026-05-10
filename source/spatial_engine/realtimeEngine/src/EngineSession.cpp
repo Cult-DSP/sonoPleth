@@ -11,7 +11,79 @@
 #include "al/ui/al_ParameterServer.hpp"
 
 #include <iostream>
+#include <sstream>
 #include <cmath>
+
+// ─────────────────────────────────────────────────────────────────────────────
+// TeeStreamBuf — writes each character to two underlying stream buffers.
+//
+// Used to tee std::cout / std::cerr into an internal capture buffer while
+// still forwarding output to the original terminal sink. This preserves all
+// existing terminal output (requirement: do not hide terminal output) while
+// allowing post-hoc failure diagnostics to be built from the captured text.
+//
+// Thread safety: not thread-safe. Only used during single-threaded startup
+// stages (loadScene / applyLayout / start pre-loader). Never installed during
+// audio callback execution.
+// ─────────────────────────────────────────────────────────────────────────────
+class TeeStreamBuf : public std::streambuf {
+public:
+    TeeStreamBuf(std::streambuf* primary, std::streambuf* secondary)
+        : mPrimary(primary), mSecondary(secondary) {}
+protected:
+    int overflow(int c) override {
+        if (c == traits_type::eof()) return traits_type::eof();
+        if (mPrimary)   mPrimary->sputc(static_cast<char>(c));
+        if (mSecondary) mSecondary->sputc(static_cast<char>(c));
+        return c;
+    }
+    std::streamsize xsputn(const char* s, std::streamsize n) override {
+        if (mPrimary)   mPrimary->sputn(s, n);
+        if (mSecondary) mSecondary->sputn(s, n);
+        return n;
+    }
+private:
+    std::streambuf* mPrimary;
+    std::streambuf* mSecondary;
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// StageCapture — RAII guard that tees std::cout and std::cerr into a buffer.
+//
+// Install at the top of a startup stage. On success, discard captured text
+// (terminal already received everything). On failure, call captured() to get
+// the text for the failure diagnostic block before this object is destroyed.
+//
+// restore() may be called explicitly before the destructor (e.g. to stop
+// capture before starting background threads that also write to cout/cerr).
+// ─────────────────────────────────────────────────────────────────────────────
+class StageCapture {
+public:
+    StageCapture() {
+        mOrigCout = std::cout.rdbuf();
+        mOrigCerr = std::cerr.rdbuf();
+        mTeeCout = std::make_unique<TeeStreamBuf>(mOrigCout, mCapture.rdbuf());
+        mTeeCerr = std::make_unique<TeeStreamBuf>(mOrigCerr, mCapture.rdbuf());
+        std::cout.rdbuf(mTeeCout.get());
+        std::cerr.rdbuf(mTeeCerr.get());
+    }
+    ~StageCapture() { restore(); }
+
+    // Restores cout/cerr to their original buffers. Safe to call multiple times.
+    void restore() {
+        if (mOrigCout) { std::cout.rdbuf(mOrigCout); mOrigCout = nullptr; }
+        if (mOrigCerr) { std::cerr.rdbuf(mOrigCerr); mOrigCerr = nullptr; }
+    }
+
+    std::string captured() const { return mCapture.str(); }
+
+private:
+    std::streambuf*  mOrigCout = nullptr;
+    std::streambuf*  mOrigCerr = nullptr;
+    std::ostringstream mCapture;
+    std::unique_ptr<TeeStreamBuf> mTeeCout;
+    std::unique_ptr<TeeStreamBuf> mTeeCerr;
+};
 
 struct EngineSession::OscParams {
     al::Parameter gainDb{"gain_db", "realtime", 0.0f, -60.0f, 12.0f};
@@ -41,6 +113,35 @@ std::string EngineSession::getLastError() const
     return mLastError;
 }
 
+std::string EngineSession::getFailureDiagnostics() const
+{
+    return mFailureDiagnostics;
+}
+
+void EngineSession::storeFailureDiagnostics(const std::string& stage,
+                                            const std::string& capturedOutput)
+{
+    std::ostringstream oss;
+    oss << "=== Failure diagnostics ===\n";
+    oss << "Stage: " << stage << "\n";
+    if (!mConfig.scenePath.empty())
+        oss << "Scene: " << mConfig.scenePath << "\n";
+    if (!mConfig.layoutPath.empty())
+        oss << "Layout: " << mConfig.layoutPath << "\n";
+    if (!mConfig.admFile.empty())
+        oss << "ADM: " << mConfig.admFile << "\n";
+    if (!mConfig.sourcesFolder.empty())
+        oss << "Sources: " << mConfig.sourcesFolder << "\n";
+    oss << "Error: " << mLastError << "\n";
+    if (!capturedOutput.empty()) {
+        oss << "Terminal output:\n" << capturedOutput;
+        // Ensure the captured block ends with a newline before the footer.
+        if (capturedOutput.back() != '\n') oss << "\n";
+    }
+    oss << "=== End failure diagnostics ===";
+    mFailureDiagnostics = oss.str();
+}
+
 bool EngineSession::configureEngine(const EngineOptions& opts)
 {
     mConfig.sampleRate = opts.sampleRate;
@@ -54,9 +155,14 @@ bool EngineSession::configureEngine(const EngineOptions& opts)
 
 bool EngineSession::loadScene(const SceneInput& sceneIn)
 {
+    mFailureDiagnostics.clear();
     mConfig.scenePath = sceneIn.scenePath;
     mConfig.sourcesFolder = sceneIn.sourcesFolder;
     mConfig.admFile = sceneIn.admFile;
+
+    // Tee stdout+stderr into capture buffer for the duration of this stage.
+    // No background threads are active here, so rdbuf redirect is safe.
+    StageCapture cap;
 
     std::cout << "[EngineSession] Loading LUSID scene: " << mConfig.scenePath << std::endl;
     mSceneData = std::make_unique<SpatialData>();
@@ -64,9 +170,11 @@ bool EngineSession::loadScene(const SceneInput& sceneIn)
         *mSceneData = JSONLoader::loadLusidScene(mConfig.scenePath);
     } catch (const std::exception& e) {
         setLastError(std::string("Failed to load LUSID scene: ") + e.what());
+        cap.restore();
+        storeFailureDiagnostics("load scene", cap.captured());
         return false;
     }
-    
+
     std::cout << "[EngineSession] Scene loaded: " << mSceneData->sources.size() << " sources";
     if (mSceneData->duration > 0) {
         std::cout << ", duration: " << mSceneData->duration << "s";
@@ -79,11 +187,15 @@ bool EngineSession::loadScene(const SceneInput& sceneIn)
     if (useADM) {
         if (!mStreaming->loadSceneFromADM(*mSceneData, mConfig.admFile)) {
             setLastError("No source channels could be loaded from ADM.");
+            cap.restore();
+            storeFailureDiagnostics("load scene (ADM streaming)", cap.captured());
             return false;
         }
     } else {
         if (!mStreaming->loadScene(*mSceneData)) {
             setLastError("No source files could be loaded.");
+            cap.restore();
+            storeFailureDiagnostics("load scene (mono sources)", cap.captured());
             return false;
         }
     }
@@ -94,13 +206,19 @@ bool EngineSession::loadScene(const SceneInput& sceneIn)
 
 bool EngineSession::applyLayout(const LayoutInput& layoutIn)
 {
+    mFailureDiagnostics.clear();
+
     if (!mSceneData) {
         setLastError("loadScene must be called successfully before applyLayout.");
+        storeFailureDiagnostics("apply layout", "");
         return false;
     }
 
     mConfig.layoutPath = layoutIn.layoutPath;
     mRemapCsv = layoutIn.remapCsvPath;
+
+    // Tee stdout+stderr for the duration of this stage (no background threads active).
+    StageCapture cap;
 
     std::cout << "[EngineSession] Loading speaker layout: " << mConfig.layoutPath << std::endl;
     SpeakerLayoutData layout;
@@ -108,6 +226,8 @@ bool EngineSession::applyLayout(const LayoutInput& layoutIn)
         layout = LayoutLoader::loadLayout(mConfig.layoutPath);
     } catch (const std::exception& e) {
         setLastError(std::string("Failed to load speaker layout: ") + e.what());
+        cap.restore();
+        storeFailureDiagnostics("apply layout", cap.captured());
         return false;
     }
     std::cout << "[EngineSession] Layout loaded: " << layout.speakers.size()
@@ -116,14 +236,18 @@ bool EngineSession::applyLayout(const LayoutInput& layoutIn)
     mPose = std::make_unique<Pose>(mConfig, mState);
     if (!mPose->loadScene(*mSceneData, layout)) {
         setLastError("Pose agent failed to initialize.");
+        cap.restore();
+        storeFailureDiagnostics("apply layout (Pose init)", cap.captured());
         return false;
     }
     std::cout << "[EngineSession] Pose agent ready: " << mPose->numSources()
               << " source positions will be computed per block." << std::endl;
-              
+
     mSpatializer = std::make_unique<Spatializer>(mConfig, mState);
     if (!mSpatializer->init(layout)) {
         setLastError("Spatializer initialization failed.");
+        cap.restore();
+        storeFailureDiagnostics("apply layout (Spatializer init)", cap.captured());
         return false;
     }
     std::cout << "[EngineSession] Spatializer ready: DBAP with " << mSpatializer->numSpeakers()
@@ -171,6 +295,13 @@ bool EngineSession::configureRuntime(const RuntimeParams& params)
 
 bool EngineSession::start()
 {
+    mFailureDiagnostics.clear();
+
+    // Tee stdout+stderr for the pre-loader phase of startup (single-threaded).
+    // Capture is RESTORED before startLoader() to avoid racing with the loader
+    // background thread. Failures after that point include context info only.
+    StageCapture cap;
+
     // OSC server: only started if mOscPort > 0.
     // oscPort = 0 means "disable OSC" — no server is created.
     // Discovery Task B: al::ParameterServer on port 0 binds an OS-assigned
@@ -220,6 +351,8 @@ bool EngineSession::start()
 
         if (!mParamServer->serverRunning()) {
             setLastError("ParameterServer failed to start.");
+            cap.restore();
+            storeFailureDiagnostics("start (OSC server)", cap.captured());
             return false;
         }
     }
@@ -227,6 +360,8 @@ bool EngineSession::start()
     mBackend = std::make_unique<RealtimeBackend>(mConfig, mState);
     if (!mBackend->init()) {
         setLastError("Backend initialization failed.");
+        cap.restore();
+        storeFailureDiagnostics("start (audio backend init)", cap.captured());
         return false;
     }
 
@@ -235,10 +370,16 @@ bool EngineSession::start()
     mBackend->setSpatializer(mSpatializer.get());
     mBackend->cacheSourceNames(mStreaming->sourceNames());
 
+    // Restore capture BEFORE starting the loader background thread to avoid
+    // any race between the loader's stdout/cerr writes and our rdbuf redirect.
+    cap.restore();
+
     mStreaming->startLoader();
 
     if (!mBackend->start()) {
         setLastError("Backend failed to start.");
+        // No captured output here (loader thread is running); include context only.
+        storeFailureDiagnostics("start (audio stream)", "");
         mStreaming->shutdown();
         return false;
     }

@@ -1,7 +1,42 @@
 # Development History
 
-**Last Updated:** May 8, 2026  
+**Last Updated:** May 10, 2026  
 **Note:** Newest entries at top, oldest at bottom.
+
+---
+
+## Engine Failure Diagnostics in GUI Log (May 10, 2026)
+
+**Status:** Complete. No behavior change on success; richer log output on failure.
+
+**Motivation:** When engine startup failed (bad scene file, missing audio, wrong device, invalid layout), the GUI engine log showed only a one-line high-level error (e.g. `loadScene failed: No source files could be loaded`). The detailed diagnostic output from `Streaming`, `RealtimeBackend`, `JSONLoader`, and `LayoutLoader` appeared only in the process terminal (stdout/stderr), making remote or GUI-only debugging much harder.
+
+**Approach:** `StageCapture` — a RAII stream-tee that installs `TeeStreamBuf` on both `std::cout` and `std::cerr` for the duration of each startup stage. All existing terminal output is preserved unchanged. On failure, the captured text is formatted into a structured `=== Failure diagnostics ===` block and stored in `EngineSession::mFailureDiagnostics`. The GUI retrieves it via the new `getFailureDiagnostics()` API and appends it line-by-line to `mEngineLog`.
+
+**Thread safety:** Capture is only active during single-threaded startup stages. In `start()`, capture is explicitly restored before `mStreaming->startLoader()` to avoid racing with the background loader thread. No capture occurs during audio callback execution.
+
+**Files changed:**
+- `source/spatial_engine/realtimeEngine/src/EngineSession.hpp` — added `getFailureDiagnostics()` and `storeFailureDiagnostics()` declarations; added `mFailureDiagnostics` member
+- `source/spatial_engine/realtimeEngine/src/EngineSession.cpp` — added `TeeStreamBuf`, `StageCapture`; wired into `loadScene`, `applyLayout`, `start`; added `getFailureDiagnostics()` and `storeFailureDiagnostics()` implementations
+- `source/gui/imgui/src/App.hpp` — added `appendFailureDiagnostics()` declaration
+- `source/gui/imgui/src/App.cpp` — added `appendFailureDiagnostics()` implementation; called at all five failure points in `doLaunchEngine()`
+
+**Failure log format:**
+```
+=== Failure diagnostics ===
+Stage: load scene (ADM streaming)
+Scene: /path/to/scene.lusid.json
+ADM: /path/to/source.wav
+Error: No source channels could be loaded from ADM.
+Terminal output:
+[Streaming] FATAL: Failed to open ADM file.
+  ...
+=== End failure diagnostics ===
+```
+
+**Acceptance:** Successful runs produce the same engine log as before. Failed runs now include the same diagnostic detail visible in the terminal. Terminal output is unchanged.
+
+**Build validated:** `[100%] Built target spatialroot_gui`.
 
 ---
 

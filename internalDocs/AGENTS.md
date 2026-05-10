@@ -329,6 +329,28 @@ Sparse checkout is no longer the recommended approach; the supported path is the
 
 ---
 
+## Failure Diagnostic Pattern (Engine Startup)
+
+When adding new startup stages or extending existing ones (`loadScene`, `applyLayout`, `start`), use the following pattern to ensure failure details reach the GUI log:
+
+**In `EngineSession.cpp`:**
+1. Call `mFailureDiagnostics.clear()` at the top of the stage function.
+2. Instantiate `StageCapture cap;` immediately after — this tees `std::cout`/`std::cerr` into a buffer while still forwarding to the terminal.
+3. On each failure path: call `cap.restore()` then `storeFailureDiagnostics("<stage name>", cap.captured())` before returning `false`.
+4. If a background thread is started mid-function (like `mStreaming->startLoader()`), call `cap.restore()` **before** starting it. Any failure after that point should call `storeFailureDiagnostics("<stage name>", "")` (no captured output, but context info is still written).
+
+**In `App::doLaunchEngine()` (or any new host that calls engine lifecycle methods):**
+After each failing stage, call `appendFailureDiagnostics(mSession->getFailureDiagnostics())` to append the structured block to the engine log.
+
+**Do not:**
+- Install `StageCapture` inside the audio callback or any realtime path.
+- Redirect `std::cout`/`std::cerr` from multiple threads simultaneously.
+- Use `StageCapture` after `startLoader()` without first calling `restore()`.
+
+**API entry point:** `EngineSession::getFailureDiagnostics()` — safe to call from the main thread after any failed stage. Returns `""` on success.
+
+---
+
 ## Track B — Sony 360RA ADM Profile (FUTURE — DO NOT IMPLEMENT YET)
 
 **Objective:** Add a profile adaptation layer inside LUSID to accept a wider range of ADM variants (Sony 360RA, edge-case Atmos exports).

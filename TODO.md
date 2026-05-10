@@ -2,19 +2,20 @@
 
 ## immediate
 
-## next tasks
-
-- create a cache for default speaker layout
-- duplicate api docs in internal and public, which is most up to date? ---
-- clean up documentation
-  - public facing
-  - consolidate dev history and testing docs
-
 ## Crucial CLI / GUI Features:
 
 - add more info to engine log - terminal output should be similar - option to expand engine log - mostly upon failer - more info
 - allow for setting runtime params prior to starting engine, add reset button
 - limit buffer size selectiom - potentially dangerous / produce warnings
+
+## next tasks
+
+- duplicate api docs in internal and public, which is most up to date? ---
+- clean up documentation
+  - public facing
+  - consolidate dev history and testing docs
+
+  - test speaker layout config on windows, validate code
 
 ## Other Tasks for final packaging:
 

@@ -218,6 +218,26 @@ Returns the error message from the most recent failed method call. Returns an em
 
 ---
 
+### `std::string getFailureDiagnostics() const`
+
+Returns a structured diagnostic block captured during the most recent failed stage (`loadScene`, `applyLayout`, or `start`). Returns an empty string if the last operation succeeded or no failure has occurred yet.
+
+The block includes:
+- The failing stage name
+- Input paths (scene, layout, ADM, sources folder — whichever were set)
+- The `getLastError()` message
+- The full stdout/stderr output emitted during the failed operation (identical to what appears in the terminal)
+
+The block is formatted with `=== Failure diagnostics ===` / `=== End failure diagnostics ===` delimiters and is safe to append directly to a log file or display widget.
+
+**GUI behaviour:** The `App` class (GUI host) automatically appends this block to the engine log panel on any failure in `doLaunchEngine()`. Embedding hosts should call this after any failed stage and log the result alongside `getLastError()` for full diagnostic coverage.
+
+**Thread safety:** Safe to call from the main thread after any failed lifecycle method returns `false`. Not valid to call from the audio thread.
+
+**Success runs:** On a successful stage, the internal diagnostic buffer is cleared. `getFailureDiagnostics()` returns `""` until the next failure.
+
+---
+
 ## Types
 
 ### `EngineOptions`
