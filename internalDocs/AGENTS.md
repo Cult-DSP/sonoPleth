@@ -347,6 +347,8 @@ After each failing stage, call `appendFailureDiagnostics(mSession->getFailureDia
 - Redirect `std::cout`/`std::cerr` from multiple threads simultaneously.
 - Use `StageCapture` after `startLoader()` without first calling `restore()`.
 
+**Scope note:** `StageCapture` intercepts C++ iostream output (`std::cout` / `std::cerr`). It does not capture raw C stdio writes such as `printf()` / `fprintf(stderr, ...)`.
+
 **API entry point:** `EngineSession::getFailureDiagnostics()` — safe to call from the main thread after any failed stage. Returns `""` on success.
 
 ---

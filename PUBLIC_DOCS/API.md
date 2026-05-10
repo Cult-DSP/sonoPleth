@@ -226,9 +226,13 @@ The block includes:
 - The failing stage name
 - Input paths (scene, layout, ADM, sources folder — whichever were set)
 - The `getLastError()` message
-- The full stdout/stderr output emitted during the failed operation (identical to what appears in the terminal)
+- Any captured stdout/stderr output emitted during the failed operation (identical to what appears in the terminal for the portion of the stage where capture is active)
 
 The block is formatted with `=== Failure diagnostics ===` / `=== End failure diagnostics ===` delimiters and is safe to append directly to a log file or display widget.
+
+For `loadScene()` and `applyLayout()`, capture stays active for the full stage, so failures include the full C++ iostream output for that stage.
+
+For `start()`, capture is intentionally restored immediately before `mStreaming->startLoader()` to avoid racing with the background loader thread. Failures after that point still include stage context and `getLastError()`, but may not include a `Terminal output:` section.
 
 **GUI behaviour:** The `App` class (GUI host) automatically appends this block to the engine log panel on any failure in `doLaunchEngine()`. Embedding hosts should call this after any failed stage and log the result alongside `getLastError()` for full diagnostic coverage.
 

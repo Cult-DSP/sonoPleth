@@ -42,6 +42,13 @@ protected:
         if (mSecondary) mSecondary->sputn(s, n);
         return n;
     }
+    int sync() override {
+        int primaryOk = 0;
+        int secondaryOk = 0;
+        if (mPrimary)   primaryOk = mPrimary->pubsync();
+        if (mSecondary) secondaryOk = mSecondary->pubsync();
+        return (primaryOk == 0 && secondaryOk == 0) ? 0 : -1;
+    }
 private:
     std::streambuf* mPrimary;
     std::streambuf* mSecondary;
