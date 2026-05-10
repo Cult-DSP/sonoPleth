@@ -192,6 +192,38 @@ void SpatialRootPaths::copySessionContents(const fs::path& sessionRoot,
     }
 }
 
+fs::path SpatialRootPaths::defaultAppSettingsRoot() {
+#ifdef _WIN32
+    if (const char* appData = std::getenv("APPDATA")) {
+        return fs::path(appData) / "Spatial Root";
+    }
+    return homeDirectory() / "AppData" / "Roaming" / "Spatial Root";
+#elif defined(__APPLE__)
+    return homeDirectory() / "Library" / "Application Support" / "Spatial Root";
+#else
+    if (const char* xdgConfig = std::getenv("XDG_CONFIG_HOME"); xdgConfig && *xdgConfig) {
+        return fs::path(xdgConfig) / "spatial-root";
+    }
+    return homeDirectory() / ".config" / "spatial-root";
+#endif
+}
+
+fs::path SpatialRootPaths::appSettingsRoot(const std::string& overrideRoot) {
+    if (!overrideRoot.empty()) return fs::path(overrideRoot);
+    if (const char* env = std::getenv("SPATIALROOT_SETTINGS_ROOT"); env && *env) {
+        return fs::path(env);
+    }
+    return defaultAppSettingsRoot();
+}
+
+fs::path SpatialRootPaths::defaultLayoutPath(const std::string& overrideRoot) {
+    return appSettingsRoot(overrideRoot) / "default_layout.json";
+}
+
+fs::path SpatialRootPaths::defaultLayoutMetaPath(const std::string& overrideRoot) {
+    return appSettingsRoot(overrideRoot) / "default_layout.meta.json";
+}
+
 std::string SpatialRootPaths::escapeJson(const std::string& value) {
     std::ostringstream oss;
     for (unsigned char c : value) {

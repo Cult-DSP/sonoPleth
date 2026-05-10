@@ -190,6 +190,42 @@ spatialroot/
 
 ---
 
+---
+
+## App Storage Conventions
+
+Two separate storage areas are used at runtime. **Never mix them.**
+
+### Session temp/cache (auto-deleted on app close)
+
+| Platform | Path |
+|----------|------|
+| macOS    | `~/Library/Caches/CultDSP/SpatialRoot/temp-sessions/` |
+| Windows  | `%LOCALAPPDATA%/CultDSP/SpatialRoot/Cache/temp-sessions/` |
+| Linux    | `$XDG_CACHE_HOME/CultDSP/SpatialRoot/temp-sessions/` or `~/.cache/CultDSP/SpatialRoot/temp-sessions/` |
+
+Contents: temporary LUSID scenes, transcoder outputs, diagnostic reports. Each session gets a UUID-stamped subdirectory with a `.spatialroot_temp_session` marker file. Deleted on clean shutdown unless `--keep-temp-sessions` is set.  
+Override: `SPATIALROOT_TEMP_ROOT` env var.  
+Implementation: `SpatialRootPaths::cacheRoot()` / `tempSessionsRoot()` / `SpatialRootPaths.cpp`.
+
+### Persistent app settings (never auto-deleted)
+
+| Platform | Path |
+|----------|------|
+| macOS    | `~/Library/Application Support/Spatial Root/` |
+| Windows  | `%APPDATA%/Spatial Root/` |
+| Linux    | `$XDG_CONFIG_HOME/spatial-root/` or `~/.config/spatial-root/` |
+
+Contents:
+- `default_layout.json` — authoritative copy of the saved default speaker layout
+- `default_layout.meta.json` — display metadata (sourcePath, savedAt, layoutName)
+
+These files are **not** deleted on app close. The engine never reads these directly — the GUI reads and validates them on startup, then passes the layout path into `EngineSession::applyLayout()` explicitly.  
+Override: `SPATIALROOT_SETTINGS_ROOT` env var.  
+Implementation: `SpatialRootPaths::appSettingsRoot()` / `DefaultLayoutManager`.
+
+---
+
 ## Runtime Control Plane
 
 **Primary (in-process):** ImGui GUI calls direct C++ setters on `EngineSession`:

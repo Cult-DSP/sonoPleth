@@ -60,6 +60,7 @@ App::App(std::string projectRoot, bool keepTempSessions, std::string tempRootOve
     : mProjectRoot(std::move(projectRoot))
     , mKeepTempSessions(keepTempSessions)
     , mTempRootOverride(std::move(tempRootOverride))
+    , mDefaultLayoutMgr()
     , mSession(std::make_unique<EngineSession>()) {
     mLayoutPath = resolveProjectPath(kLayoutPaths[0]);
 
@@ -70,6 +71,9 @@ App::App(std::string projectRoot, bool keepTempSessions, std::string tempRootOve
         appendEngineLog("[GUI] Keeping temporary sessions for debugging is enabled.",
                         {1.f, 0.8f, 0.2f, 1.f});
     }
+
+    tryLoadDefaultLayoutOnStartup();
+
     appendEngineLog("[GUI] Select a source and layout, then click START.");
 
     int lw = 0, lh = 0, lch = 0;
@@ -304,6 +308,8 @@ void App::renderEngineTab() {
             const std::string p = pickFile("Select Speaker Layout", {"*.json"}, "JSON files");
             if (!p.empty()) { mLayoutPath = p; mLayoutPreset = IM_ARRAYSIZE(kLayoutNames) - 1; }
         }
+
+        renderDefaultLayoutControls();
 
         ImGui::SetCursorPosX(120.f);
         if (ImGui::Button("Layout Builder##layoutbuilder")) {
@@ -1103,6 +1109,116 @@ void App::doLaunchEngine(const std::string& scenePath,
         mLastGeneratedSceneAvailable = true;
     }
     appendEngineLog("[Engine] Started successfully. OSC port 9009.", {0.3f, 0.9f, 0.3f, 1.f});
+}
+
+void App::tryLoadDefaultLayoutOnStartup() {
+    const DefaultLayoutResult r = mDefaultLayoutMgr.loadDefaultLayout();
+    mDefaultLayoutStatus     = r.status;
+    mDefaultLayoutSavedAt    = r.savedAt;
+    mDefaultLayoutName       = r.layoutName;
+    mDefaultLayoutSourcePath = r.sourcePath;
+
+    if (r.status == DefaultLayoutStatus::None) {
+        appendEngineLog("[GUI] No default layout saved.");
+        return;
+    }
+    if (!r.success) {
+        appendEngineLog("[GUI] WARNING: Saved default layout could not be loaded: " + r.message,
+                        {1.f, 0.8f, 0.2f, 1.f});
+        return;
+    }
+    // Write the validated JSON to a temp file so we can point mLayoutPath at it.
+    // We write it to the same settings dir — it IS the settings dir copy.
+    mLayoutPath   = pathString(mDefaultLayoutMgr.layoutPath());
+    mLayoutPreset = IM_ARRAYSIZE(kLayoutNames) - 1;  // "Custom"
+
+    const std::string displayName = r.layoutName.empty() ? "default layout" : r.layoutName;
+    appendEngineLog("[GUI] Default layout loaded: " + displayName, {0.3f, 0.9f, 0.3f, 1.f});
+}
+
+void App::onSetAsDefaultLayout() {
+    if (mLayoutPath.empty()) {
+        appendEngineLog("[GUI] No layout selected — cannot save as default.", {1.f, 0.5f, 0.2f, 1.f});
+        return;
+    }
+    std::ifstream f(mLayoutPath);
+    if (!f.is_open()) {
+        appendEngineLog("[GUI] Cannot read layout file: " + mLayoutPath, {1.f, 0.4f, 0.4f, 1.f});
+        return;
+    }
+    const std::string jsonText((std::istreambuf_iterator<char>(f)),
+                                std::istreambuf_iterator<char>());
+
+    const DefaultLayoutResult r = mDefaultLayoutMgr.saveDefaultLayout(jsonText, mLayoutPath);
+    mDefaultLayoutStatus     = r.status;
+    mDefaultLayoutSavedAt    = r.savedAt;
+    mDefaultLayoutName       = r.layoutName;
+    mDefaultLayoutSourcePath = r.sourcePath;
+
+    if (r.success) {
+        appendEngineLog("[GUI] Default layout saved: " +
+                        (r.layoutName.empty() ? mLayoutPath : r.layoutName),
+                        {0.3f, 0.9f, 0.3f, 1.f});
+    } else {
+        appendEngineLog("[GUI] Failed to save default layout: " + r.message, {1.f, 0.4f, 0.4f, 1.f});
+    }
+}
+
+void App::onClearDefaultLayout() {
+    const DefaultLayoutResult r = mDefaultLayoutMgr.clearDefaultLayout();
+    mDefaultLayoutStatus     = DefaultLayoutStatus::None;
+    mDefaultLayoutSavedAt.clear();
+    mDefaultLayoutName.clear();
+    mDefaultLayoutSourcePath.clear();
+    appendEngineLog("[GUI] Default layout cleared.", {0.65f, 0.65f, 0.9f, 1.f});
+    (void)r;
+}
+
+void App::renderDefaultLayoutControls() {
+    const ImVec4 kGreen = {0.20f, 0.62f, 0.25f, 1.f};
+    const ImVec4 kAmber = {0.70f, 0.45f, 0.08f, 1.f};
+    const ImVec4 kRed   = {0.72f, 0.18f, 0.15f, 1.f};
+    const ImVec4 kBlue  = {0.40f, 0.60f, 0.90f, 1.f};
+
+    ImGui::TextDisabled("DEFAULT LAYOUT");
+    ImGui::SameLine(160.f);
+
+    // Status indicator
+    switch (mDefaultLayoutStatus) {
+        case DefaultLayoutStatus::None:
+            ImGui::TextDisabled("none saved");
+            break;
+        case DefaultLayoutStatus::Loaded:
+            ImGui::TextColored(kGreen, "loaded");
+            if (!mDefaultLayoutName.empty()) {
+                ImGui::SameLine(); ImGui::TextDisabled("(%s)", mDefaultLayoutName.c_str());
+            }
+            if (!mDefaultLayoutSavedAt.empty()) {
+                ImGui::SameLine(); ImGui::TextDisabled("saved %s", mDefaultLayoutSavedAt.c_str());
+            }
+            break;
+        case DefaultLayoutStatus::Invalid:
+            ImGui::TextColored(kAmber, "saved file invalid — check layout JSON");
+            break;
+        case DefaultLayoutStatus::Unavailable:
+            ImGui::TextColored(kRed, "unavailable (permission/read error)");
+            break;
+    }
+
+    ImGui::SameLine(ImGui::GetContentRegionAvail().x + ImGui::GetCursorPosX() - 300.f);
+
+    const bool hasLayout = !mLayoutPath.empty();
+    if (!hasLayout) ImGui::BeginDisabled(true);
+    if (ImGui::SmallButton("Set as Default")) onSetAsDefaultLayout();
+    if (!hasLayout) ImGui::EndDisabled();
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Save current layout as startup default");
+
+    ImGui::SameLine();
+    const bool hasDefault = (mDefaultLayoutStatus != DefaultLayoutStatus::None);
+    if (!hasDefault) ImGui::BeginDisabled(true);
+    if (ImGui::SmallButton("Clear Default")) onClearDefaultLayout();
+    if (!hasDefault) ImGui::EndDisabled();
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Remove the saved default layout");
 }
 
 void App::resetRuntimeToDefaults() {

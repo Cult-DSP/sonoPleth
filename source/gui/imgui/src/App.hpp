@@ -15,6 +15,7 @@
 //   DEV NOTE: Evaluate whether to add an OSC enable/disable toggle in a future
 //   iteration. For V1, always-on is simplest and matches current behaviour.
 
+#include "DefaultLayoutManager.hpp"
 #include "EngineSession.hpp"
 #include "SpatialRootPaths.hpp"
 #include "SubprocessRunner.hpp"
@@ -69,6 +70,13 @@ private:
     std::string mProjectRoot;
     bool        mKeepTempSessions = false;
     std::string mTempRootOverride;
+
+    // ── Default layout manager (persistent settings, not session temp) ───
+    DefaultLayoutManager      mDefaultLayoutMgr;
+    DefaultLayoutStatus       mDefaultLayoutStatus = DefaultLayoutStatus::None;
+    std::string               mDefaultLayoutSavedAt;
+    std::string               mDefaultLayoutName;
+    std::string               mDefaultLayoutSourcePath;
 
     // ── Engine ───────────────────────────────────────────────────────────
     std::unique_ptr<EngineSession> mSession;
@@ -250,6 +258,12 @@ private:
     void         clearTempSessionState();
     void         clearStandaloneTranscodeTempState();
     static std::string pathString(const std::filesystem::path& path);
+
+    // Default layout helpers
+    void tryLoadDefaultLayoutOnStartup();
+    void onSetAsDefaultLayout();
+    void onClearDefaultLayout();
+    void renderDefaultLayoutControls();
 
     // Log helpers (main thread only for mEngineLog)
     void appendEngineLog(const std::string& text,

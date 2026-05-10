@@ -593,3 +593,4 @@ processedData/stageForRender/    — cult-transcoder writes scene.lusid.json her
 | Phase 6 | March 31, 2026 | C++ refactor complete. Python GUI/entrypoints/build/venv removed. ImGui + GLFW GUI shipped. |
 | Phase 7 | April 17, 2026 | Normalized DBAP (`sum(v_k²)=1`). `thirdparty/allolib` → `internal/cult-allolib`. Auto-compensation removed. |
 | Bug 10.1 | May 7, 2026 | Fast-mover continuity anchor fix for normalized DBAP (`mPrevSafePos` written as last sub-step position). |
+| Phase 8  | May 10, 2026 | Persistent default speaker layout + cross-platform app settings paths. `DefaultLayoutManager` added to GUI layer. Settings dir (`~/Library/Application Support/Spatial Root/` etc.) is strictly separate from session temp cache. Atomic writes, non-fatal startup fallback, GUI controls: Set as Default / Clear Default / status display. |

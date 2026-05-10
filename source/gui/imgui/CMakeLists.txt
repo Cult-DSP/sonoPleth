@@ -56,6 +56,7 @@ set(IMGUI_SOURCES
 set(APP_SOURCES
     src/main.cpp
     src/App.cpp
+    src/DefaultLayoutManager.cpp
     src/SpatialRootPaths.cpp
     src/SubprocessRunner.cpp
     src/FileDialog.cpp
