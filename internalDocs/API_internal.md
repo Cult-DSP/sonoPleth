@@ -57,12 +57,16 @@ struct LayoutInput {
 ```cpp
 struct RuntimeParams {
     float masterGainDb = 0.0f;      // Master gain in dB. Range: -60–+12 dB. 0 dB = unity.
-    float dbapFocus = 1.5f;         // DBAP rolloff exponent, minimum 0.1
-    float speakerMixDb = 0.0f;      // post-DBAP main trim in dB, range -60–+12 dB
-    float subMixDb = 0.0f;          // post-DBAP sub trim in dB, range -60–+12 dB
+    float dbapFocus    = 1.5f;      // DBAP rolloff exponent. Range: 0.1–5.0.
+    float speakerMixDb = 0.0f;      // Post-DBAP main trim in dB. Range: -60–+12 dB.
+    float subMixDb     = 0.0f;      // Post-DBAP sub trim in dB. Range: -60–+12 dB.
+
+    static RuntimeParams defaults(); // Canonical defaults — single source of truth.
 };
 ```
-All three dB fields are converted to linear at store time: `std::pow(10.0f, dB / 20.0f)`.
+All dB fields are converted to linear at store time via `clampDb` → `dbToLinear`.
+`getRuntimeParams()` performs the inverse conversion (`linearToDb`) and re-clamps; a zero or
+negative linear value returns `-60.0f` (never `-inf` or `NaN`).
 
 ---
 
@@ -72,31 +76,40 @@ The engine enforces a strict, linear initialization sequence:
 
 1. `configureEngine(const EngineOptions&)` — stores sampleRate, bufferSize, outputDeviceName, oscPort, elevationMode into `mConfig`. Always returns `true`.
 2. `loadScene(const SceneInput&)` — parses LUSID scene via `JSONLoader`, initializes `Streaming`. Returns `false` if scene file missing or no sources loaded.
-3. `applyLayout(const LayoutInput&)` — requires `loadScene` to have succeeded (`mSceneData` guard). Loads speaker layout, initializes `Pose` and `Spatializer`.
-4. `configureRuntime(const RuntimeParams&)` — writes gain/focus/mix atomics to `mConfig`. Loads remap CSV if path non-empty. **OSC ParameterServer is NOT started here — it starts in `start()`.**
-5. `start()` — creates and starts `al::ParameterServer` (if `oscPort > 0`), registers OSC callbacks, starts `RealtimeBackend` + loader thread. Prints `"ParameterServer listening"` to stdout when OSC is active.
+3. `applyLayout(const LayoutInput&)` — requires `loadScene` to have succeeded (`mSceneData` guard). Loads speaker layout, initializes `Pose` and `Spatializer`. Calls `configureOutputRouting()` internally.
+4. `configureRuntime(const RuntimeParams&)` — clamps and writes gain/focus/mix atomics to `mConfig`. **Does not perform output routing setup** (moved to `applyLayout()`). Safe before and after `start()`. Syncs OSC param values if the OSC server is already running. **OSC ParameterServer is NOT started here — it starts in `start()`.**
+5. `start()` — creates and starts `al::ParameterServer` (if `oscPort > 0`), initializes OSC params from current runtime state via `getRuntimeParams()`, registers OSC callbacks, starts `RealtimeBackend` + loader thread.
 
-**Runtime Control (after `start()`):**
+**Runtime control (before or after `start()`):**
 
-| Method | Writes to | Notes |
+`configureRuntime()` is safe to call at any point after `configureEngine()`:
+- **Before `start()`:** stages the initial playback values; the engine will start from these.
+- **After `start()`:** applies values live through the same atomic path as the individual setters.
+
+| Method | Writes | Notes |
 |---|---|---|
+| `configureRuntime(const RuntimeParams&)` | all 4 gain/focus params | Clamps + converts dB→linear. Syncs OSC if running. |
+| `getRuntimeParams() -> RuntimeParams` | — (read only) | Returns current state in dB; reflects setters, OSC changes, and `configureRuntime`. |
+| `resetRuntimeParams()` | all 4 gain/focus params | Equivalent to `configureRuntime(RuntimeParams::defaults())`. Does not restart playback, reload scene/layout, or clear files. |
 | `setPaused(bool)` | `mConfig.paused` | Only supported transport control. Stop/seek unsupported. |
-| `update()` | — | Should be called from the main thread / host loop. Currently retained for API stability; no deferred focus-compensation work remains. |
+| `update()` | — | Should be called from the main thread / host loop. Currently retained for API stability. |
 | `queryStatus() -> EngineStatus` | — | Lock-free snapshot. No state mutation. |
 | `consumeDiagnostics() -> DiagnosticEvents` | — | Atomically exchanges event flags. Clears them on read. |
 | `shutdown()` | — | Terminal. Destroy and recreate `EngineSession` to restart. |
 
-**Phase 6 runtime setters (direct C++ control, no OSC required):**
+**Runtime setters (direct C++ control — no OSC required; no OSC sync on individual setters):**
 
-| Method | Writes | Notes |
+| Method | Writes | Range |
 |---|---|---|
-| `setMasterGainDb(float)` | `mConfig.masterGain` | dB → linear conversion at store time; range -60–+12 dB |
-| `setDbapFocus(float)` | `mConfig.dbapFocus` | Clamped to a minimum of `0.1f` |
-| `setSpeakerMixDb(float)` | `mConfig.loudspeakerMix` | dB → linear conversion at store time |
-| `setSubMixDb(float)` | `mConfig.subMix` | dB → linear conversion at store time |
-| `setElevationMode(ElevationMode)` | `mConfig.elevationMode` | Cast to int at store time |
+| `setMasterGainDb(float)` | `mConfig.masterGain` | -60–+12 dB |
+| `setDbapFocus(float)` | `mConfig.dbapFocus` | min 0.1 |
+| `setSpeakerMixDb(float)` | `mConfig.loudspeakerMix` | -60–+12 dB |
+| `setSubMixDb(float)` | `mConfig.subMix` | -60–+12 dB |
+| `setElevationMode(ElevationMode)` | `mConfig.elevationMode` | cast to int |
 
-All writes use `std::memory_order_relaxed`. Safe to call after `start()` and before `shutdown()`.
+All writes use `std::memory_order_relaxed`. Safe to call before and after `start()`.
+Individual setters do **not** sync OSC visible parameter values. Use `configureRuntime()` or
+`resetRuntimeParams()` when OSC sync is required.
 
 ### Error Model
 

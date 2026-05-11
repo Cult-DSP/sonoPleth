@@ -161,12 +161,13 @@ int main(int argc, char* argv[]) {
     // Retained temporarily as internal scaffolding. Will be removed.
     layoutIn.remapCsvPath = getArgString(argc, argv, "--remap");
 
-    // 4) Define realtime DSP constants.
-    RuntimeParams rParams;
-    rParams.masterGainDb     = getArgFloat(argc, argv, "--gain", 0.0f);
-    rParams.dbapFocus        = getArgFloat(argc, argv, "--focus", 1.5f);
-    rParams.speakerMixDb     = getArgFloat(argc, argv, "--speaker_mix", 0.0f);
-    rParams.subMixDb         = getArgFloat(argc, argv, "--sub_mix", 0.0f);
+    // 4) Define realtime DSP constants. Start from canonical API defaults so that
+    //    CLI default values and API defaults stay in sync from one source of truth.
+    RuntimeParams rParams = RuntimeParams::defaults();
+    rParams.masterGainDb = getArgFloat(argc, argv, "--gain",        rParams.masterGainDb);
+    rParams.dbapFocus    = getArgFloat(argc, argv, "--focus",       rParams.dbapFocus);
+    rParams.speakerMixDb = getArgFloat(argc, argv, "--speaker_mix", rParams.speakerMixDb);
+    rParams.subMixDb     = getArgFloat(argc, argv, "--sub_mix",     rParams.subMixDb);
 
     // Validation (was previously scattered, now centralized on inputs):
     bool useADM = !sceneIn.admFile.empty();

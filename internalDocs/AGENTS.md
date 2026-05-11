@@ -230,15 +230,29 @@ Implementation: `SpatialRootPaths::appSettingsRoot()` / `DefaultLayoutManager`.
 
 ## Runtime Control Plane
 
+**`RuntimeParams` is the canonical parameter struct.** Defaults come from `RuntimeParams::defaults()` — a single source of truth used by API, CLI, and GUI. Default values: `masterGainDb=0`, `dbapFocus=1.5`, `speakerMixDb=0`, `subMixDb=0`.
+
+**Staging before Run:** `configureRuntime(params)` can be called before `start()` to set initial playback values. The engine starts from these staged values — it does not briefly use hardcoded defaults. GUI sliders are editable before Run as staged values.
+
+**Live update after Run:** `configureRuntime()`, individual setters, and OSC callbacks all write to the same `RealtimeConfig` atomics and are safe to call while audio is running.
+
+**Querying current state:** `getRuntimeParams()` returns the current values in dB, reflecting the latest `configureRuntime()`, setter, or OSC change. Use this to sync GUI controls after a `resetRuntimeParams()` call.
+
+**Reset:** `resetRuntimeParams()` is equivalent to `configureRuntime(RuntimeParams::defaults())`. Safe before and after `start()`. Does not reload scene/layout, restart playback, or affect transport.
+
 **Primary (in-process):** ImGui GUI calls direct C++ setters on `EngineSession`:
 
-- `setMasterGainDb(float)`, `setDbapFocus(float)`, `setSpeakerMixDb(float)`, `setSubMixDb(float)`, `setElevationMode(ElevationMode)`
+- `setMasterGainDb(float)`, `setDbapFocus(float)`, `setSpeakerMixDb(float)`, `setSubMixDb(float)`, `setElevationMode(ElevationMode)`, `configureRuntime(RuntimeParams)`, `getRuntimeParams()`, `resetRuntimeParams()`
 
 **Secondary (optional OSC):** Remains available for external tooling/remote control.
 
 - Default port: `9009`; disable with `oscPort=0` in `EngineOptions`
+- OSC params are initialized from the current runtime state when `start()` is called
+- `configureRuntime()` and `resetRuntimeParams()` sync OSC param values if the server is running; individual setters do not
 - DBAP focus minimum is `0.1`; normalized DBAP preserves `sum(v_k^2) = 1`
 - See [REALTIME_ENGINE.md § OSC Parameter Reference](REALTIME_ENGINE.md#osc-parameter-reference) for full address/range table
+
+**Output routing** is layout-derived and initialized in `applyLayout()` → `configureOutputRouting()`. `configureRuntime()` no longer touches routing setup. CSV remap override is retained as deprecated internal scaffolding only.
 
 ---
 

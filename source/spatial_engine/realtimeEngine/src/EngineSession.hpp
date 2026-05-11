@@ -82,9 +82,12 @@ struct LayoutInput {
 
 struct RuntimeParams {
     float masterGainDb = 0.0f;   // Master gain in dB. Range: -60–+12 dB. 0 dB = unity.
-    float dbapFocus = 1.5f;
+    float dbapFocus    = 1.5f;   // DBAP rolloff exponent. Range: 0.1–5.0.
     float speakerMixDb = 0.0f;   // Post-DBAP main-channel trim in dB. Range: -60–+12 dB.
-    float subMixDb = 0.0f;       // Post-DBAP sub-channel trim in dB. Range: -60–+12 dB.
+    float subMixDb     = 0.0f;   // Post-DBAP sub-channel trim in dB. Range: -60–+12 dB.
+
+    // Canonical defaults — single source of truth for all callers (API, CLI, GUI).
+    static RuntimeParams defaults() { return RuntimeParams(); }
 };
 
 class EngineSession {
@@ -95,15 +98,28 @@ public:
     bool configureEngine(const EngineOptions& opts);
     bool loadScene(const SceneInput& sceneIn);
     bool applyLayout(const LayoutInput& layoutIn);
+    // Apply runtime DSP parameters. Safe before start() and after start().
+    // Does not perform output routing setup (moved to applyLayout()).
     bool configureRuntime(const RuntimeParams& params);
     bool start();
     void shutdown();
 
     void setPaused(bool isPaused); // Transport control API
 
+    // Returns current runtime params in user-facing units (dB for gains).
+    // Reflects the latest values from setters, OSC, configureRuntime, or resetRuntimeParams.
+    RuntimeParams getRuntimeParams() const;
+
+    // Equivalent to configureRuntime(RuntimeParams::defaults()).
+    // Safe before start() (updates staged params) and after start() (updates live).
+    // Does not restart playback, reload scene/layout, or affect transport.
+    bool resetRuntimeParams();
+
     // V1.1 runtime setter surface — safe to call after start(), before shutdown().
     // All writes use std::memory_order_relaxed, identical to the OSC callback implementations.
-    // Calling before start() is harmless (writes the atomics) but has no effect on the engine.
+    // Calling before start() stages the value; it will be active when the engine starts.
+    // Note: individual setters do not sync OSC param values. Use configureRuntime() or
+    // resetRuntimeParams() when OSC sync is needed.
     void setMasterGainDb(float dB);
     void setDbapFocus(float focus);
     void setSpeakerMixDb(float dB);
@@ -126,6 +142,14 @@ private:
     void setLastError(const std::string& err);
     // Builds and stores mFailureDiagnostics from captured stdout+stderr output.
     void storeFailureDiagnostics(const std::string& stage, const std::string& capturedOutput);
+
+    // Clamp and sanitize params to valid ranges. Pure function — no side effects.
+    RuntimeParams sanitizeRuntimeParams(const RuntimeParams& params) const;
+    // Write sanitized params to mConfig atomics. Does not touch OSC or layout state.
+    void applyRuntimeParamsToConfig(const RuntimeParams& params);
+    // Initialize output routing from layout-derived mapping (or deprecated CSV override).
+    // Must be called after Spatializer::init(). Called at the end of applyLayout().
+    bool configureOutputRouting();
 
     RealtimeConfig mConfig;
     EngineState mState;

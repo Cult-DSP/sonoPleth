@@ -456,51 +456,84 @@ void App::renderEngineTab() {
 
     if (ImGui::BeginChild("##ctrlcard", {0.f, 190.f}, true)) {
         ImGui::TextDisabled("RUNTIME CONTROLS");
+        // Reset Parameters button — right-aligned in the header row.
+        // Before Run: resets staged values. After Run: resets live engine params.
+        {
+            const float btnW = 140.f;
+            ImGui::SameLine(ImGui::GetContentRegionAvail().x + ImGui::GetCursorPosX() - btnW);
+            if (ImGui::SmallButton("Reset Parameters")) {
+                if (isRunning) {
+                    mSession->resetRuntimeParams();
+                    const RuntimeParams p = mSession->getRuntimeParams();
+                    mGainDb   = p.masterGainDb;
+                    mFocus    = p.dbapFocus;
+                    mSpkMixDb = p.speakerMixDb;
+                    mSubMixDb = p.subMixDb;
+                    appendEngineLog("[GUI] Runtime parameters reset to defaults.");
+                } else {
+                    resetRuntimeToDefaults();
+                    appendEngineLog("[GUI] Runtime parameters reset to defaults."
+                                    " These values will be used when playback starts.");
+                }
+            }
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Restore gain, focus, and mix controls to their default values.\n"
+                                  "Does not reload the scene, layout, or transport.");
+        }
         ImGui::Spacing();
-        if (!isRunning) ImGui::BeginDisabled(true);
 
+        // Controls are always enabled — editable before Run as staged values,
+        // and live-updated after Run. Setters are only called when running.
         ImGui::TextDisabled("MASTER GAIN");
         ImGui::SameLine(160.f);
         ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 70.f);
-        if (ImGui::SliderFloat("##gain", &mGainDb, -60.f, 12.f, "%.1f dB") && isRunning) mSession->setMasterGainDb(mGainDb);
+        if (ImGui::SliderFloat("##gain", &mGainDb, -60.f, 12.f, "%.1f dB")) {
+            if (isRunning) mSession->setMasterGainDb(mGainDb);
+        }
         ImGui::SameLine();
         ImGui::SetNextItemWidth(60.f);
-        if (ImGui::InputFloat("##gaininput", &mGainDb, 0.f, 0.f, "%.1f") && isRunning) {
+        if (ImGui::InputFloat("##gaininput", &mGainDb, 0.f, 0.f, "%.1f")) {
             mGainDb = std::clamp(mGainDb, -60.f, 12.f);
-            mSession->setMasterGainDb(mGainDb);
+            if (isRunning) mSession->setMasterGainDb(mGainDb);
         }
 
         ImGui::TextDisabled("DBAP FOCUS");
         ImGui::SameLine(160.f);
         ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 70.f);
-        if (ImGui::SliderFloat("##focus", &mFocus, 0.2f, 5.0f, "%.2f") && isRunning) mSession->setDbapFocus(mFocus);
+        if (ImGui::SliderFloat("##focus", &mFocus, 0.2f, 5.0f, "%.2f")) {
+            if (isRunning) mSession->setDbapFocus(mFocus);
+        }
         ImGui::SameLine();
         ImGui::SetNextItemWidth(60.f);
-        if (ImGui::InputFloat("##focusinput", &mFocus, 0.f, 0.f, "%.2f") && isRunning) {
+        if (ImGui::InputFloat("##focusinput", &mFocus, 0.f, 0.f, "%.2f")) {
             mFocus = std::clamp(mFocus, 0.2f, 5.0f);
-            mSession->setDbapFocus(mFocus);
+            if (isRunning) mSession->setDbapFocus(mFocus);
         }
 
         ImGui::TextDisabled("SPEAKER MIX (DB)");
         ImGui::SameLine(160.f);
         ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 70.f);
-        if (ImGui::SliderFloat("##spkmix", &mSpkMixDb, -60.f, 12.f, "%.1f dB") && isRunning) mSession->setSpeakerMixDb(mSpkMixDb);
+        if (ImGui::SliderFloat("##spkmix", &mSpkMixDb, -60.f, 12.f, "%.1f dB")) {
+            if (isRunning) mSession->setSpeakerMixDb(mSpkMixDb);
+        }
         ImGui::SameLine();
         ImGui::SetNextItemWidth(60.f);
-        if (ImGui::InputFloat("##spkmixinput", &mSpkMixDb, 0.f, 0.f, "%.1f") && isRunning) {
+        if (ImGui::InputFloat("##spkmixinput", &mSpkMixDb, 0.f, 0.f, "%.1f")) {
             mSpkMixDb = std::clamp(mSpkMixDb, -60.f, 12.f);
-            mSession->setSpeakerMixDb(mSpkMixDb);
+            if (isRunning) mSession->setSpeakerMixDb(mSpkMixDb);
         }
 
         ImGui::TextDisabled("SUB MIX (DB)");
         ImGui::SameLine(160.f);
         ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 70.f);
-        if (ImGui::SliderFloat("##submix", &mSubMixDb, -60.f, 12.f, "%.1f dB") && isRunning) mSession->setSubMixDb(mSubMixDb);
+        if (ImGui::SliderFloat("##submix", &mSubMixDb, -60.f, 12.f, "%.1f dB")) {
+            if (isRunning) mSession->setSubMixDb(mSubMixDb);
+        }
         ImGui::SameLine();
         ImGui::SetNextItemWidth(60.f);
-        if (ImGui::InputFloat("##submixinput", &mSubMixDb, 0.f, 0.f, "%.1f") && isRunning) {
+        if (ImGui::InputFloat("##submixinput", &mSubMixDb, 0.f, 0.f, "%.1f")) {
             mSubMixDb = std::clamp(mSubMixDb, -60.f, 12.f);
-            mSession->setSubMixDb(mSubMixDb);
+            if (isRunning) mSession->setSubMixDb(mSubMixDb);
         }
 
         ImGui::TextDisabled("ELEVATION MODE");
@@ -509,8 +542,6 @@ void App::renderEngineTab() {
         if (ImGui::Combo("##elevmode", &mElevationMode, kElevModeNames, 3) && isRunning) {
             mSession->setElevationMode(static_cast<ElevationMode>(mElevationMode));
         }
-
-        if (!isRunning) ImGui::EndDisabled();
     }
     ImGui::EndChild();
     ImGui::Spacing();
@@ -1008,7 +1039,6 @@ void App::onStart() {
         return;
     }
 
-    resetRuntimeToDefaults();
     mLastError.clear();
     mLastFailureHasDiagnostics = false;
 
@@ -1261,11 +1291,12 @@ void App::renderDefaultLayoutControls() {
 }
 
 void App::resetRuntimeToDefaults() {
-    mGainDb = 0.0f;
-    mFocus = 1.5f;
-    mSpkMixDb = 0.0f;
-    mSubMixDb = 0.0f;
-    mElevationMode = 0;
+    const RuntimeParams d = RuntimeParams::defaults();
+    mGainDb   = d.masterGainDb;
+    mFocus    = d.dbapFocus;
+    mSpkMixDb = d.speakerMixDb;
+    mSubMixDb = d.subMixDb;
+    // mElevationMode intentionally not reset here — Reset Parameters targets DSP params only.
 }
 
 void App::scanDevices() {

@@ -278,11 +278,16 @@ Threading model: audio thread (RT, AlloLib), loader thread (background disk I/O)
 - **Resume step calculation:** Fade-in step is now `(1.0f - mPauseFade) / fadeFrames` rather than always `1/fadeFrames`. Ramp continues from current gain instead of resetting to zero (Bug 11.3).
 - **`stop()` fade-before-hard-stop:** Arms pause fade and unconditionally sleeps 50ms before calling `mAudioIO.stop()`. Resets `mConfig.paused = false` afterward (Bugs 11.2, 11.4).
 
-**Gain system (May 7, 2026):** All three gain controls now accept dB at every public surface. Conversion to linear (`std::pow(10.0f, dB / 20.0f)`) happens at the API boundary in `configureRuntime()`, `setMasterGainDb()`, `setSpeakerMixDb()`, `setSubMixDb()`, and OSC callbacks. Internal `RealtimeConfig` atomics remain linear.
+**Gain system (May 7, 2026; updated May 10, 2026):** All gain controls accept dB at every public surface. Conversion to linear (`clampDb` → `dbToLinear = std::pow(10.0f, dB / 20.0f)`) happens at the API boundary via `applyRuntimeParamsToConfig()`, called by `configureRuntime()`, individual setters, and OSC callbacks. `getRuntimeParams()` performs the inverse via `linearToDb`; zero/negative linear → `-60.0f` (never -inf). Internal `RealtimeConfig` atomics remain linear.
+
+`configureRuntime()` no longer performs output routing setup. Output routing is now initialized in `applyLayout()` → `configureOutputRouting()`. `configureRuntime()` is safe to call before or after `start()`.
+
+`RuntimeParams::defaults()` is the single canonical source of default values for API, CLI, and GUI. `resetRuntimeParams()` is equivalent to `configureRuntime(RuntimeParams::defaults())`.
 
 | Control | Public API | Range | Default | OSC address |
 |---|---|---|---|---|
 | Master gain | `RuntimeParams::masterGainDb`, `setMasterGainDb(float)` | -60–+12 dB | 0.0 dB | `/realtime/gain_db` |
+| DBAP focus | `RuntimeParams::dbapFocus`, `setDbapFocus(float)` | 0.1–5.0 | 1.5 | `/realtime/focus` |
 | Speaker mix | `RuntimeParams::speakerMixDb`, `setSpeakerMixDb(float)` | -60–+12 dB | 0.0 dB | `/realtime/speaker_mix_db` |
 | Sub mix | `RuntimeParams::subMixDb`, `setSubMixDb(float)` | -60–+12 dB | 0.0 dB | `/realtime/sub_mix_db` |
 

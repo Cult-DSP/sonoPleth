@@ -12,11 +12,12 @@
 
   - test speaker layout config on windows, validate code
 
+- clean up transcode tab?
+
 ## Other Tasks for final packaging:
 
-- clean up transcoder tab?
-- add render tab - update render code to match non linear channel handeling, give it render params ?
-- debug overall windows build \*\*\*
+OS AND COMPATIBILITY TESTING
+PACKAGING
 
 # Future Work - move to future work md
 

@@ -5,6 +5,40 @@
 
 ---
 
+## Runtime Parameter Staging, Reset, and Single-Source Defaults (May 10, 2026)
+
+**Status:** Complete. Covers `EngineSession` API, CLI, GUI, and docs.
+
+**Motivation:** Runtime controls (gain, focus, mix) were disabled in the GUI before playback started and reset to hardcoded defaults on every Start click. Default values were duplicated across `RuntimeParams`, CLI argument parsing, and `resetRuntimeToDefaults()` in App.cpp. `configureRuntime()` mixed parameter setup with output routing setup, making it unsafe to call before `applyLayout()`.
+
+**What changed:**
+
+- `EngineSession.hpp` / `EngineSession.cpp`:
+  - Added `RuntimeParams::defaults()` — single canonical source of default values.
+  - Added file-local helpers: `clampDb`, `clampFocus`, `dbToLinear`, `linearToDb` (defensive: zero/negative linear → -60 dB, not -inf).
+  - Added private `sanitizeRuntimeParams()`, `applyRuntimeParamsToConfig()`, `configureOutputRouting()`.
+  - Added public `getRuntimeParams()` — reads atomics, converts linear→dB, re-clamps; reflects setters, OSC, and `configureRuntime` changes.
+  - Added public `resetRuntimeParams()` — equivalent to `configureRuntime(RuntimeParams::defaults())`.
+  - Refactored `configureRuntime()`: now only writes gain/focus/mix atomics + syncs OSC if running. No longer touches `mSpatializer` or `OutputRemap`.
+  - Moved output routing setup (remap CSV scaffolding + layout-derived routing) to `configureOutputRouting()`, called at the end of `applyLayout()`. `configureRuntime()` is now safe to call before `applyLayout()`.
+  - Updated `start()`: initializes OSC param values from `getRuntimeParams()` instead of reading atomics directly.
+  - Updated individual setters to use `clampDb`/`clampFocus`/`dbToLinear` helpers consistently.
+
+- `main.cpp`: CLI now initializes `RuntimeParams` from `RuntimeParams::defaults()` and overrides from flags, eliminating duplicated literal defaults.
+
+- `App.cpp`:
+  - Removed `BeginDisabled` guard around runtime controls — sliders/inputs are always editable as staged values before Run.
+  - Input callbacks always clamp; setters called only when running.
+  - Added "Reset Parameters" SmallButton inline with the RUNTIME CONTROLS header. Before Run: resets GUI staged values via `resetRuntimeToDefaults()`. After Run: calls `mSession->resetRuntimeParams()` and syncs GUI from `mSession->getRuntimeParams()`.
+  - Removed `resetRuntimeToDefaults()` call from `onStart()` — staged values are now preserved when playback starts.
+  - Updated `resetRuntimeToDefaults()` to use `RuntimeParams::defaults()` instead of hardcoded literals.
+
+- `internalDocs/API_internal.md`, `REALTIME_ENGINE.md`, `AGENTS.md`: updated to reflect new API methods, routing refactor, defaults source, and OSC sync semantics.
+
+**OSC sync note:** `configureRuntime()` and `resetRuntimeParams()` sync OSC-visible parameter values when the OSC server is running. Individual setters (`setMasterGainDb` etc.) do not sync OSC values — they write atomics only. `getRuntimeParams()` reflects OSC changes because both OSC callbacks and setters write the same atomics.
+
+---
+
 ## Offline ADM Rendering — Phase 3B/3C: CULT Orchestration + Source Validation (May 10, 2026)
 
 **Status:** Complete. `--adm` without `--positions` now mirrors the realtime ADM architecture end-to-end.

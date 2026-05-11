@@ -92,6 +92,19 @@ private:
     std::unique_ptr<TeeStreamBuf> mTeeCerr;
 };
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Unit-conversion and range-clamping helpers (file-local, no external linkage).
+// All parameter mutations in EngineSession flow through these to ensure
+// consistent clamping regardless of call site.
+// ─────────────────────────────────────────────────────────────────────────────
+
+static float clampDb(float dB)       { return std::max(-60.0f, std::min(12.0f, dB)); }
+static float clampFocus(float f)     { return std::max(0.1f, f); }
+static float dbToLinear(float dB)    { return std::pow(10.0f, dB / 20.0f); }
+static float linearToDb(float lin)   { return (lin <= 0.0f) ? -60.0f : 20.0f * std::log10(lin); }
+
+// ─────────────────────────────────────────────────────────────────────────────
+
 struct EngineSession::OscParams {
     al::Parameter gainDb{"gain_db", "realtime", 0.0f, -60.0f, 12.0f};
     al::Parameter focus{"focus", "realtime", 1.5f, 0.1f, 5.0f};
@@ -263,15 +276,34 @@ bool EngineSession::applyLayout(const LayoutInput& layoutIn)
 
     mSpatializer->prepareForSources(mPose->numSources());
 
+    // Output routing is layout-derived — initialize it here while mSpatializer is fresh.
+    configureOutputRouting();
+
     return true;
 }
 
-bool EngineSession::configureRuntime(const RuntimeParams& params)
+RuntimeParams EngineSession::sanitizeRuntimeParams(const RuntimeParams& params) const
 {
-    mConfig.masterGain.store(std::pow(10.0f, params.masterGainDb / 20.0f), std::memory_order_relaxed);
-    mConfig.dbapFocus.store(std::max(params.dbapFocus, 0.1f), std::memory_order_relaxed);
-    mConfig.loudspeakerMix.store(std::pow(10.0f, params.speakerMixDb / 20.0f), std::memory_order_relaxed);
-    mConfig.subMix.store(std::pow(10.0f, params.subMixDb / 20.0f), std::memory_order_relaxed);
+    RuntimeParams clean;
+    clean.masterGainDb = clampDb(params.masterGainDb);
+    clean.dbapFocus    = clampFocus(params.dbapFocus);
+    clean.speakerMixDb = clampDb(params.speakerMixDb);
+    clean.subMixDb     = clampDb(params.subMixDb);
+    return clean;
+}
+
+void EngineSession::applyRuntimeParamsToConfig(const RuntimeParams& params)
+{
+    mConfig.masterGain.store(dbToLinear(params.masterGainDb),    std::memory_order_relaxed);
+    mConfig.dbapFocus.store(params.dbapFocus,                    std::memory_order_relaxed);
+    mConfig.loudspeakerMix.store(dbToLinear(params.speakerMixDb), std::memory_order_relaxed);
+    mConfig.subMix.store(dbToLinear(params.subMixDb),            std::memory_order_relaxed);
+}
+
+bool EngineSession::configureOutputRouting()
+{
+    // Output routing setup — layout-derived by default, with deprecated CSV override.
+    // Called from applyLayout() after Spatializer::init(), so mSpatializer is valid here.
     mOutputRemap = std::make_unique<OutputRemap>();
     if (!mRemapCsv.empty()) {
         // DEPRECATED: CSV remap is not a supported user workflow.
@@ -296,8 +328,40 @@ bool EngineSession::configureRuntime(const RuntimeParams& params)
                   << mConfig.outputChannels << " output channels)." << std::endl;
         // mRemap is already set to &mOutputRouting by Spatializer::init().
     }
+    return true;
+}
+
+bool EngineSession::configureRuntime(const RuntimeParams& params)
+{
+    RuntimeParams clean = sanitizeRuntimeParams(params);
+    applyRuntimeParamsToConfig(clean);
+
+    // Sync OSC-visible parameter values if the server is already running
+    // (i.e. configureRuntime called after start(), e.g. via resetRuntimeParams).
+    // The change callbacks only write to the same atomics we just stored — no loop.
+    if (mOscParams) {
+        mOscParams->gainDb.set(clean.masterGainDb);
+        mOscParams->focus.set(clean.dbapFocus);
+        mOscParams->spkMixDb.set(clean.speakerMixDb);
+        mOscParams->subMixDb.set(clean.subMixDb);
+    }
 
     return true;
+}
+
+RuntimeParams EngineSession::getRuntimeParams() const
+{
+    RuntimeParams p;
+    p.masterGainDb = linearToDb(mConfig.masterGain.load(std::memory_order_relaxed));
+    p.dbapFocus    = mConfig.dbapFocus.load(std::memory_order_relaxed);
+    p.speakerMixDb = linearToDb(mConfig.loudspeakerMix.load(std::memory_order_relaxed));
+    p.subMixDb     = linearToDb(mConfig.subMix.load(std::memory_order_relaxed));
+    return sanitizeRuntimeParams(p);
+}
+
+bool EngineSession::resetRuntimeParams()
+{
+    return configureRuntime(RuntimeParams::defaults());
 }
 
 bool EngineSession::start()
@@ -318,10 +382,13 @@ bool EngineSession::start()
         mParamServer = std::make_unique<al::ParameterServer>("127.0.0.1", mOscPort);
         mOscParams = std::make_unique<OscParams>();
 
-        mOscParams->gainDb.set(20.0f * std::log10(mConfig.masterGain.load()));
-        mOscParams->focus.set(mConfig.dbapFocus.load());
-        mOscParams->spkMixDb.set(20.0f * std::log10(mConfig.loudspeakerMix.load()));
-        mOscParams->subMixDb.set(20.0f * std::log10(mConfig.subMix.load()));
+        // Initialize OSC params from the current staged runtime state so that any
+        // configureRuntime() calls made before start() are visible to OSC clients.
+        RuntimeParams staged = getRuntimeParams();
+        mOscParams->gainDb.set(staged.masterGainDb);
+        mOscParams->focus.set(staged.dbapFocus);
+        mOscParams->spkMixDb.set(staged.speakerMixDb);
+        mOscParams->subMixDb.set(staged.subMixDb);
         mOscParams->paused.set(mConfig.paused.load() ? 1.0f : 0.0f);
         mOscParams->elevMode.set(static_cast<float>(mConfig.elevationMode.load(std::memory_order_relaxed)));
 
@@ -420,22 +487,22 @@ void EngineSession::setPaused(bool isPaused)
 
 void EngineSession::setMasterGainDb(float dB)
 {
-    mConfig.masterGain.store(std::pow(10.0f, dB / 20.0f), std::memory_order_relaxed);
+    mConfig.masterGain.store(dbToLinear(clampDb(dB)), std::memory_order_relaxed);
 }
 
 void EngineSession::setDbapFocus(float focus)
 {
-    mConfig.dbapFocus.store(std::max(focus, 0.1f), std::memory_order_relaxed);
+    mConfig.dbapFocus.store(clampFocus(focus), std::memory_order_relaxed);
 }
 
 void EngineSession::setSpeakerMixDb(float dB)
 {
-    mConfig.loudspeakerMix.store(std::pow(10.0f, dB / 20.0f), std::memory_order_relaxed);
+    mConfig.loudspeakerMix.store(dbToLinear(clampDb(dB)), std::memory_order_relaxed);
 }
 
 void EngineSession::setSubMixDb(float dB)
 {
-    mConfig.subMix.store(std::pow(10.0f, dB / 20.0f), std::memory_order_relaxed);
+    mConfig.subMix.store(dbToLinear(clampDb(dB)), std::memory_order_relaxed);
 }
 
 void EngineSession::setElevationMode(ElevationMode mode)
