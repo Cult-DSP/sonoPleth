@@ -14,6 +14,22 @@
 
 - clean up transcode tab?
 
+## Audits
+
+api audit
+gui audit
+dsp audit
+cmake wiring audit
+build system audit
+git submodule fetching audit
+overall codebase audit
+OS AND COMPATIBILITY
+
+- windows
+- linux
+- audio backend
+- glfw
+
 ## Other Tasks for final packaging:
 
 OS AND COMPATIBILITY TESTING
