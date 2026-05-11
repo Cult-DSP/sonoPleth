@@ -971,6 +971,7 @@ source/spatial_engine/spatialRender/CMakeFiles/spatialroot_spatial_render.dir/Sp
   /Users/lucian/Projects/spatialroot/source/spatial_engine/spatialRender/../src/JSONLoader.hpp \
   /Users/lucian/Projects/spatialroot/source/spatial_engine/spatialRender/../src/LayoutLoader.hpp \
   /Users/lucian/Projects/spatialroot/source/spatial_engine/spatialRender/../src/WavUtils.hpp \
+  /Users/lucian/Projects/spatialroot/source/spatial_engine/spatialRender/OfflineOutputRouteMap.hpp \
   /Library/Developer/CommandLineTools/SDKs/MacOSX15.0.sdk/usr/include/c++/v1/iomanip \
   /Library/Developer/CommandLineTools/SDKs/MacOSX15.0.sdk/usr/include/c++/v1/fstream \
   /Library/Developer/CommandLineTools/SDKs/MacOSX15.0.sdk/usr/include/c++/v1/filesystem \

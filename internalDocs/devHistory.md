@@ -5,6 +5,34 @@
 
 ---
 
+## Offline ADM Rendering — Phase 3B/3C: CULT Orchestration + Source Validation (May 10, 2026)
+
+**Status:** Complete. `--adm` without `--positions` now mirrors the realtime ADM architecture end-to-end.
+
+**Motivation:** The offline renderer accepted `--adm` but required a separately-provided `--positions` scene file. The realtime path invokes CULT Transcoder to generate `scene.lusid.json` from the ADM metadata automatically. The offline path should mirror this: CULT generates the scene, the original ADM WAV remains the multichannel audio payload, and source node IDs map to WAV channels using the established CULT convention.
+
+**What changed:**
+
+- `source/spatial_engine/spatialRender/main.cpp`
+  - `--adm` **without** `--positions`: invokes `cult-transcoder transcode` automatically to generate `scene.lusid.json` in a unique temp directory, then passes the generated scene through the existing render path. The original ADM WAV is the audio payload throughout.
+  - `--adm` **with** `--positions`: uses the provided scene file directly. CULT is **not** invoked. This is the legacy/direct path for users who have already run CULT separately.
+  - CULT invocation: `--in-format adm_wav --out-format lusid_json --lfe-mode hardcoded --report <temp>/reports/transcode_report.json`
+  - CULT binary resolution order: `--cult-transcoder` CLI flag → `CULT_TRANSCODER` env var → `build/internal/cult_transcoder/` (cwd-relative) → `internal/cult_transcoder/build/` (cwd-relative) → executable-relative equivalents. Failure prints all searched paths.
+  - Temp directory created under `std::filesystem::temp_directory_path()`; deleted on success unless `--keep-temp-dir`; always preserved on failure with path printed to stderr.
+  - Post-load source validation: after `loadSourcesFromADM()`, every source declared in the LUSID scene is verified against the loaded audio map. Missing sources produce a hard failure that names each unmappable source, the ADM file path, and the expected convention.
+  - Error messages for all failure paths now include the relevant file path(s) and temp dir location.
+  - New flags: `--cult-transcoder PATH`, `--keep-temp-dir`.
+  - Updated `--help` to document both `--adm` modes, the CULT search order, temp-dir behavior, and the source mapping convention.
+
+**Offline ADM source mapping convention** (applies to the offline renderer only; not a general ADM or LUSID rule):
+- `"N.1"` maps to 0-based WAV channel `N-1` (e.g. `"1.1"` → ch0, `"2.1"` → ch1)
+- `"LFE"` maps to WAV channel 3 when the file has ≥ 4 channels — matches `--lfe-mode hardcoded` passed to CULT
+- Sources that cannot be mapped using this convention are a hard failure (not silently skipped)
+
+**Explicit non-change:** No realtime engine files modified. `WavUtils.hpp`, `WavUtils.cpp`, `SpatialRenderer`, `OfflineOutputRouteMap`, and all Phase 2 device-indexed output behavior are unchanged.
+
+---
+
 ## OfflineOutputRouteMap Phase 1 (May 10, 2026)
 
 **Status:** Complete. Offline-only routing helper added; no realtime or offline render behavior change.
