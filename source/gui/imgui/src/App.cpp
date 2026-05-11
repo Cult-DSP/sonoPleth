@@ -1097,7 +1097,8 @@ void App::renderTranscodeTab() {
     ImGui::PopStyleColor();
     ImGui::Spacing();
 
-    const float logH = ImGui::GetContentRegionAvail().y;
+    const float logAvail = ImGui::GetContentRegionAvail().y;
+    const float logH = std::max(140.f, logAvail * 0.4f);
     if (ImGui::BeginChild("##tclogcard", {0.f, logH}, true)) {
         ImGui::TextDisabled("TRANSCODE LOG");
         ImGui::Spacing();
@@ -1108,8 +1109,10 @@ void App::renderTranscodeTab() {
         }
         if (ImGui::BeginChild("##tclog", {0.f, ImGui::GetContentRegionAvail().y}, false,
                               ImGuiWindowFlags_HorizontalScrollbar)) {
+            ImGui::SetWindowFontScale(1.2f);
             for (const auto& entry : tcLogSnapshot) ImGui::TextColored(entry.color, "%s", entry.text.c_str());
             if (mTcLogAutoScroll && ImGui::GetScrollY() >= ImGui::GetScrollMaxY() - 20.f) ImGui::SetScrollHereY(1.f);
+            ImGui::SetWindowFontScale(1.0f);
         }
         ImGui::EndChild();
     }
@@ -1628,9 +1631,10 @@ void App::appendTcLog(const std::string& line) {
     ImVec4 color = {0.85f, 0.85f, 0.85f, 1.f};
     std::string lower = line;
     std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
-    if (lower.find("error") != std::string::npos) color = {1.f, 0.35f, 0.35f, 1.f};
+    if (isCultProgressLine(line)) color = {0.45f, 0.82f, 1.f, 1.f};
+    else if (lower.find("error") != std::string::npos) color = {0.72f, 0.18f, 0.15f, 1.f};
     else if (lower.find("warn") != std::string::npos) color = {1.f, 0.8f, 0.2f, 1.f};
-    else if (line.size() > 3 && line.substr(0, 4) == "[ok]") color = {0.3f, 0.9f, 0.3f, 1.f};
+    else if (line.size() > 3 && line.substr(0, 4) == "[ok]") color = {0.18f, 0.52f, 0.22f, 1.f};
 
     std::lock_guard<std::mutex> lock(mTcLogMutex);
     if (isCultProgressLine(line) && !mTcLog.empty() &&
@@ -1646,10 +1650,11 @@ void App::appendOrLog(const std::string& line) {
     ImVec4 color = {0.85f, 0.85f, 0.85f, 1.f};
     std::string lower = line;
     std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
-    if (lower.find("error") != std::string::npos)      color = {1.f,  0.35f, 0.35f, 1.f};
+    if (isCultProgressLine(line)) color = {0.45f, 0.82f, 1.f, 1.f};
+    else if (lower.find("error") != std::string::npos)      color = {0.72f, 0.18f, 0.15f, 1.f};
     else if (lower.find("warn") != std::string::npos)  color = {1.f,  0.8f,  0.2f,  1.f};
-    else if (lower.find("done") != std::string::npos)  color = {0.3f, 0.9f,  0.3f,  1.f};
-    else if (lower.find("complete") != std::string::npos) color = {0.3f, 0.9f, 0.3f, 1.f};
+    else if (lower.find("done") != std::string::npos)  color = {0.18f, 0.52f, 0.22f, 1.f};
+    else if (lower.find("complete") != std::string::npos) color = {0.18f, 0.52f, 0.22f, 1.f};
 
     std::lock_guard<std::mutex> lock(mOrLogMutex);
     if (isCultProgressLine(line) && !mOrLog.empty() &&
