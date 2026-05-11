@@ -4,9 +4,9 @@
 
 ## next tasks
 
-- fix bugs in transcoder tab: 360ra -> lusid path
+- finih audio set up pannel and check for any audio driver diagnostic or sample rate issues
 
-- asses audio setup tab
+- fix bugs in transcoder tab: 360ra -> lusid path
 
 - -packaging bugs
 

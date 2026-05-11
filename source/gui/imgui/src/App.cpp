@@ -97,7 +97,7 @@ const char* audioBackendLabel() {
 #elif defined(_WIN32)
     return "WASAPI";
 #else
-    return "Unknown";
+    return "Linux audio";
 #endif
 }
 }
@@ -410,6 +410,7 @@ void App::renderEngineTab() {
     }
     const char* audioToggleLabel = mShowAudioSetupPanel ? "Audio Setup \xE2\x96\xB2"
                                                         : "Audio Setup \xE2\x96\xBC";
+    if (audioNotReady) mShowAudioSetupPanel = true;
 
     if (ImGui::BeginChild("##inputcard", {0.f, 240.f}, true)) {
         ImGui::TextDisabled("INPUT CONFIGURATION");
@@ -488,7 +489,7 @@ void App::renderEngineTab() {
     ImGui::Spacing();
 
     if (mShowAudioSetupPanel) {
-        if (ImGui::BeginChild("##audiosetupcard", {0.f, 220.f}, true)) {
+        if (ImGui::BeginChild("##audiosetupcard", {0.f, 260.f}, true)) {
             ImGui::TextDisabled("AUDIO SETUP");
             ImGui::Spacing();
 
