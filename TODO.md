@@ -4,15 +4,14 @@
 
 ## next tasks
 
-- allow for setting runtime params prior to starting engine, add reset button
+- clean up transcode tab
+
 - duplicate api docs in internal and public, which is most up to date? ---
 - clean up documentation
   - public facing
   - consolidate dev history and testing docs
 
   - test speaker layout config on windows, validate code
-
-- clean up transcode tab?
 
 ## Audits
 

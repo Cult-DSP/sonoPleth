@@ -412,7 +412,7 @@ bool EngineSession::start()
         });
 
         mOscParams->focus.registerChangeCallback([this](float v) {
-            this->mConfig.dbapFocus.store(std::max(v, 0.1f), std::memory_order_relaxed);
+            this->mConfig.dbapFocus.store(clampFocus(v), std::memory_order_relaxed);
         });
 
         mOscParams->spkMixDb.registerChangeCallback([this](float dB) {

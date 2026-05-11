@@ -59,6 +59,7 @@
   - Updated `--help` to document both `--adm` modes, the CULT search order, temp-dir behavior, and the source mapping convention.
 
 **Offline ADM source mapping convention** (applies to the offline renderer only; not a general ADM or LUSID rule):
+
 - `"N.1"` maps to 0-based WAV channel `N-1` (e.g. `"1.1"` → ch0, `"2.1"` → ch1)
 - `"LFE"` maps to WAV channel 3 when the file has ≥ 4 channels — matches `--lfe-mode hardcoded` passed to CULT
 - Sources that cannot be mapped using this convention are a hard failure (not silently skipped)
@@ -119,12 +120,14 @@
 **Thread safety:** Capture is only active during single-threaded startup stages. In `start()`, capture is explicitly restored before `mStreaming->startLoader()` to avoid racing with the background loader thread. No capture occurs during audio callback execution.
 
 **Files changed:**
+
 - `source/spatial_engine/realtimeEngine/src/EngineSession.hpp` — added `getFailureDiagnostics()` and `storeFailureDiagnostics()` declarations; added `mFailureDiagnostics` member
 - `source/spatial_engine/realtimeEngine/src/EngineSession.cpp` — added `TeeStreamBuf`, `StageCapture`; wired into `loadScene`, `applyLayout`, `start`; added `getFailureDiagnostics()` and `storeFailureDiagnostics()` implementations
 - `source/gui/imgui/src/App.hpp` — added `appendFailureDiagnostics()` declaration
 - `source/gui/imgui/src/App.cpp` — added `appendFailureDiagnostics()` implementation; called at all five failure points in `doLaunchEngine()`
 
 **Failure log format:**
+
 ```
 === Failure diagnostics ===
 Stage: load scene (ADM streaming)
@@ -150,10 +153,12 @@ Terminal output:
 **Motivation:** The previous Transcoder tab only exposed `cult-transcoder transcode` (ADM→LUSID Scene). CULT now supports two additional subcommands (`package-adm-wav`, `adm-author`) that were inaccessible from the GUI.
 
 **Files changed:**
+
 - `source/gui/imgui/src/App.hpp` — added workflow state members and constants for all three workflows
 - `source/gui/imgui/src/App.cpp` — `renderTranscodeTab()` rebuilt with `BeginTabBar("##tc_workflow")`
 
 **Three sub-tabs now exposed:**
+
 1. **ADM to LUSID Scene** (`cult-transcoder transcode`) — converts ADM XML or ADM WAV/BWF metadata to `scene.lusid.json`
 2. **ADM WAV to LUSID Package** (`cult-transcoder package-adm-wav`) — extracts ADM, converts metadata, splits interleaved audio into a LUSID package directory
 3. **LUSID to ADM Export** (`cult-transcoder adm-author`) — authors LUSID package material into Logic-compatible ADM BWF/WAV + sidecar ADM XML
@@ -241,6 +246,7 @@ Terminal output:
 **Problem:** After the April 17 normalized DBAP upgrade, fast-moving sources produced audible pops or gain steps. Root cause: `mPrevSafePos[si]` was always written as the block-center guard-resolved position (`safePos`), even for fast-mover blocks whose last rendered audio corresponded to the last sub-step (near `positionEnd`). Under normalized DBAP, the dominant speaker gain can jump 4× (from `1/sqrt(N) ≈ 0.25` equidistant to `≈1.0` near-speaker) across the normalization basin boundary. When `positionEnd` and block-center straddle that boundary, the Bug 9.1 `doBlend` anchor on the following block was wrong — it injected a discontinuity rather than smoothing one.
 
 **Fix (Spatializer.hpp):**
+
 - Fast-mover loop now captures `lastSubSafePos = subSafePos` at `j == kNumSubSteps - 1`
 - Fast-mover branch writes its own state immediately after the loop: `mPrevSafePos[si] = lastSubSafePos`, `mPrevGuardFired[si] = 0`, `mPrevWasFastMover[si] = 1`
 - Normal-path state update guarded by `!isFastMover`; clears `mPrevWasFastMover[si] = 0`
@@ -488,9 +494,9 @@ else:
 
 **Executable paths at the time:**
 
-| Tool             | POSIX                                                           | Windows                             |
-| ---------------- | --------------------------------------------------------------- | ----------------------------------- |
-| ADM Extractor    | `src/adm_extract/build/spatialroot_adm_extract`                 | `...spatialroot_adm_extract.exe`    |
+| Tool             | POSIX                                                                  | Windows                             |
+| ---------------- | ---------------------------------------------------------------------- | ----------------------------------- |
+| ADM Extractor    | `src/adm_extract/build/spatialroot_adm_extract`                        | `...spatialroot_adm_extract.exe`    |
 | Spatial Renderer | `source/spatial_engine/spatialRender/build/spatialroot_spatial_render` | `...spatialroot_spatial_render.exe` |
 
 All of `src/config/configCPP*.py` removed in Phase 6.
@@ -676,7 +682,7 @@ Locked v1 design decisions documented at the time:
 | `src/analyzeADM/checkAudioChannels.py` | Per-channel audio activity scan                                       |
 | `src/packageADM/splitStems.py`         | Mono WAV stem splitter                                                |
 | `src/analyzeRender.py`                 | PDF render analysis                                                   |
-| `internal/LUSID/src/`                           | Python LUSID library (scene.py, xml_etree_parser.py, parser.py)       |
+| `internal/LUSID/src/`                  | Python LUSID library (scene.py, xml_etree_parser.py, parser.py)       |
 
 ### cult-transcoder CLI Invocation (historical reference)
 
@@ -721,15 +727,15 @@ processedData/stageForRender/    — cult-transcoder writes scene.lusid.json her
 
 ## Key Milestones
 
-| Phase   | Date           | Description                                                                                 |
-| ------- | -------------- | ------------------------------------------------------------------------------------------- |
-| Phase 1 | January 2026   | Initial ADM extraction pipeline using `spatialroot_adm_extract`                             |
-| Phase 2 | February 2026  | Codebase audit; `spatialroot_adm_extract` deprecated                                        |
-| Phase 3 | March 4, 2026  | Transitioned to `cult-transcoder`; removed per-channel audio scan                           |
-| Phase 4 | March 7, 2026  | `cult-transcoder` gains `--lfe-mode` flag; ADM profile detection (Atmos, Sony360RA)         |
-| Phase 5 | March 7, 2026  | TRANSCODE UI added to PySide6 GUI (superseded by ImGui GUI in Phase 6)                      |
-| Phase 6 | March 31, 2026 | C++ refactor complete. Python GUI/entrypoints/build/venv removed. ImGui + GLFW GUI shipped. |
-| Phase 7 | April 17, 2026 | Normalized DBAP (`sum(v_k²)=1`). `thirdparty/allolib` → `internal/cult-allolib`. Auto-compensation removed. |
-| Bug 10.1 | May 7, 2026 | Fast-mover continuity anchor fix for normalized DBAP (`mPrevSafePos` written as last sub-step position). |
-| Phase 8  | May 10, 2026 | Persistent default speaker layout + cross-platform app settings paths. `DefaultLayoutManager` added to GUI layer. Settings dir (`~/Library/Application Support/Spatial Root/` etc.) is strictly separate from session temp cache. Atomic writes, non-fatal startup fallback, GUI controls: Set as Default / Clear Default / status display. |
-| Phase 9  | May 10, 2026 | Offline Render tab added to Dear ImGui GUI. Wraps `spatialroot_spatial_render` via the existing `SubprocessRunner`. ADM WAV mode (experimental) and LUSID Package mode both supported. GUI does not invoke CULT directly; the offline renderer owns CULT invocation, temp dir lifecycle, and source mapping validation. Realtime engine behavior unchanged. |
+| Phase    | Date           | Description                                                                                                                                                                                                                                                                                                                                                 |
+| -------- | -------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Phase 1  | January 2026   | Initial ADM extraction pipeline using `spatialroot_adm_extract`                                                                                                                                                                                                                                                                                             |
+| Phase 2  | February 2026  | Codebase audit; `spatialroot_adm_extract` deprecated                                                                                                                                                                                                                                                                                                        |
+| Phase 3  | March 4, 2026  | Transitioned to `cult-transcoder`; removed per-channel audio scan                                                                                                                                                                                                                                                                                           |
+| Phase 4  | March 7, 2026  | `cult-transcoder` gains `--lfe-mode` flag; ADM profile detection (Atmos, Sony360RA)                                                                                                                                                                                                                                                                         |
+| Phase 5  | March 7, 2026  | TRANSCODE UI added to PySide6 GUI (superseded by ImGui GUI in Phase 6)                                                                                                                                                                                                                                                                                      |
+| Phase 6  | March 31, 2026 | C++ refactor complete. Python GUI/entrypoints/build/venv removed. ImGui + GLFW GUI shipped.                                                                                                                                                                                                                                                                 |
+| Phase 7  | April 17, 2026 | Normalized DBAP (`sum(v_k²)=1`). `thirdparty/allolib` → `internal/cult-allolib`. Auto-compensation removed.                                                                                                                                                                                                                                                 |
+| Bug 10.1 | May 7, 2026    | Fast-mover continuity anchor fix for normalized DBAP (`mPrevSafePos` written as last sub-step position).                                                                                                                                                                                                                                                    |
+| Phase 8  | May 10, 2026   | Persistent default speaker layout + cross-platform app settings paths. `DefaultLayoutManager` added to GUI layer. Settings dir (`~/Library/Application Support/Spatial Root/` etc.) is strictly separate from session temp cache. Atomic writes, non-fatal startup fallback, GUI controls: Set as Default / Clear Default / status display.                 |
+| Phase 9  | May 10, 2026   | Offline Render tab added to Dear ImGui GUI. Wraps `spatialroot_spatial_render` via the existing `SubprocessRunner`. ADM WAV mode (experimental) and LUSID Package mode both supported. GUI does not invoke CULT directly; the offline renderer owns CULT invocation, temp dir lifecycle, and source mapping validation. Realtime engine behavior unchanged. |

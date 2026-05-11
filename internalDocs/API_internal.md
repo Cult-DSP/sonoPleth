@@ -102,7 +102,7 @@ The engine enforces a strict, linear initialization sequence:
 | Method | Writes | Range |
 |---|---|---|
 | `setMasterGainDb(float)` | `mConfig.masterGain` | -60–+12 dB |
-| `setDbapFocus(float)` | `mConfig.dbapFocus` | min 0.1 |
+| `setDbapFocus(float)` | `mConfig.dbapFocus` | 0.1–5.0 |
 | `setSpeakerMixDb(float)` | `mConfig.loudspeakerMix` | -60–+12 dB |
 | `setSubMixDb(float)` | `mConfig.subMix` | -60–+12 dB |
 | `setElevationMode(ElevationMode)` | `mConfig.elevationMode` | cast to int |

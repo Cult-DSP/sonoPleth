@@ -36,11 +36,11 @@ No Python toolchain required. Requires CMake 3.20+ and a C++17 compiler.
 
 After setup, binaries are at:
 
-| Binary                       | Path                                                            |
-| ---------------------------- | --------------------------------------------------------------- |
+| Binary                       | Path                                                                   |
+| ---------------------------- | ---------------------------------------------------------------------- |
 | `spatialroot_realtime`       | `build/source/spatial_engine/realtimeEngine/spatialroot_realtime`      |
 | `spatialroot_spatial_render` | `build/source/spatial_engine/spatialRender/spatialroot_spatial_render` |
-| `cult-transcoder`            | `build/internal/cult_transcoder/cult-transcoder`                         |
+| `cult-transcoder`            | `build/internal/cult_transcoder/cult-transcoder`                       |
 
 ### Subsequent Builds
 
@@ -109,7 +109,7 @@ Optional:
 
 ### OSC parameter control
 
-When `--osc_port` is non-zero (default: 9009), the engine accepts OSC messages on `127.0.0.1:<port>` for live parameter updates: `/realtime/gain`, `/realtime/focus`, `/realtime/speaker_mix_db`, `/realtime/sub_mix_db`, `/realtime/paused`, `/realtime/elevation_mode`.
+When `--osc_port` is non-zero (default: 9009), the engine accepts OSC messages on `127.0.0.1:<port>` for live parameter updates: `/realtime/gain_db`, `/realtime/focus`, `/realtime/speaker_mix_db`, `/realtime/sub_mix_db`, `/realtime/paused`, `/realtime/elevation_mode`.
 
 ### Quick dev rebuild (engine only)
 
@@ -153,14 +153,14 @@ Options:
 
 The build system is CMake + shell scripts. No Python required.
 
-| Script      | Platform      | Role                                           |
-| ----------- | ------------- | ---------------------------------------------- |
-| `init.sh`   | macOS / Linux | Initialize submodules + call `build.sh`        |
-| `build.sh`  | macOS / Linux | CMake configure + build                        |
-| `init.ps1`  | Windows       | Initialize submodules + call `build.ps1`       |
-| `build.ps1` | Windows       | CMake configure + build                        |
-| `run.sh`    | macOS / Linux | Launch the ImGui GUI (builds first if needed)  |
-| `run.ps1`   | Windows       | Launch the ImGui GUI                           |
+| Script      | Platform      | Role                                          |
+| ----------- | ------------- | --------------------------------------------- |
+| `init.sh`   | macOS / Linux | Initialize submodules + call `build.sh`       |
+| `build.sh`  | macOS / Linux | CMake configure + build                       |
+| `init.ps1`  | Windows       | Initialize submodules + call `build.ps1`      |
+| `build.ps1` | Windows       | CMake configure + build                       |
+| `run.sh`    | macOS / Linux | Launch the ImGui GUI (builds first if needed) |
+| `run.ps1`   | Windows       | Launch the ImGui GUI                          |
 
 The root `CMakeLists.txt` builds all components via option flags:
 

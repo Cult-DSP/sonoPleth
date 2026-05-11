@@ -56,13 +56,13 @@ Use `./build.sh --engine-only` for fast current-workflow engine rebuilds. Histor
 
 All test content lives in `data/sourceData/`. Corresponding LUSID scenes are in `data/processedData/stageForRender/`. File names match:
 
-| Content | ADM WAV | LUSID scene |
-|---|---|---|
-| Swale | `data/sourceData/SWALE-ATMOS-LFE.wav` | `data/processedData/stageForRender/SWALE-ATMOS-LFE.lusid.json` |
-| Ascent | `data/sourceData/ASCENT-ATMOS-LFE.wav` | `data/processedData/stageForRender/ASCENT-ATMOS-LFE.lusid.json` |
-| Eden | `data/sourceData/EDEN-ATMOS-MIX-LFE.wav` | `data/processedData/stageForRender/EDEN-ATMOS-MIX-LFE.lusid.json` |
-| Canyon | `data/sourceData/CANYON-ATMOS-LFE.wav` | *(no pre-built scene — transcode via GUI TRANSCODE tab or cult-transcoder)* |
-| 360RA | `data/sourceData/360RA_test.wav` | `data/processedData/stageForRender/360RA_test.lusid.json` |
+| Content | ADM WAV                                  | LUSID scene                                                                 |
+| ------- | ---------------------------------------- | --------------------------------------------------------------------------- |
+| Swale   | `data/sourceData/SWALE-ATMOS-LFE.wav`    | `data/processedData/stageForRender/SWALE-ATMOS-LFE.lusid.json`              |
+| Ascent  | `data/sourceData/ASCENT-ATMOS-LFE.wav`   | `data/processedData/stageForRender/ASCENT-ATMOS-LFE.lusid.json`             |
+| Eden    | `data/sourceData/EDEN-ATMOS-MIX-LFE.wav` | `data/processedData/stageForRender/EDEN-ATMOS-MIX-LFE.lusid.json`           |
+| Canyon  | `data/sourceData/CANYON-ATMOS-LFE.wav`   | _(no pre-built scene — transcode via GUI TRANSCODE tab or cult-transcoder)_ |
+| 360RA   | `data/sourceData/360RA_test.wav`         | `data/processedData/stageForRender/360RA_test.lusid.json`                   |
 
 Speaker layouts: `source/speaker_layouts/translab-sono-layout.json` (primary test), `allosphere_layout.json` (56-ch).
 
@@ -72,23 +72,23 @@ Speaker layouts: `source/speaker_layouts/translab-sono-layout.json` (primary tes
 
 **C++ engine:**
 
-| File | Role |
-|---|---|
-| `source/spatial_engine/realtimeEngine/src/Spatializer.hpp` | Core DBAP render loop. Proximity guard (Pass 1 soft zone + Pass 2 hard floor), fast-mover sub-stepping, cross-block guard-transition blending (`mPrevSafePos`/`mPrevSafeValid`/`mPrevGuardFired` — Bug 9.1), Phase 6 mix trims (spkMix/lfeMix), Phase 7 device copy, Phase 14 diagnostic measurement points. **Most bugs touch this file.** |
-| `source/spatial_engine/realtimeEngine/src/Pose.hpp` | Keyframe interpolation pipeline: SLERP → `safeDirForSource` → `sanitizeDirForLayout` → `directionToDBAPPosition`. Computes `SourcePose::position` (block center), `positionStart`, `positionEnd`. Pose is known clean — do not suspect it without evidence. |
-| `source/spatial_engine/realtimeEngine/src/RealtimeBackend.hpp` | Audio callback controller. Owns `ControlSmooth` (50 ms exponential smoother for gain/focus), `processBlock()` Steps 1–6, per-block timing, CPU meter. All config values reach the audio thread exclusively via `mSmooth`. |
-| `source/spatial_engine/realtimeEngine/src/RealtimeTypes.hpp` | Shared types: `RealtimeConfig` atomics (written by OSC/session API, snapshotted by audio thread). `EngineState` diagnostic counters. `EngineOptions`, `SceneInput`, `LayoutInput`, `RuntimeParams`, `EngineStatus`, `DiagnosticEvents` structs. Threading model documented in header comments — read them. |
-| `source/spatial_engine/realtimeEngine/src/EngineSession.hpp/.cpp` | Public session API. Wraps all subsystems. `main.cpp` and the GUI both use this exclusively. Contains the OSC `ParameterServer` and `OscParams` inner struct. |
-| `source/spatial_engine/realtimeEngine/src/main.cpp` | Headless CLI entry point. Parses args, builds `EngineOptions`/`SceneInput`/`LayoutInput`/`RuntimeParams`, calls `EngineSession` API, runs the monitoring loop. |
-| `source/spatial_engine/realtimeEngine/src/Streaming.hpp` | Per-source audio streaming from the multichannel ADM WAV. `parseChannelIndex()` maps source name → 0-based ADM channel: `"N.1" → N-1`, `"LFE" → 3`. |
+| File                                                              | Role                                                                                                                                                                                                                                                                                                                                        |
+| ----------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `source/spatial_engine/realtimeEngine/src/Spatializer.hpp`        | Core DBAP render loop. Proximity guard (Pass 1 soft zone + Pass 2 hard floor), fast-mover sub-stepping, cross-block guard-transition blending (`mPrevSafePos`/`mPrevSafeValid`/`mPrevGuardFired` — Bug 9.1), Phase 6 mix trims (spkMix/lfeMix), Phase 7 device copy, Phase 14 diagnostic measurement points. **Most bugs touch this file.** |
+| `source/spatial_engine/realtimeEngine/src/Pose.hpp`               | Keyframe interpolation pipeline: SLERP → `safeDirForSource` → `sanitizeDirForLayout` → `directionToDBAPPosition`. Computes `SourcePose::position` (block center), `positionStart`, `positionEnd`. Pose is known clean — do not suspect it without evidence.                                                                                 |
+| `source/spatial_engine/realtimeEngine/src/RealtimeBackend.hpp`    | Audio callback controller. Owns `ControlSmooth` (50 ms exponential smoother for gain/focus), `processBlock()` Steps 1–6, per-block timing, CPU meter. All config values reach the audio thread exclusively via `mSmooth`.                                                                                                                   |
+| `source/spatial_engine/realtimeEngine/src/RealtimeTypes.hpp`      | Shared types: `RealtimeConfig` atomics (written by OSC/session API, snapshotted by audio thread). `EngineState` diagnostic counters. `EngineOptions`, `SceneInput`, `LayoutInput`, `RuntimeParams`, `EngineStatus`, `DiagnosticEvents` structs. Threading model documented in header comments — read them.                                  |
+| `source/spatial_engine/realtimeEngine/src/EngineSession.hpp/.cpp` | Public session API. Wraps all subsystems. `main.cpp` and the GUI both use this exclusively. Contains the OSC `ParameterServer` and `OscParams` inner struct.                                                                                                                                                                                |
+| `source/spatial_engine/realtimeEngine/src/main.cpp`               | Headless CLI entry point. Parses args, builds `EngineOptions`/`SceneInput`/`LayoutInput`/`RuntimeParams`, calls `EngineSession` API, runs the monitoring loop.                                                                                                                                                                              |
+| `source/spatial_engine/realtimeEngine/src/Streaming.hpp`          | Per-source audio streaming from the multichannel ADM WAV. `parseChannelIndex()` maps source name → 0-based ADM channel: `"N.1" → N-1`, `"LFE" → 3`.                                                                                                                                                                                         |
 
 **C++ GUI:**
 
-| File | Role |
-|---|---|
-| `source/gui/imgui/src/App.hpp` / `App.cpp` | ImGui + GLFW desktop app. Owns `EngineSession`. Staged runtime params are preserved on Start (no forced reset). Controls engine via direct C++ setters (`mSession->setMasterGainDb()` etc.) — not OSC. Two tabs: ENGINE and TRANSCODE. |
-| `source/gui/imgui/src/SubprocessRunner.hpp/.cpp` | Runs the `cult-transcoder` subprocess for ADM WAV → LUSID scene conversion. |
-| `source/gui/imgui/src/main.cpp` | GLFW window setup, render loop, calls `App::tick()` each frame. |
+| File                                             | Role                                                                                                                                                                                                                                   |
+| ------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `source/gui/imgui/src/App.hpp` / `App.cpp`       | ImGui + GLFW desktop app. Owns `EngineSession`. Staged runtime params are preserved on Start (no forced reset). Controls engine via direct C++ setters (`mSession->setMasterGainDb()` etc.) — not OSC. Two tabs: ENGINE and TRANSCODE. |
+| `source/gui/imgui/src/SubprocessRunner.hpp/.cpp` | Runs the `cult-transcoder` subprocess for ADM WAV → LUSID scene conversion.                                                                                                                                                            |
+| `source/gui/imgui/src/main.cpp`                  | GLFW window setup, render loop, calls `App::tick()` each frame.                                                                                                                                                                        |
 
 ---
 
@@ -97,6 +97,7 @@ Speaker layouts: `source/speaker_layouts/translab-sono-layout.json` (primary tes
 All startup and runtime control goes through `EngineSession`. The GUI and headless `main.cpp` both use this.
 
 **Startup sequence (must be called in this order):**
+
 ```cpp
 EngineSession session;
 session.configureEngine(opts);    // audio device, sample rate, buffer size, OSC port
@@ -107,6 +108,7 @@ session.start();                  // launches audio thread + loader thread
 ```
 
 **Runtime control (safe to call after `start()`):**
+
 ```cpp
 session.setMasterGainDb(float);    // -60–+12 dB (0 dB = unity)
 session.setDbapFocus(float);       // 0.1–5.0
@@ -118,6 +120,7 @@ session.setPaused(bool);
 ```
 
 **Polling (call from main thread each frame/loop):**
+
 ```cpp
 EngineStatus   status = session.queryStatus();   // time, CPU, RMS, masks, counters
 DiagnosticEvents ev   = session.consumeDiagnostics(); // reloc/DOM/CLUSTER event latches
@@ -130,15 +133,15 @@ session.update();                                // processes pending focus comp
 
 Port: **9009** (default, set via `--osc_port`). Group prefix: `realtime`. All params are also writable via the direct C++ setter API above.
 
-| OSC address | Type | Range | Default | Notes |
-|---|---|---|---|---|
-| `/realtime/gain_db` | float (dB) | -60–+12 | 0.0 | Master gain; converted to linear at callback |
-| `/realtime/focus` | float | 0.2–5.0 | 1.5 | DBAP rolloff exponent |
-| `/realtime/speaker_mix_db` | float (dB) | -60–+12 | 0.0 | Post-DBAP main trim |
-| `/realtime/sub_mix_db` | float (dB) | -60–+12 | 0.0 | Post-DBAP sub trim |
-| `/realtime/auto_comp` | float (bool) | 0/1 | 0 | Focus auto-compensation |
-| `/realtime/paused` | float (bool) | 0/1 | 0 | Pause/resume transport |
-| `/realtime/elevation_mode` | float (int) | 0/1/2 | 0 | 0=RescaleAtmosUp, 1=RescaleFullSphere, 2=Clamp |
+| OSC address                | Type         | Range   | Default | Notes                                          |
+| -------------------------- | ------------ | ------- | ------- | ---------------------------------------------- |
+| `/realtime/gain_db`        | float (dB)   | -60–+12 | 0.0     | Master gain; converted to linear at callback   |
+| `/realtime/focus`          | float        | 0.2–5.0 | 1.5     | DBAP rolloff exponent                          |
+| `/realtime/speaker_mix_db` | float (dB)   | -60–+12 | 0.0     | Post-DBAP main trim                            |
+| `/realtime/sub_mix_db`     | float (dB)   | -60–+12 | 0.0     | Post-DBAP sub trim                             |
+| `/realtime/auto_comp`      | float (bool) | 0/1     | 0       | Focus auto-compensation                        |
+| `/realtime/paused`         | float (bool) | 0/1     | 0       | Pause/resume transport                         |
+| `/realtime/elevation_mode` | float (int)  | 0/1/2   | 0       | 0=RescaleAtmosUp, 1=RescaleFullSphere, 2=Clamp |
 
 ---
 
@@ -146,11 +149,11 @@ Port: **9009** (default, set via `--osc_port`). Group prefix: `realtime`. All pa
 
 Three threads. This matters for any change touching shared state.
 
-| Thread | Role | Owns |
-|---|---|---|
-| **Main thread** | Startup, monitoring loop, `session.update()`, GUI render loop. | Agent object lifetimes, `EngineSession` setters |
-| **Audio thread** | AlloLib RT callback at real-time priority. Runs `processBlock()` every buffer. **Must never allocate, lock, or do I/O.** | `EngineState` writes, `mRenderIO`, `mLastGoodDir` (Pose) |
-| **Loader thread** | Background WAV streaming (`Streaming::loaderWorker()`). Reads next chunk from disk into inactive double-buffer slot. | `SNDFILE*` via `fileMutex`, inactive buffer write |
+| Thread            | Role                                                                                                                     | Owns                                                     |
+| ----------------- | ------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------- |
+| **Main thread**   | Startup, monitoring loop, `session.update()`, GUI render loop.                                                           | Agent object lifetimes, `EngineSession` setters          |
+| **Audio thread**  | AlloLib RT callback at real-time priority. Runs `processBlock()` every buffer. **Must never allocate, lock, or do I/O.** | `EngineState` writes, `mRenderIO`, `mLastGoodDir` (Pose) |
+| **Loader thread** | Background WAV streaming (`Streaming::loaderWorker()`). Reads next chunk from disk into inactive double-buffer slot.     | `SNDFILE*` via `fileMutex`, inactive buffer write        |
 
 **Key rules:** Config atomics are written by OSC/main, snapshotted by audio thread once per block (relaxed loads — one-block lag is inaudible). Audio thread never writes back to config. `Spatializer::computeFocusCompensation()` must only be called from the main thread, never while audio is running.
 
@@ -215,14 +218,14 @@ t=42.5s  CPU=23%  rDom=0xffff  dDom=0xffff  rBus=0x3ffff  dev=0x3ffff  mainRms=0
 [CLUSTER-RENDER] t=42.5s  top4: 0x0123 → 0x0456        ← 2+ of top-4 mains changed
 ```
 
-| Field | Meaning |
-|---|---|
-| `rBus` / `dev` | Active channel bitmask: render bus / device output. `0x3ffff` = 18 ch (16 main + 2 sub). If these differ → output-layer problem. |
-| `[RELOC]` toggling `0x3ffff ↔ 0xffff` | Sub channels turning on/off with LFE content. **Expected, not a bug.** |
-| `[CLUSTER]` | 2+ of the top-4 mains changed. Correlate with audible pops/relocations. |
-| `SpkG` | `speakerProximityCount` this 500 ms window. Nonzero = hard-floor guard is active. |
-| `NaN` | `nanGuardCount`. Should be 0. |
-| `CPU` | Wall-clock callback load as `elapsed_µs / block_budget_µs`, capped at 2.0. |
+| Field                                 | Meaning                                                                                                                          |
+| ------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| `rBus` / `dev`                        | Active channel bitmask: render bus / device output. `0x3ffff` = 18 ch (16 main + 2 sub). If these differ → output-layer problem. |
+| `[RELOC]` toggling `0x3ffff ↔ 0xffff` | Sub channels turning on/off with LFE content. **Expected, not a bug.**                                                           |
+| `[CLUSTER]`                           | 2+ of the top-4 mains changed. Correlate with audible pops/relocations.                                                          |
+| `SpkG`                                | `speakerProximityCount` this 500 ms window. Nonzero = hard-floor guard is active.                                                |
+| `NaN`                                 | `nanGuardCount`. Should be 0.                                                                                                    |
+| `CPU`                                 | Wall-clock callback load as `elapsed_µs / block_budget_µs`, capped at 2.0.                                                       |
 
 ---
 
@@ -281,6 +284,7 @@ A second consequence: `mPrevGuardFired[si]` was written as the block-center guar
 ### Bug 10.1 — Correct fast-mover continuity anchor — PATCHED (2026-05-07)
 
 **Approach:** Inside the fast-mover render loop, capture the last sub-step's guarded position (`lastSubSafePos`, initialized to `safePos` as a safe fallback). The fast-mover branch now writes its own state block immediately after the sub-step loop:
+
 - `mPrevSafePos[si] = lastSubSafePos` — the actual last-rendered position
 - `mPrevGuardFired[si] = 0` — cleared; block-center guard state is meaningless for fast-mover blocks and must not trigger a doBlend from a wrong anchor
 - `mPrevWasFastMover[si] = 1` — new flag, set for observability and future gating
@@ -290,6 +294,7 @@ The unconditional state update block (Bug 9.1) is now guarded by `!isFastMover` 
 A new per-source state vector `mPrevWasFastMover` (same pattern as `mPrevGuardFired`) is allocated in `prepareForSources()` and defaults to 0.
 
 **Files changed:**
+
 - `source/spatial_engine/realtimeEngine/src/Spatializer.hpp`:
   - Private section: added `mPrevWasFastMover` vector with updated comment block
   - `prepareForSources()`: `mPrevWasFastMover.assign(numSources, 0u)`
@@ -331,11 +336,13 @@ A new per-source state vector `mPrevWasFastMover` (same pattern as `mPrevGuardFi
 **Approach:** Added three per-source state vectors (`mPrevSafePos`, `mPrevSafeValid`, `mPrevGuardFired`) to `Spatializer.hpp`. When Pass 2 fired on the current or previous block, the normal path splits into 4 sub-steps using `mFastMoverScratch`: first two sub-steps use `mPrevSafePos[si]` (previous block's guard-resolved position), last two use `safePos` (current block). State is updated unconditionally at the end of each source's render so fast-mover blocks also leave a valid anchor. `subFrames` hoisted above the `isFastMover` branch so both paths share it. No allocation in the audio callback.
 
 **Files changed:**
+
 - `source/spatial_engine/realtimeEngine/src/Spatializer.hpp`: state vectors (private section), `prepareForSources()` allocation, normal-path `doBlend` branch, `subFrames` hoist, end-of-source state update.
 
 **RT-safety:** Zero allocation. All state vectors are audio-thread-owned after `start()`. Negligible memory overhead (3 × numSources scalars).
 
 **Test result (2026-04-01, translab):**
+
 - Ascent: clean, no pops the whole run.
 - Swale: clean.
 - 360RA (rescale full sphere): one isolated pop ~96 s on first run; second run clean. Not attributed to this fix — insufficient evidence to act on. May be a content-specific or non-guard pop mechanism.
@@ -346,7 +353,7 @@ A new per-source state vector `mPrevWasFastMover` (same pattern as `mPrevGuardFi
 
 ### Bug 9 — Fast-mover intra-block guard-step (deferred follow-up)
 
-**Note:** The original Bug 9 diagnosis named the *fast-mover* sub-step path as the primary suspect. The normal-path fix (Bug 9.1) resolved the audible symptoms at translab before any fast-mover patch was needed, indicating the normal-path cross-block discontinuity was the dominant mechanism. The fast-mover intra-block guard step (independent guard per sub-step) is a geometrically real issue but produced no consistent audible evidence after Bug 9.1 landed.
+**Note:** The original Bug 9 diagnosis named the _fast-mover_ sub-step path as the primary suspect. The normal-path fix (Bug 9.1) resolved the audible symptoms at translab before any fast-mover patch was needed, indicating the normal-path cross-block discontinuity was the dominant mechanism. The fast-mover intra-block guard step (independent guard per sub-step) is a geometrically real issue but produced no consistent audible evidence after Bug 9.1 landed.
 
 **Deferred plan (do not implement unless pops reappear consistently in later testing):** Pre-guard both endpoints with the full guard before the sub-step loop; lerp between pre-guarded endpoints per sub-step; apply Pass 2 only (single scan, no convergence loop, no Pass 1) as a safety net inside the loop. See the previously documented rationale in git history.
 
