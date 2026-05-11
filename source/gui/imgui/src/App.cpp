@@ -584,7 +584,7 @@ void App::renderTranscodeTab() {
     std::string cmdPreview;
 
     if (mTcWorkflow == 0) {
-        if (ImGui::BeginChild("##tc0config", {0.f, 0.f}, true)) {
+        if (ImGui::BeginChild("##tc0panel", {0.f, 220.f}, true)) {
             ImGui::TextDisabled("Source");
             ImGui::SameLine(140.f);
             ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 86.f);
@@ -603,7 +603,7 @@ void App::renderTranscodeTab() {
             ImGui::SameLine();
             ImGui::TextDisabled("(auto-detect uses file extension)");
 
-            ImGui::TextDisabled("Source type");
+            ImGui::TextDisabled("Output type");
             ImGui::SameLine(140.f);
             ImGui::SetNextItemWidth(200.f);
             ImGui::Combo("##tc0outtype", &mTcOutputType, kTcOutputTypeNames, 2);
@@ -628,41 +628,20 @@ void App::renderTranscodeTab() {
             if (ImGui::IsItemHovered()) ImGui::SetTooltip(mTcOutputType == 0 ? "Expected: scene.lusid.json" : "Expected: package directory");
 
             ImGui::Spacing();
+            ImGui::Separator();
+            ImGui::Spacing();
+
             ImGui::TextDisabled("Options");
             ImGui::SameLine(140.f);
             ImGui::SetNextItemWidth(180.f);
             ImGui::Combo("##tc0lfe", &mTcLfeMode, kTcLfeModeNames, 2);
-
             ImGui::SameLine();
-            ImGui::Checkbox("Keep temp files for debugging##tc0", &mKeepTempSessions);
-        }
-        ImGui::EndChild();
+            ImGui::Checkbox("Keep temp files##tc0", &mKeepTempSessions);
 
-        {
-            std::string fmt = kTcFormatValues[mTcInFormat];
-            if (mTcInFormat == 0) {
-                std::string lower = mTcInput;
-                std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
-                fmt = (lower.size() > 4 && lower.substr(lower.size() - 4) == ".xml") ? "adm_xml" : "adm_wav";
-            }
-            const std::string outDisp = mTcOutput.empty() ? "<temp>" : mTcOutput;
-            if (mTcOutputType == 0) {
-                cmdPreview = "cult-transcoder transcode"
-                    " --in " + (mTcInput.empty() ? "<input>" : mTcInput) +
-                    " --in-format " + fmt +
-                    " --out " + outDisp +
-                    " --out-format lusid_json"
-                    " --lfe-mode " + kTcLfeModeValues[mTcLfeMode];
-            } else {
-                cmdPreview = "cult-transcoder package-adm-wav"
-                    " --in " + (mTcInput.empty() ? "<input>" : mTcInput) +
-                    " --out-package " + outDisp +
-                    " --lfe-mode " + kTcLfeModeValues[mTcLfeMode] +
-                    " --stdout-report";
-            }
-        }
+            ImGui::Spacing();
+            ImGui::Separator();
+            ImGui::Spacing();
 
-        if (ImGui::BeginChild("##tc0ctrl", {0.f, 58.f}, true)) {
             const bool canRun0 = !mTcInput.empty() && !mTcOutput.empty();
             if (!canRun0) ImGui::BeginDisabled(true);
             if (ImGui::Button("Convert", {120.f, 0.f})) {
@@ -717,13 +696,36 @@ void App::renderTranscodeTab() {
             const char* st = tcBusy ? "Running..." : mTcDone ? (mTcSuccess ? "Complete" : "Failed") : "Idle";
             const ImVec4 sc = tcBusy ? kAmber : mTcDone ? (mTcSuccess ? kGreen : kRed)
                                                          : ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled);
-            const float sw = ImGui::CalcTextSize(st).x + 20.f;
-            ImGui::SameLine(ImGui::GetContentRegionAvail().x + ImGui::GetCursorPosX() - sw);
-            ImGui::TextColored(sc, "Status: %s", st);
+            ImGui::SameLine();
+            ImGui::TextColored(sc, "%s", st);
         }
         ImGui::EndChild();
+
+        {
+            std::string fmt = kTcFormatValues[mTcInFormat];
+            if (mTcInFormat == 0) {
+                std::string lower = mTcInput;
+                std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
+                fmt = (lower.size() > 4 && lower.substr(lower.size() - 4) == ".xml") ? "adm_xml" : "adm_wav";
+            }
+            const std::string outDisp = mTcOutput.empty() ? "<temp>" : mTcOutput;
+            if (mTcOutputType == 0) {
+                cmdPreview = "cult-transcoder transcode"
+                    " --in " + (mTcInput.empty() ? "<input>" : mTcInput) +
+                    " --in-format " + fmt +
+                    " --out " + outDisp +
+                    " --out-format lusid_json"
+                    " --lfe-mode " + kTcLfeModeValues[mTcLfeMode];
+            } else {
+                cmdPreview = "cult-transcoder package-adm-wav"
+                    " --in " + (mTcInput.empty() ? "<input>" : mTcInput) +
+                    " --out-package " + outDisp +
+                    " --lfe-mode " + kTcLfeModeValues[mTcLfeMode] +
+                    " --stdout-report";
+            }
+        }
     } else {
-        if (ImGui::BeginChild("##tc1config", {0.f, 0.f}, true)) {
+        if (ImGui::BeginChild("##tc1panel", {0.f, 260.f}, true)) {
             ImGui::TextDisabled("Source");
             ImGui::SameLine(140.f);
             ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 86.f);
@@ -765,6 +767,9 @@ void App::renderTranscodeTab() {
             }
 
             ImGui::Spacing();
+            ImGui::Separator();
+            ImGui::Spacing();
+
             ImGui::TextDisabled("Output");
             ImGui::SameLine(140.f);
             ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 86.f);
@@ -788,50 +793,17 @@ void App::renderTranscodeTab() {
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Expected: ADM BWF/WAV output");
 
             ImGui::Spacing();
+            ImGui::Separator();
+            ImGui::Spacing();
+
             ImGui::TextDisabled("Options");
             ImGui::SameLine(140.f);
-            ImGui::Checkbox("Keep temp files for debugging##tc1", &mKeepTempSessions);
+            ImGui::Checkbox("Keep temp files##tc1", &mKeepTempSessions);
 
             ImGui::Spacing();
-            ImGui::SameLine(140.f);
-            if (ImGui::TreeNode("Advanced / Experimental Options")) {
-                ImGui::TextDisabled("DBMD source");
-                ImGui::SameLine(140.f);
-                ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 86.f);
-                ImGui::InputText("##tc1dbmd", &mTcAdmDbmdSrc);
-                ImGui::SameLine();
-                if (ImGui::Button("Browse##tc1dbmd")) {
-                    const std::string p = pickFile("Select DBMD Source", {"*.wav", "*.bin"}, "WAV/BIN files");
-                    if (!p.empty()) mTcAdmDbmdSrc = p;
-                }
-                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Extracts/injects Dolby dbmd chunk (experimental)");
+            ImGui::Separator();
+            ImGui::Spacing();
 
-                ImGui::TextDisabled("Metadata post-data");
-                ImGui::SameLine(140.f);
-                ImGui::Checkbox("Reorder WAV chunks for Dolby tool compatibility##tc1mpd", &mTcAdmMetadataPostData);
-                if (ImGui::IsItemHovered()) ImGui::SetTooltip("writes JUNK/fmt/data/axml/chna order (experimental)");
-
-                ImGui::TreePop();
-            }
-        }
-        ImGui::EndChild();
-
-        {
-            cmdPreview = "cult-transcoder adm-author";
-            if (mTcAdmInputMode == 0) {
-                cmdPreview += " --lusid " + (mTcAdmLusid.empty() ? "<scene.lusid.json>" : mTcAdmLusid);
-                cmdPreview += " --wav-dir " + (mTcAdmWavDir.empty() ? "<wav-dir>" : mTcAdmWavDir);
-            } else {
-                cmdPreview += " --lusid-package " + (mTcAdmLusidPkg.empty() ? "<package-dir>" : mTcAdmLusidPkg);
-            }
-            cmdPreview += " --out-xml " + (mTcAdmOutXml.empty() ? "<export.adm.xml>" : mTcAdmOutXml);
-            cmdPreview += " --out-wav " + (mTcAdmOutWav.empty() ? "<export.wav>" : mTcAdmOutWav);
-            cmdPreview += " --stdout-report";
-            if (!mTcAdmDbmdSrc.empty()) cmdPreview += " --dbmd-source " + mTcAdmDbmdSrc;
-            if (mTcAdmMetadataPostData) cmdPreview += " --metadata-post-data";
-        }
-
-        if (ImGui::BeginChild("##tc1ctrl", {0.f, 58.f}, true)) {
             const bool canRun1 = !mTcAdmOutXml.empty() && !mTcAdmOutWav.empty() &&
                 (mTcAdmInputMode == 0 ? (!mTcAdmLusid.empty() && !mTcAdmWavDir.empty())
                                       : !mTcAdmLusidPkg.empty());
@@ -875,11 +847,25 @@ void App::renderTranscodeTab() {
             const char* st = tcBusy ? "Running..." : mTcDone ? (mTcSuccess ? "Complete" : "Failed") : "Idle";
             const ImVec4 sc = tcBusy ? kAmber : mTcDone ? (mTcSuccess ? kGreen : kRed)
                                                          : ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled);
-            const float sw = ImGui::CalcTextSize(st).x + 20.f;
-            ImGui::SameLine(ImGui::GetContentRegionAvail().x + ImGui::GetCursorPosX() - sw);
-            ImGui::TextColored(sc, "Status: %s", st);
+            ImGui::SameLine();
+            ImGui::TextColored(sc, "%s", st);
         }
         ImGui::EndChild();
+
+        {
+            cmdPreview = "cult-transcoder adm-author";
+            if (mTcAdmInputMode == 0) {
+                cmdPreview += " --lusid " + (mTcAdmLusid.empty() ? "<scene.lusid.json>" : mTcAdmLusid);
+                cmdPreview += " --wav-dir " + (mTcAdmWavDir.empty() ? "<wav-dir>" : mTcAdmWavDir);
+            } else {
+                cmdPreview += " --lusid-package " + (mTcAdmLusidPkg.empty() ? "<package-dir>" : mTcAdmLusidPkg);
+            }
+            cmdPreview += " --out-xml " + (mTcAdmOutXml.empty() ? "<export.adm.xml>" : mTcAdmOutXml);
+            cmdPreview += " --out-wav " + (mTcAdmOutWav.empty() ? "<export.wav>" : mTcAdmOutWav);
+            cmdPreview += " --stdout-report";
+            if (!mTcAdmDbmdSrc.empty()) cmdPreview += " --dbmd-source " + mTcAdmDbmdSrc;
+            if (mTcAdmMetadataPostData) cmdPreview += " --metadata-post-data";
+        }
     }
 
     ImGui::Spacing();
@@ -1445,11 +1431,10 @@ void App::renderOfflineRenderTab() {
         ImGui::Spacing();
         ImGui::TextColored({1.f, 0.8f, 0.2f, 1.f}, "UNDER CONSTRUCTION");
         ImGui::Spacing();
-        ImGui::TextWrapped(
+        ImGui::TextColored({1.f, 1.f, 1.f, 1.f},
             "Offline rendering is being rebuilt to match Spatial Root's realtime ADM/LUSID "
             "behavior and device-indexed output routing. "
-            "Rendering controls are intentionally hidden until this path is validated."
-        );
+            "Rendering controls are intentionally hidden until this path is validated.");
         ImGui::Spacing();
         ImGui::Separator();
         return;
