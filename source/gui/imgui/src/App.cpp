@@ -500,13 +500,13 @@ void App::renderEngineTab() {
         ImGui::TextDisabled("DBAP FOCUS");
         ImGui::SameLine(160.f);
         ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 70.f);
-        if (ImGui::SliderFloat("##focus", &mFocus, 0.2f, 5.0f, "%.2f")) {
+        if (ImGui::SliderFloat("##focus", &mFocus, 0.1f, 5.0f, "%.2f")) {
             if (isRunning) mSession->setDbapFocus(mFocus);
         }
         ImGui::SameLine();
         ImGui::SetNextItemWidth(60.f);
         if (ImGui::InputFloat("##focusinput", &mFocus, 0.f, 0.f, "%.2f")) {
-            mFocus = std::clamp(mFocus, 0.2f, 5.0f);
+            mFocus = std::clamp(mFocus, 0.1f, 5.0f);
             if (isRunning) mSession->setDbapFocus(mFocus);
         }
 

@@ -98,10 +98,25 @@ private:
 // consistent clamping regardless of call site.
 // ─────────────────────────────────────────────────────────────────────────────
 
-static float clampDb(float dB)       { return std::max(-60.0f, std::min(12.0f, dB)); }
-static float clampFocus(float f)     { return std::max(0.1f, f); }
+static float clampDb(float dB)
+{
+    if (!std::isfinite(dB)) return -60.0f;
+    return std::max(-60.0f, std::min(12.0f, dB));
+}
+
+static float clampFocus(float f)
+{
+    if (!std::isfinite(f)) return 1.5f;
+    return std::max(0.1f, std::min(5.0f, f));
+}
+
 static float dbToLinear(float dB)    { return std::pow(10.0f, dB / 20.0f); }
-static float linearToDb(float lin)   { return (lin <= 0.0f) ? -60.0f : 20.0f * std::log10(lin); }
+
+static float linearToDb(float lin)
+{
+    if (!std::isfinite(lin)) return (lin > 0.0f) ? 12.0f : -60.0f;
+    return (lin <= 0.0f) ? -60.0f : 20.0f * std::log10(lin);
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 

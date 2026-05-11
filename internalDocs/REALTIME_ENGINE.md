@@ -117,7 +117,7 @@ Speaker layouts: `source/speaker_layouts/translab-sono-layout.json` (primary tes
 
 | File                                      | Role                                                                                                                                                                                                    |
 | ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `source/gui/imgui/src/App.hpp` / `App.cpp`       | ImGui + GLFW desktop app. Owns `EngineSession`. `onStart()` always calls `resetRuntimeToDefaults()` before launching. Controls engine via direct C++ setters — not OSC. Two tabs: ENGINE and TRANSCODE. |
+| `source/gui/imgui/src/App.hpp` / `App.cpp`       | ImGui + GLFW desktop app. Owns `EngineSession`. Staged runtime params are preserved on Start (no forced reset). Controls engine via direct C++ setters — not OSC. Two tabs: ENGINE and TRANSCODE. |
 | `source/gui/imgui/src/SubprocessRunner.hpp/.cpp` | Runs `cult-transcoder` subprocess for ADM WAV → LUSID scene conversion.                                                                                                                                 |
 | `source/gui/imgui/src/main.cpp`                  | GLFW window setup, render loop, calls `App::tick()` each frame.                                                                                                                                         |
 
@@ -478,7 +478,7 @@ OSC is the **secondary** control surface (primary is direct `EngineSession` sett
 | Parameter         | OSC Address                | Type         | Range   | Default | Notes                                          |
 | ----------------- | -------------------------- | ------------ | ------- | ------- | ---------------------------------------------- |
 | Master Gain dB    | `/realtime/gain_db`        | float (dB)   | -60–+12 | 0.0     | Master gain; converted to linear at callback   |
-| DBAP Focus        | `/realtime/focus`          | float        | 0.2–5.0 | 1.5     | DBAP rolloff exponent                          |
+| DBAP Focus        | `/realtime/focus`          | float        | 0.1–5.0 | 1.5     | DBAP rolloff exponent                          |
 | Speaker Mix dB    | `/realtime/speaker_mix_db` | float (dB)   | -60–+12 | 0.0     | Post-DBAP main trim                            |
 | Sub Mix dB        | `/realtime/sub_mix_db`     | float (dB)   | -60–+12 | 0.0     | Post-DBAP sub trim                             |
 | Auto-Compensation | `/realtime/auto_comp`      | float (bool) | 0/1     | 0       | Focus auto-compensation                        |
