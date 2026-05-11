@@ -280,7 +280,7 @@ Implementation: `SpatialRootPaths::appSettingsRoot()` / `DefaultLayoutManager`.
 | Empty scene / no frames after transcoding     | Check ADM XML format — run `cult-transcoder` with verbose output                                                            |
 | `cult-transcoder` not found                   | Build with `./build.sh --cult-only`, or set `SPATIALROOT_CULT_TRANSCODER=/path/to/cult-transcoder`                         |
 | Transcoder tab shows success but no file      | Current GUI now verifies expected output files before reporting success; if this still happens, treat it as a bug          |
-| `package-adm-wav` fails after a long split run | Current known limit: GUI pass preserved the workflow, but observed CLI smoke test still fails on `CANYON-ATMOS-LFE.wav` with `Failed while writing package stems`; treat as backend follow-up |
+| `package-adm-wav` fails before or during stem writing | Check free disk space first. Large Atmos package generation writes one mono float32 stem per node and may require several GiB of free space. Current CULT now fails early with an estimated `need/have` disk-space message when possible. |
 | Confusing old data folder references          | Use `data/sourceData` and `data/processedData` as the canonical active paths; treat `data/tmpProccessedData` as temp/legacy |
 | LFE stem missing / wrong                      | Check `--lfe-mode` flag. `hardcoded` = channel 4; `speaker-label` = ADM label detection                                     |
 | `ModuleNotFoundError: No module named 'lxml'` | You're running archived Python code. Use the current C++ toolchain.                                                         |

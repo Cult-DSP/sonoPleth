@@ -5,6 +5,40 @@
 
 ---
 
+## Release-Hardening Audit — CULT package-adm-wav Backend Bug Pass (May 11, 2026)
+
+**Status:** Complete. Small backend fix only; no GUI redesign, no EngineSession/CULT ownership changes.
+
+**Root cause:**
+
+- The failing `package-adm-wav` runs were not caused by the recent GUI/path audits or by bad GUI arguments.
+- Reproduced failures on `data/sourceData/CANYON-ATMOS-LFE.wav` and `data/sourceData/ASCENT-ATMOS-LFE.wav` occurred on a nearly full volume (`/System/Volumes/Data` had ~148–170 MiB free).
+- `package-adm-wav` needs to write one mono float32 stem per output node, so large Atmos sources can require several GiB of temporary/package output.
+- Before this pass, the splitter only surfaced the generic close-time error `Failed while writing package stems`, which obscured the actual cause.
+
+**What changed:**
+
+- `internal/cult_transcoder/src/packaging/adm_package.cpp`
+  - added a disk-space preflight before package temp-dir creation and stem writing
+  - estimates required bytes from `frameCount * stemCount` plus a small metadata budget
+  - resolves space against the nearest existing parent directory of the requested package output
+  - fails early with a specific error such as `Insufficient disk space for package stems at '...' (need about 4.4 GiB, have 148.1 MiB)`
+  - improved split/write error propagation so stream-write and close failures include the specific stem path and frame context instead of a generic package-level message
+
+**Validation:**
+
+- `./build.sh --gui` passed after the backend fix.
+- Scene JSON regression check passed again on `data/sourceData/CANYON-ATMOS-LFE.wav`.
+- `package-adm-wav` now fails early and clearly on large Atmos sources when disk space is insufficient, both with and without spaces in output paths.
+- A tiny authored ADM WAV roundtrip package test passed via the CLI, including an output package path with spaces.
+
+**Conclusion:**
+
+- This was not a recent Spatial Root regression in CLI argument wiring or GUI packaging/path handling.
+- `package-adm-wav` remains functionally working, but large-package generation is constrained by available disk space and should surface that requirement clearly in release-hardening docs/testing.
+
+---
+
 ## Release-Hardening Audit — Transcoder GUI Bug Pass (May 11, 2026)
 
 **Status:** Complete. GUI-only fixes; no `EngineSession` or CULT bridge changes.
