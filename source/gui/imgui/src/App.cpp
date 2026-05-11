@@ -183,6 +183,20 @@ void App::tickEngine() {
             if (!mTcSuccess) mLastFailureHasDiagnostics = true;
         }
     }
+
+    const bool orWasRunning = mOrRunning;
+    mOrRunning = mOrRunner.isRunning();
+    if (orWasRunning && !mOrRunning) {
+        mOrDone    = true;
+        mOrSuccess = (mOrRunner.exitCode() == 0);
+        if (mOrSuccess) {
+            appendOrLog("[GUI] Offline render complete. Exit code 0.");
+        } else {
+            appendOrLog("[GUI] Offline render FAILED. Exit code " +
+                        std::to_string(mOrRunner.exitCode()) +
+                        ". Check log above for details.");
+        }
+    }
 }
 
 void App::requestShutdown() {
@@ -202,6 +216,11 @@ void App::requestShutdown() {
         appendEngineLog("[GUI] Waiting for manual transcode to finish before cleanup...",
                         {1.f, 0.8f, 0.2f, 1.f});
         mTcRunner.wait();
+    }
+    if (mOrRunner.isRunning()) {
+        appendEngineLog("[GUI] Waiting for offline render to finish before cleanup...",
+                        {1.f, 0.8f, 0.2f, 1.f});
+        mOrRunner.wait();
     }
     cleanupOwnedTempSessions(true);
 }
@@ -248,6 +267,10 @@ void App::renderUI() {
         }
         if (ImGui::BeginTabItem("TRANSCODE")) {
             renderTranscodeTab();
+            ImGui::EndTabItem();
+        }
+        if (ImGui::BeginTabItem("OFFLINE RENDER")) {
+            renderOfflineRenderTab();
             ImGui::EndTabItem();
         }
         ImGui::EndTabBar();
@@ -1307,6 +1330,16 @@ std::string App::findCultTranscoder() const {
     return "";
 }
 
+std::string App::findSpatialRenderer() const {
+    std::string candidate = resolveProjectPath(
+        "build/source/spatial_engine/spatialRender/spatialroot_spatial_render");
+#ifdef _WIN32
+    candidate += ".exe";
+#endif
+    if (fs::exists(candidate)) return candidate;
+    return "";
+}
+
 std::string App::transcodeOutputPath(const std::string& admPath) const {
     const fs::path p(admPath);
     return resolveProjectPath("data/processedData/stageForRender/" + p.stem().string() + ".lusid.json");
@@ -1459,6 +1492,339 @@ void App::appendTcLog(const std::string& line) {
     std::lock_guard<std::mutex> lock(mTcLogMutex);
     mTcLog.push_back({color, line});
     if (mTcLog.size() > 2000) mTcLog.pop_front();
+}
+
+void App::appendOrLog(const std::string& line) {
+    ImVec4 color = {0.85f, 0.85f, 0.85f, 1.f};
+    std::string lower = line;
+    std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
+    if (lower.find("error") != std::string::npos)      color = {1.f,  0.35f, 0.35f, 1.f};
+    else if (lower.find("warn") != std::string::npos)  color = {1.f,  0.8f,  0.2f,  1.f};
+    else if (lower.find("done") != std::string::npos)  color = {0.3f, 0.9f,  0.3f,  1.f};
+    else if (lower.find("complete") != std::string::npos) color = {0.3f, 0.9f, 0.3f, 1.f};
+
+    std::lock_guard<std::mutex> lock(mOrLogMutex);
+    mOrLog.push_back({color, line});
+    if (mOrLog.size() > 2000) mOrLog.pop_front();
+}
+
+void App::renderOfflineRenderTab() {
+    const ImVec4 kGreen = {0.20f, 0.62f, 0.25f, 1.f};
+    const ImVec4 kAmber = {0.70f, 0.45f, 0.08f, 1.f};
+    const ImVec4 kRed   = {0.72f, 0.18f, 0.15f, 1.f};
+    const bool orBusy = mOrRunner.isRunning();
+
+    std::string cmdPreview;
+
+    if (ImGui::BeginTabBar("##or_mode")) {
+
+        // ── Tab 0: ADM WAV via CULT ──────────────────────────────────────────
+        if (ImGui::BeginTabItem("ADM WAV Offline Render (Experimental)")) {
+            if (ImGui::BeginChild("##or0config", {0.f, 220.f}, true)) {
+                ImGui::TextDisabled("ADM WAV OFFLINE RENDER");
+                ImGui::SameLine();
+                ImGui::TextDisabled("— ADM WAV input → CULT → LUSID scene → offline renderer → speaker WAV");
+                ImGui::Spacing();
+                ImGui::TextColored(kAmber, "Experimental:");
+                ImGui::SameLine();
+                ImGui::TextDisabled("Uses CULT to extract ADM metadata, then renders through Spatial Root's offline renderer.");
+                ImGui::Spacing();
+                if (orBusy) ImGui::BeginDisabled(true);
+
+                ImGui::TextDisabled("ADM WAV INPUT");
+                ImGui::SameLine(160.f);
+                ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 78.f);
+                ImGui::InputText("##or0adm", &mOrAdmInput);
+                ImGui::SameLine();
+                if (ImGui::Button("Browse##or0adm")) {
+                    const std::string p = pickFile("Select ADM WAV", {"*.wav"}, "WAV files");
+                    if (!p.empty()) mOrAdmInput = p;
+                }
+                if (mOrAdmInput.empty()) {
+                    ImGui::SetCursorPosX(160.f);
+                    ImGui::TextColored(kAmber, "Required: ADM BWF/WAV file (.wav)");
+                }
+
+                ImGui::TextDisabled("LAYOUT");
+                ImGui::SameLine(160.f);
+                ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 78.f);
+                ImGui::InputText("##or0layout", &mOrLayout);
+                ImGui::SameLine();
+                if (ImGui::Button("Browse##or0layout")) {
+                    const std::string p = pickFile("Select Speaker Layout", {"*.json"}, "JSON files");
+                    if (!p.empty()) mOrLayout = p;
+                }
+                if (mOrLayout.empty()) {
+                    ImGui::SetCursorPosX(160.f);
+                    ImGui::TextColored(kAmber, "Required: speaker layout JSON");
+                }
+
+                ImGui::TextDisabled("OUTPUT WAV");
+                ImGui::SameLine(160.f);
+                ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 78.f);
+                ImGui::InputText("##or0out", &mOrOutput);
+                ImGui::SameLine();
+                if (ImGui::Button("Browse##or0out")) {
+                    const std::string p = pickDirectory("Select Output Directory");
+                    if (!p.empty()) mOrOutput = (fs::path(p) / "rendered_output.wav").string();
+                }
+                if (mOrOutput.empty()) {
+                    ImGui::SetCursorPosX(160.f);
+                    ImGui::TextColored(kAmber, "Required: output WAV file path");
+                }
+
+                ImGui::Spacing();
+                ImGui::TextDisabled("KEEP TEMP DIR");
+                ImGui::SameLine(160.f);
+                ImGui::Checkbox("##or0keeptemp", &mOrKeepTempDir);
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("Preserve the temp dir created by CULT transcoding.\nDefault: deleted on success. Always preserved on failure.");
+                ImGui::SameLine(0.f, 8.f);
+                ImGui::TextDisabled("(temp dir always preserved on failure)");
+
+                if (orBusy) ImGui::EndDisabled();
+
+                ImGui::Spacing();
+                if (ImGui::TreeNode("Advanced Options##or0adv")) {
+                    if (orBusy) ImGui::BeginDisabled(true);
+
+                    ImGui::TextDisabled("CULT OVERRIDE");
+                    ImGui::SameLine(160.f);
+                    ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 78.f);
+                    ImGui::InputText("##or0cult", &mOrCultOverride);
+                    ImGui::SameLine();
+                    if (ImGui::Button("Browse##or0cult")) {
+                        const std::string p = pickFile("Select cult-transcoder Binary", {}, "All files");
+                        if (!p.empty()) mOrCultOverride = p;
+                    }
+                    ImGui::SetCursorPosX(160.f);
+                    ImGui::TextDisabled("Override cult-transcoder path (normally auto-resolved by the offline renderer)");
+
+                    ImGui::Spacing();
+                    ImGui::TextColored(kAmber, "ADM source mapping convention (offline renderer):");
+                    ImGui::SetCursorPosX(160.f);
+                    ImGui::TextDisabled("\"N.1\" -> WAV channel N-1 (0-based).  \"LFE\" -> channel 3 when >= 4 channels.");
+                    ImGui::SetCursorPosX(160.f);
+                    ImGui::TextDisabled("Sources that cannot be mapped cause a hard failure; temp dir is preserved for inspection.");
+
+                    if (orBusy) ImGui::EndDisabled();
+                    ImGui::TreePop();
+                }
+            }
+            ImGui::EndChild();
+
+            // Build ADM command preview
+            {
+                const std::string rendererPath = findSpatialRenderer();
+                const std::string rendererDisp = rendererPath.empty() ? "<spatialroot_spatial_render>" : rendererPath;
+                const std::string admDisp    = mOrAdmInput.empty()  ? "<input.adm.wav>" : mOrAdmInput;
+                const std::string layoutDisp = mOrLayout.empty()    ? "<layout.json>"   : mOrLayout;
+                const std::string outDisp    = mOrOutput.empty()    ? "<output.wav>"    : mOrOutput;
+                cmdPreview = rendererDisp +
+                    " --adm "    + admDisp +
+                    " --layout " + layoutDisp +
+                    " --out "    + outDisp;
+                if (mOrKeepTempDir) cmdPreview += " --keep-temp-dir";
+                if (!mOrCultOverride.empty()) cmdPreview += " --cult-transcoder " + mOrCultOverride;
+            }
+
+            // ── Run controls for ADM mode ────────────────────────────────────
+            if (ImGui::BeginChild("##or0ctrl", {0.f, 58.f}, true)) {
+                const bool canRun = !mOrAdmInput.empty() && !mOrLayout.empty() && !mOrOutput.empty();
+                if (orBusy || !canRun) ImGui::BeginDisabled(true);
+                if (ImGui::Button("Render Offline — ADM WAV", {220.f, 0.f})) {
+                    const std::string rendererBin = findSpatialRenderer();
+                    if (rendererBin.empty()) {
+                        appendOrLog("[error] spatialroot_spatial_render not found. Build with ./build.sh --offline-only");
+                    } else {
+                        mOrDone = false; mOrSuccess = false; mOrRunning = true;
+                        try { fs::create_directories(fs::path(mOrOutput).parent_path()); } catch (...) {}
+                        std::vector<std::string> args = {
+                            rendererBin,
+                            "--adm",    mOrAdmInput,
+                            "--layout", mOrLayout,
+                            "--out",    mOrOutput,
+                        };
+                        if (mOrKeepTempDir) args.push_back("--keep-temp-dir");
+                        if (!mOrCultOverride.empty()) {
+                            args.push_back("--cult-transcoder");
+                            args.push_back(mOrCultOverride);
+                        }
+                        appendOrLog("[GUI] Running spatialroot_spatial_render (ADM WAV mode)...");
+                        mOrRunner.start(args, [this](const std::string& line) { appendOrLog(line); });
+                    }
+                }
+                if (orBusy || !canRun) ImGui::EndDisabled();
+
+                if (!canRun && !orBusy) {
+                    ImGui::SameLine();
+                    ImGui::TextColored(kAmber, "Fill required fields above to enable render.");
+                }
+
+                const char* st = orBusy ? "Running..." : mOrDone ? (mOrSuccess ? "Complete" : "Failed") : "Idle";
+                const ImVec4 sc = orBusy ? kAmber : mOrDone ? (mOrSuccess ? kGreen : kRed)
+                                                             : ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled);
+                const float sw = ImGui::CalcTextSize(st).x + 20.f;
+                ImGui::SameLine(ImGui::GetContentRegionAvail().x + ImGui::GetCursorPosX() - sw);
+                ImGui::TextColored(sc, "●  %s", st);
+            }
+            ImGui::EndChild();
+
+            ImGui::EndTabItem();
+        }
+
+        // ── Tab 1: LUSID Package Render ──────────────────────────────────────
+        if (ImGui::BeginTabItem("LUSID Package Render")) {
+            if (ImGui::BeginChild("##or1config", {0.f, 160.f}, true)) {
+                ImGui::TextDisabled("LUSID PACKAGE RENDER");
+                ImGui::SameLine();
+                ImGui::TextDisabled("— LUSID package (scene.lusid.json + mono stems) → offline renderer → speaker WAV");
+                ImGui::Spacing();
+                if (orBusy) ImGui::BeginDisabled(true);
+
+                ImGui::TextDisabled("LUSID PACKAGE");
+                ImGui::SameLine(160.f);
+                ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 78.f);
+                ImGui::InputText("##or1pkg", &mOrLusidPackage);
+                ImGui::SameLine();
+                if (ImGui::Button("Browse##or1pkg")) {
+                    const std::string p = pickDirectory("Select LUSID Package Directory");
+                    if (!p.empty()) mOrLusidPackage = p;
+                }
+                if (mOrLusidPackage.empty()) {
+                    ImGui::SetCursorPosX(160.f);
+                    ImGui::TextColored(kAmber, "Required: directory containing scene.lusid.json + mono stem WAVs");
+                } else {
+                    std::error_code ec;
+                    if (!fs::exists(fs::path(mOrLusidPackage) / "scene.lusid.json", ec)) {
+                        ImGui::SetCursorPosX(160.f);
+                        ImGui::TextColored(kRed, "No scene.lusid.json found in this directory");
+                    }
+                }
+
+                ImGui::TextDisabled("LAYOUT");
+                ImGui::SameLine(160.f);
+                ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 78.f);
+                ImGui::InputText("##or1layout", &mOrLusidLayout);
+                ImGui::SameLine();
+                if (ImGui::Button("Browse##or1layout")) {
+                    const std::string p = pickFile("Select Speaker Layout", {"*.json"}, "JSON files");
+                    if (!p.empty()) mOrLusidLayout = p;
+                }
+                if (mOrLusidLayout.empty()) {
+                    ImGui::SetCursorPosX(160.f);
+                    ImGui::TextColored(kAmber, "Required: speaker layout JSON");
+                }
+
+                ImGui::TextDisabled("OUTPUT WAV");
+                ImGui::SameLine(160.f);
+                ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 78.f);
+                ImGui::InputText("##or1out", &mOrLusidOutput);
+                ImGui::SameLine();
+                if (ImGui::Button("Browse##or1out")) {
+                    const std::string p = pickDirectory("Select Output Directory");
+                    if (!p.empty()) mOrLusidOutput = (fs::path(p) / "rendered_output.wav").string();
+                }
+                if (mOrLusidOutput.empty()) {
+                    ImGui::SetCursorPosX(160.f);
+                    ImGui::TextColored(kAmber, "Required: output WAV file path");
+                }
+
+                if (orBusy) ImGui::EndDisabled();
+            }
+            ImGui::EndChild();
+
+            // Build LUSID command preview
+            {
+                const std::string rendererPath = findSpatialRenderer();
+                const std::string rendererDisp = rendererPath.empty() ? "<spatialroot_spatial_render>" : rendererPath;
+                const fs::path pkgPath = mOrLusidPackage.empty() ? fs::path("<package-dir>") : fs::path(mOrLusidPackage);
+                const std::string sceneDisp  = (pkgPath / "scene.lusid.json").string();
+                const std::string layoutDisp = mOrLusidLayout.empty()  ? "<layout.json>" : mOrLusidLayout;
+                const std::string outDisp    = mOrLusidOutput.empty()  ? "<output.wav>"  : mOrLusidOutput;
+                cmdPreview = rendererDisp +
+                    " --positions " + sceneDisp +
+                    " --sources "   + (mOrLusidPackage.empty() ? "<package-dir>" : mOrLusidPackage) +
+                    " --layout "    + layoutDisp +
+                    " --out "       + outDisp;
+            }
+
+            // ── Run controls for LUSID mode ──────────────────────────────────
+            if (ImGui::BeginChild("##or1ctrl", {0.f, 58.f}, true)) {
+                std::error_code ec;
+                const bool hasScene = !mOrLusidPackage.empty() &&
+                    fs::exists(fs::path(mOrLusidPackage) / "scene.lusid.json", ec);
+                const bool canRun = hasScene && !mOrLusidLayout.empty() && !mOrLusidOutput.empty();
+                if (orBusy || !canRun) ImGui::BeginDisabled(true);
+                if (ImGui::Button("Render Offline — LUSID Package", {240.f, 0.f})) {
+                    const std::string rendererBin = findSpatialRenderer();
+                    if (rendererBin.empty()) {
+                        appendOrLog("[error] spatialroot_spatial_render not found. Build with ./build.sh --offline-only");
+                    } else {
+                        mOrDone = false; mOrSuccess = false; mOrRunning = true;
+                        try { fs::create_directories(fs::path(mOrLusidOutput).parent_path()); } catch (...) {}
+                        const std::string scenePath = (fs::path(mOrLusidPackage) / "scene.lusid.json").string();
+                        std::vector<std::string> args = {
+                            rendererBin,
+                            "--positions", scenePath,
+                            "--sources",   mOrLusidPackage,
+                            "--layout",    mOrLusidLayout,
+                            "--out",       mOrLusidOutput,
+                        };
+                        appendOrLog("[GUI] Running spatialroot_spatial_render (LUSID package mode)...");
+                        mOrRunner.start(args, [this](const std::string& line) { appendOrLog(line); });
+                    }
+                }
+                if (orBusy || !canRun) ImGui::EndDisabled();
+
+                if (!canRun && !orBusy) {
+                    ImGui::SameLine();
+                    ImGui::TextColored(kAmber, "Fill required fields above to enable render.");
+                }
+
+                const char* st = orBusy ? "Running..." : mOrDone ? (mOrSuccess ? "Complete" : "Failed") : "Idle";
+                const ImVec4 sc = orBusy ? kAmber : mOrDone ? (mOrSuccess ? kGreen : kRed)
+                                                             : ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled);
+                const float sw = ImGui::CalcTextSize(st).x + 20.f;
+                ImGui::SameLine(ImGui::GetContentRegionAvail().x + ImGui::GetCursorPosX() - sw);
+                ImGui::TextColored(sc, "●  %s", st);
+            }
+            ImGui::EndChild();
+
+            ImGui::EndTabItem();
+        }
+
+        ImGui::EndTabBar();
+    }
+
+    // ── Command preview (shared, updated by whichever tab is active) ──────────
+    ImGui::Spacing();
+    ImGui::TextDisabled("CMD");
+    ImGui::SameLine(60.f);
+    ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
+    ImGui::PushStyleColor(ImGuiCol_FrameBg, {0.08f, 0.08f, 0.08f, 1.f});
+    ImGui::InputText("##orcmdpreview", &cmdPreview, ImGuiInputTextFlags_ReadOnly);
+    ImGui::PopStyleColor();
+    ImGui::Spacing();
+
+    // ── Offline render log ────────────────────────────────────────────────────
+    const float logH = ImGui::GetContentRegionAvail().y;
+    if (ImGui::BeginChild("##orlogcard", {0.f, logH}, true)) {
+        ImGui::TextDisabled("OFFLINE RENDER LOG");
+        ImGui::Spacing();
+        std::deque<LogEntry> orLogSnapshot;
+        {
+            std::lock_guard<std::mutex> lock(mOrLogMutex);
+            orLogSnapshot = mOrLog;
+        }
+        if (ImGui::BeginChild("##orlog", {0.f, ImGui::GetContentRegionAvail().y}, false,
+                              ImGuiWindowFlags_HorizontalScrollbar)) {
+            for (const auto& entry : orLogSnapshot) ImGui::TextColored(entry.color, "%s", entry.text.c_str());
+            if (mOrLogAutoScroll && ImGui::GetScrollY() >= ImGui::GetScrollMaxY() - 20.f) ImGui::SetScrollHereY(1.f);
+        }
+        ImGui::EndChild();
+    }
+    ImGui::EndChild();
 }
 
 const char* App::stateName(AppState s) {

@@ -123,6 +123,30 @@ private:
     bool                 mEngineLogAutoScroll = true;
     // Note: mEngineLog is only written from the main thread.
 
+    // ── Offline Render panel state ────────────────────────────────────────
+
+    // ADM WAV mode fields
+    std::string      mOrAdmInput;       // ADM WAV path
+    std::string      mOrLayout;         // speaker layout JSON
+    std::string      mOrOutput;         // output WAV path
+    std::string      mOrCultOverride;   // optional --cult-transcoder path
+    bool             mOrKeepTempDir = false;
+
+    // LUSID package mode fields
+    std::string      mOrLusidPackage;   // directory containing scene.lusid.json + stems
+    std::string      mOrLusidLayout;    // speaker layout JSON
+    std::string      mOrLusidOutput;    // output WAV path
+
+    SubprocessRunner mOrRunner;
+    bool             mOrRunning  = false;
+    bool             mOrDone     = false;
+    bool             mOrSuccess  = false;
+
+    // Offline render log — written from mOrRunner background thread → needs mutex.
+    std::deque<LogEntry> mOrLog;
+    std::mutex           mOrLogMutex;
+    bool                 mOrLogAutoScroll = true;
+
     // ── Transcode panel state ─────────────────────────────────────────────
     int              mTcWorkflow = 0;   // 0=ADM→LUSID Scene, 1=ADM WAV→LUSID Package, 2=LUSID→ADM Export
 
@@ -219,6 +243,7 @@ private:
     void renderUI();
     void renderEngineTab();
     void renderTranscodeTab();
+    void renderOfflineRenderTab();
 
     // Engine lifecycle helpers
     void onStart();
@@ -239,6 +264,7 @@ private:
     // Path helpers
     std::string resolveProjectPath(const std::string& relPath) const;
     std::string findCultTranscoder() const;
+    std::string findSpatialRenderer() const;
     std::string transcodeOutputPath(const std::string& admPath) const;
     std::filesystem::path tempSessionsRoot() const;
     std::filesystem::path createOwnedTempSession(const std::string& sessionType,
@@ -268,6 +294,8 @@ private:
     // Log helpers (main thread only for mEngineLog)
     void appendEngineLog(const std::string& text,
                          ImVec4 color = {0.85f, 0.85f, 0.85f, 1.f});
+    // Thread-safe (called from mOrRunner background thread)
+    void appendOrLog(const std::string& line);
     // Appends a pre-formatted failure diagnostic block (from getFailureDiagnostics())
     // to the engine log, splitting on newlines and colour-coding header/body lines.
     void appendFailureDiagnostics(const std::string& diagnostics);
