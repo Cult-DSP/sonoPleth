@@ -74,6 +74,14 @@ add_executable(spatialroot_gui
     ${IMGUI_SOURCES}
 )
 
+if(APPLE)
+    set(SPATIALROOT_ICON "${CMAKE_CURRENT_SOURCE_DIR}/resources/SpatialRootApp.icns")
+    set_source_files_properties(${SPATIALROOT_ICON} PROPERTIES
+        MACOSX_PACKAGE_LOCATION "Resources"
+    )
+    target_sources(spatialroot_gui PRIVATE ${SPATIALROOT_ICON})
+endif()
+
 set_target_properties(spatialroot_gui PROPERTIES OUTPUT_NAME "Spatial Root")
 
 if(APPLE)
@@ -82,6 +90,7 @@ if(APPLE)
         MACOSX_BUNDLE_BUNDLE_NAME "Spatial Root"
         MACOSX_BUNDLE_BUNDLE_VERSION "${PROJECT_VERSION}"
         MACOSX_BUNDLE_SHORT_VERSION_STRING "${PROJECT_VERSION}"
+        MACOSX_BUNDLE_ICON_FILE "SpatialRootApp.icns"
         MACOSX_BUNDLE_INFO_PLIST
             "${CMAKE_CURRENT_SOURCE_DIR}/cmake/Info.plist.in"
     )
@@ -125,6 +134,10 @@ endif()
 if(APPLE)
     install(TARGETS spatialroot_gui
         BUNDLE DESTINATION .
+        COMPONENT SpatialRootRuntime
+    )
+    install(FILES "${SPATIALROOT_ICON}"
+        DESTINATION "${SPATIALROOT_MACOS_APP_RESOURCES_DESTINATION}"
         COMPONENT SpatialRootRuntime
     )
 else()
