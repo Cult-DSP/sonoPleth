@@ -95,7 +95,11 @@ public:
     bool init() {
         mLastError.clear();
         mBackendFamilyLabel = mAudioIO.compiledBackendName();
-        mBackendApiLabel = mAudioIO.defaultBackendApiDisplayName();
+        if (mBackendFamilyLabel == "RtAudio") {
+            mBackendApiLabel = "RtAudio API unknown";
+        } else {
+            mBackendApiLabel = mAudioIO.defaultBackendApiDisplayName();
+        }
         std::cout << "[Backend] Initializing audio device..." << std::endl;
         std::cout << "  Backend:          " << backendDisplayLabel() << std::endl;
         std::cout << "  Sample rate:      " << mConfig.sampleRate << " Hz" << std::endl;
