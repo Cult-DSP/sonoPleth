@@ -90,16 +90,6 @@ std::string truncateStatusText(const std::string& text, size_t maxLen) {
     if (maxLen <= 3) return text.substr(0, maxLen);
     return text.substr(0, maxLen - 3) + "...";
 }
-
-const char* audioBackendLabel() {
-#ifdef __APPLE__
-    return "CoreAudio";
-#elif defined(_WIN32)
-    return "WASAPI";
-#else
-    return "Linux audio";
-#endif
-}
 }
 
 constexpr int         App::kBufferSizes[];
@@ -166,8 +156,9 @@ void App::tick() {
 }
 
 void App::tickEngine() {
+    if (mSession) mStatus = mSession->queryStatus();
+
     if (mState == AppState::Running || mState == AppState::Paused) {
-        mStatus = mSession->queryStatus();
         mSession->update();
 
         DiagnosticEvents ev = mSession->consumeDiagnostics();
@@ -386,24 +377,42 @@ void App::renderEngineTab() {
     const bool audioReady = isRunning;
     const bool audioNotReady = (mState == AppState::Error);
     const ImVec4 audioStatusColor = audioReady ? kGreen : (audioNotReady ? kRed : kAmber);
-    const char* backendLabel = audioBackendLabel();
+    const std::string backendLabel = mStatus.audioBackendLabel.empty()
+                                         ? std::string("Unknown backend")
+                                         : mStatus.audioBackendLabel;
     const int bufferSize = kBufferSizes[mBufferSizeIdx];
-    const int sampleRate = 48000;
+    const int requiredSampleRate = 48000;
+    const int requestedSampleRate = mStatus.requestedSampleRate;
     const int selectedOutputChannels =
         (mDeviceIdx >= 0 && mDeviceIdx < static_cast<int>(mDeviceOutputChannels.size()))
             ? mDeviceOutputChannels[mDeviceIdx]
             : 0;
-    const double selectedDeviceSampleRate =
+    const double scannedDeviceSampleRate =
         (mDeviceIdx >= 0 && mDeviceIdx < static_cast<int>(mDeviceSampleRates.size()))
             ? mDeviceSampleRates[mDeviceIdx]
             : 0.0;
+    const double selectedDeviceSampleRate = mStatus.outputDevicePreferredSampleRateKnown
+        ? mStatus.outputDevicePreferredSampleRate
+        : scannedDeviceSampleRate;
+    const bool actualStreamRateKnown = mStatus.effectiveStreamSampleRateKnown;
+    const int actualStreamRate = actualStreamRateKnown
+        ? static_cast<int>(std::round(mStatus.effectiveStreamSampleRate))
+        : 0;
+    const std::string activeDeviceName = mStatus.outputDeviceName.empty()
+        ? (mDeviceName.empty() ? "(system default)" : mDeviceName)
+        : mStatus.outputDeviceName;
     std::string audioStatusText;
     if (audioReady) {
         std::ostringstream os;
         os << "Ready"
            << " \xC2\xB7 " << backendLabel
-           << " \xC2\xB7 " << (sampleRate / 1000) << " kHz"
-           << " \xC2\xB7 " << bufferSize;
+           << " \xC2\xB7 ";
+        if (actualStreamRateKnown) {
+            os << (actualStreamRate / 1000) << " kHz";
+        } else {
+            os << "48 kHz not confirmed";
+        }
+        os << " \xC2\xB7 " << bufferSize;
         if (selectedOutputChannels > 0) os << " \xC2\xB7 " << selectedOutputChannels << " out";
         audioStatusText = os.str();
     } else if (audioNotReady) {
@@ -499,7 +508,7 @@ void App::renderEngineTab() {
 
             ImGui::TextDisabled("STATUS");
             ImGui::Text("Realtime Audio: %s", audioReady ? "Ready" : (audioNotReady ? "Not Ready" : "Unknown"));
-            ImGui::Text("Backend: %s", backendLabel);
+            ImGui::Text("Backend: %s", backendLabel.c_str());
             ImGui::TextWrapped("Last Error: %s", mLastError.empty() ? "none" : mLastError.c_str());
             ImGui::Spacing();
 
@@ -545,37 +554,52 @@ void App::renderEngineTab() {
 
             ImGui::Spacing();
             {
-                const bool srKnown    = selectedDeviceSampleRate > 0.0;
-                const bool srOk       = srKnown && static_cast<int>(std::round(selectedDeviceSampleRate)) == 48000;
-                const bool srMismatch = srKnown && !srOk;
-                const ImVec4 srColor  = srOk ? kGreen : (srMismatch ? kRed : kAmber);
-                const char* srTitle   = srOk       ? "Sample Rate OK"
-                                      : srMismatch ? "Sample Rate Mismatch"
-                                                   : "Sample Rate Unknown";
-                std::string srDeviceStr;
-                if (srKnown) {
-                    srDeviceStr = "Device/engine: "
-                                + std::to_string(static_cast<int>(std::round(selectedDeviceSampleRate)))
-                                + " Hz";
+                const bool preferredRateKnown = selectedDeviceSampleRate > 0.0;
+                const int preferredRate = preferredRateKnown
+                    ? static_cast<int>(std::round(selectedDeviceSampleRate))
+                    : 0;
+                const bool preferredMismatch = preferredRateKnown && preferredRate != requiredSampleRate;
+                const bool srOk = actualStreamRateKnown && actualStreamRate == requiredSampleRate;
+                const bool actualMismatch = actualStreamRateKnown && actualStreamRate != requiredSampleRate;
+                const ImVec4 srColor = srOk ? kGreen : ((actualMismatch || preferredMismatch) ? kRed : kAmber);
+                const char* srTitle = srOk ? "Sample Rate OK"
+                                    : actualMismatch ? "Sample Rate Mismatch"
+                                    : "48 kHz Not Confirmed";
+                std::string preferredStr = preferredRateKnown
+                    ? ("Selected device preferred/default sample rate: "
+                       + std::to_string(preferredRate) + " Hz")
+                    : "Selected device preferred/default sample rate: unknown";
+                std::string actualStr = actualStreamRateKnown
+                    ? ("Actual stream sample rate: " + std::to_string(actualStreamRate) + " Hz")
+                    : "Actual stream sample rate: unknown";
+                std::string srDesc;
+                if (srOk) {
+                    srDesc = "Spatial Root confirmed a 48 kHz realtime stream.";
+                } else if (actualMismatch) {
+                    srDesc = "Spatial Root requires 48000 Hz. The realtime stream is running at "
+                           + std::to_string(actualStreamRate)
+                           + " Hz, so startup must fail.";
+                } else if (preferredMismatch) {
+                    srDesc = "Spatial Root requires 48000 Hz. The selected device reports a different preferred/default"
+                             " sample rate, so confirm 48 kHz in Audio MIDI Setup, JACK/PipeWire, or system audio"
+                             " settings before starting.";
                 } else {
-                    srDeviceStr = "Device/engine: unknown";
+                    srDesc = "Spatial Root requires 48000 Hz. The realtime stream rate is not confirmed until the"
+                             " backend reports it.";
                 }
-                const char* srDesc = srOk
-                    ? "Spatial Root is using the expected 48 kHz playback rate."
-                    : (srMismatch
-                        ? "Spatial Root currently expects 48000 Hz playback. Please switch the device to 48000 Hz"
-                          " in Audio MIDI Setup, JACK/PipeWire, or system audio settings, then rescan audio."
-                        : "Spatial Root expects 48000 Hz playback. If playback sounds wrong, confirm the device"
-                          " is set to 48000 Hz in Audio MIDI Setup, JACK/PipeWire, or system audio settings.");
 
                 ImGui::PushStyleColor(ImGuiCol_ChildBg,
                     ImVec4(srColor.x * 0.10f, srColor.y * 0.10f, srColor.z * 0.10f, 1.f));
-                if (ImGui::BeginChild("##srbox", {0.f, 96.f}, true,
+                if (ImGui::BeginChild("##srbox", {0.f, 132.f}, true,
                                      ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse)) {
                     ImGui::TextColored(srColor, "%s", srTitle);
-                    ImGui::Text("Required: 48000 Hz");
-                    ImGui::Text("%s", srDeviceStr.c_str());
-                    ImGui::TextWrapped("%s", srDesc);
+                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.f, 1.f, 1.f, 1.f));
+                    ImGui::Text("Required sample rate: %d Hz", requiredSampleRate);
+                    ImGui::Text("Requested engine sample rate: %d Hz", requestedSampleRate);
+                    ImGui::Text("%s", preferredStr.c_str());
+                    ImGui::Text("%s", actualStr.c_str());
+                    ImGui::TextWrapped("%s", srDesc.c_str());
+                    ImGui::PopStyleColor();
                 }
                 ImGui::EndChild();
                 ImGui::PopStyleColor();
@@ -588,10 +612,17 @@ void App::renderEngineTab() {
                 os << "Realtime Audio: "
                    << (audioReady ? "Ready" : (audioNotReady ? "Not Ready" : "Unknown")) << "\n"
                    << "Backend: " << backendLabel << "\n"
-                   << "Device: " << (mDeviceName.empty() ? "(system default)" : mDeviceName) << "\n"
+                   << "Device: " << activeDeviceName << "\n"
                    << "Output Channels: "
                    << (selectedOutputChannels > 0 ? std::to_string(selectedOutputChannels) : "unknown") << "\n"
-                   << "Sample Rate: " << sampleRate << " Hz\n"
+                   << "Required sample rate: " << requiredSampleRate << " Hz\n"
+                   << "Requested engine sample rate: " << requestedSampleRate << " Hz\n"
+                   << "Selected device preferred/default sample rate: "
+                   << (selectedDeviceSampleRate > 0.0
+                       ? std::to_string(static_cast<int>(std::round(selectedDeviceSampleRate))) + " Hz"
+                       : "unknown") << "\n"
+                   << "Actual stream sample rate: "
+                   << (actualStreamRateKnown ? std::to_string(actualStreamRate) + " Hz" : "unknown") << "\n"
                    << "Buffer: " << bufferSize << "\n"
                    << "Last Error: " << (mLastError.empty() ? "none" : mLastError);
                 ImGui::SetClipboardText(os.str().c_str());

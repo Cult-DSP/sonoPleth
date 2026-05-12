@@ -9,6 +9,7 @@
 
 #include "al/ui/al_Parameter.hpp"
 #include "al/ui/al_ParameterServer.hpp"
+#include "al/io/al_AudioIO.hpp"
 
 #include <iostream>
 #include <sstream>
@@ -448,7 +449,9 @@ bool EngineSession::start()
 
     mBackend = std::make_unique<RealtimeBackend>(mConfig, mState);
     if (!mBackend->init()) {
-        setLastError("Backend initialization failed.");
+        setLastError(mBackend->getLastError().empty()
+                         ? std::string("Backend initialization failed.")
+                         : mBackend->getLastError());
         cap.restore();
         storeFailureDiagnostics("start (audio backend init)", cap.captured());
         return false;
@@ -466,7 +469,9 @@ bool EngineSession::start()
     mStreaming->startLoader();
 
     if (!mBackend->start()) {
-        setLastError("Backend failed to start.");
+        setLastError(mBackend->getLastError().empty()
+                         ? std::string("Backend failed to start.")
+                         : mBackend->getLastError());
         // No captured output here (loader thread is running); include context only.
         storeFailureDiagnostics("start (audio stream)", "");
         mStreaming->shutdown();
@@ -546,6 +551,33 @@ EngineStatus EngineSession::queryStatus() const
     st.speakerProximityCount = mState.speakerProximityCount.load(std::memory_order_relaxed);
     st.paused = mConfig.paused.load(std::memory_order_relaxed);
     st.isExitRequested = (mBackend && !mBackend->isRunning()); 
+    st.requestedSampleRate = mConfig.sampleRate;
+    st.outputDeviceName = mConfig.outputDeviceName.empty() ? "(system default)" : mConfig.outputDeviceName;
+    if (mBackend) {
+        st.audioBackendLabel = mBackend->backendDisplayLabel();
+        st.outputDeviceName = mBackend->selectedDeviceName().empty()
+                                ? st.outputDeviceName
+                                : mBackend->selectedDeviceName();
+        st.outputDevicePreferredSampleRate = mBackend->selectedDevicePreferredSampleRate();
+        st.outputDevicePreferredSampleRateKnown = mBackend->selectedDevicePreferredSampleRateKnown();
+        st.effectiveStreamSampleRate = mBackend->effectiveStreamSampleRate();
+        st.effectiveStreamSampleRateKnown = mBackend->effectiveStreamSampleRateKnown();
+    } else {
+        const std::string backendFamily = al::AudioIO::compiledBackendName();
+        const std::string backendApi = al::AudioIO::defaultBackendApiDisplayName();
+        if (backendFamily == "RtAudio") {
+            st.audioBackendLabel =
+                (backendApi.empty() || backendApi == "Unknown")
+                    ? "RtAudio API unknown"
+                    : (backendApi == "RtAudio API unknown" ? backendApi : "RtAudio / " + backendApi);
+        } else if (!backendFamily.empty()) {
+            st.audioBackendLabel =
+                (backendApi.empty() || backendApi == "Unknown") ? backendFamily
+                                                                : backendFamily + " / " + backendApi;
+        } else {
+            st.audioBackendLabel = "Unknown backend";
+        }
+    }
     return st;
 }
 

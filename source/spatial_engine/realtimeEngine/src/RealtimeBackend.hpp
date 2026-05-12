@@ -51,6 +51,7 @@
 #include <vector>
 #include <algorithm> // std::min, std::transform
 #include <cctype>   // std::tolower (device-name comparison)
+#include <sstream>
 
 #include "al/io/al_AudioIO.hpp"
 
@@ -65,6 +66,7 @@
 
 class RealtimeBackend {
 public:
+    static constexpr int kRequiredSampleRateHz = 48000;
 
     // ── Constructor / Destructor ─────────────────────────────────────────
 
@@ -91,7 +93,11 @@ public:
     /// Initialize the audio device. Must be called before start().
     /// Returns true on success.
     bool init() {
+        mLastError.clear();
+        mBackendFamilyLabel = mAudioIO.compiledBackendName();
+        mBackendApiLabel = mAudioIO.defaultBackendApiDisplayName();
         std::cout << "[Backend] Initializing audio device..." << std::endl;
+        std::cout << "  Backend:          " << backendDisplayLabel() << std::endl;
         std::cout << "  Sample rate:      " << mConfig.sampleRate << " Hz" << std::endl;
         std::cout << "  Buffer size:      " << mConfig.bufferSize << " frames" << std::endl;
         std::cout << "  Output channels:  " << mConfig.outputChannels << std::endl;
@@ -133,6 +139,7 @@ public:
             }
 
             if (foundIdx < 0) {
+                setLastError("Selected output device was not found. " + backendContextSummary());
                 std::cerr << "[Backend] FATAL: Output device not found: \""
                           << mConfig.outputDeviceName << "\"\n"
                           << "  Available output devices (run --list-devices for full list):\n";
@@ -149,8 +156,11 @@ public:
             }
 
             al::AudioDevice selectedDev(foundIdx);
+            cacheSelectedDevice(selectedDev.name(), selectedDev.defaultSampleRate());
             const int devMaxOut = selectedDev.channelsOutMax();
             if (devMaxOut < mConfig.outputChannels) {
+                setLastError("Selected output device does not provide enough channels. "
+                             + backendContextSummary());
                 std::cerr << "[Backend] FATAL: Device \""
                           << mConfig.outputDeviceName << "\" has only "
                           << devMaxOut << " output channel(s), but the "
@@ -168,8 +178,21 @@ public:
                       << mConfig.outputChannels << " required)." << std::endl;
             mAudioIO.deviceOut(selectedDev);
         } else {
+            const al::AudioDevice defaultDev = al::AudioDevice::defaultOutput();
+            if (defaultDev.valid() && defaultDev.hasOutput()) {
+                cacheSelectedDevice(defaultDev.name(), defaultDev.defaultSampleRate());
+            } else {
+                cacheSelectedDevice("(system default)", 0.0);
+            }
             std::cout << "[Backend] No --device specified — using system "
                       << "default output device." << std::endl;
+        }
+
+        if (mSelectedDevicePreferredSampleRateKnown &&
+            static_cast<int>(std::round(mSelectedDevicePreferredSampleRate)) != kRequiredSampleRateHz) {
+            std::cerr << "[Backend] WARNING: Selected device preferred/default sample rate is "
+                      << static_cast<int>(std::round(mSelectedDevicePreferredSampleRate))
+                      << " Hz, not 48000 Hz." << std::endl;
         }
 
         // Register the static callback with 'this' as userData so we can
@@ -182,9 +205,12 @@ public:
             mConfig.outputChannels,     // output channels
             mConfig.inputChannels       // input channels
         );
+        mBackendFamilyLabel = mAudioIO.backendName();
+        mBackendApiLabel = mAudioIO.backendApiDisplayName();
 
         // Open the device (allocates hardware buffers)
         if (!mAudioIO.open()) {
+            setLastError("Backend init/open failed. " + backendContextSummary());
             std::cerr << "[Backend] ERROR: Failed to open audio device." << std::endl;
             return false;
         }
@@ -210,6 +236,8 @@ public:
         // missing speakers / wrong-channel output. This is never acceptable.
         // Refuse to start rather than run with an incorrect channel mapping.
         if (actualOutChannels < mConfig.outputChannels) {
+            setLastError("Audio device opened with insufficient output channels. "
+                         + backendContextSummary());
             std::cerr << "[Backend] FATAL: Audio device opened with only "
                       << actualOutChannels << " output channel(s), but the "
                       << "speaker layout requires " << mConfig.outputChannels
@@ -236,13 +264,30 @@ public:
     /// Start audio streaming. Returns true on success.
     bool start() {
         if (!mInitialized) {
+            setLastError("Backend start requested before initialization.");
             std::cerr << "[Backend] ERROR: Cannot start — not initialized." << std::endl;
             return false;
         }
         std::cout << "[Backend] Starting audio stream..." << std::endl;
 
         if (!mAudioIO.start()) {
+            setLastError("Audio stream start failed. " + backendContextSummary());
             std::cerr << "[Backend] ERROR: Failed to start audio stream." << std::endl;
+            return false;
+        }
+
+        captureEffectiveStreamRate();
+        if (mEffectiveStreamSampleRateKnown &&
+            static_cast<int>(std::round(mEffectiveStreamSampleRate)) != kRequiredSampleRateHz) {
+            std::ostringstream err;
+            err << "Sample rate mismatch: Spatial Root requires 48000 Hz, but the audio stream is running at "
+                << static_cast<int>(std::round(mEffectiveStreamSampleRate))
+                << " Hz. " << backendContextSummary();
+            setLastError(err.str());
+            mAudioIO.stop();
+            mAudioIO.close();
+            mInitialized = false;
+            std::cerr << "[Backend] ERROR: " << mLastError << std::endl;
             return false;
         }
 
@@ -292,6 +337,27 @@ public:
 
     /// Whether the device has been initialized.
     bool isInitialized() const { return mInitialized; }
+    const std::string& backendFamilyLabel() const { return mBackendFamilyLabel; }
+    const std::string& backendApiLabel() const { return mBackendApiLabel; }
+    std::string backendDisplayLabel() const {
+        if (mBackendFamilyLabel.empty()) return "Unknown backend";
+        if (mBackendFamilyLabel == "RtAudio") {
+            if (mBackendApiLabel.empty() || mBackendApiLabel == "Unknown")
+                return "RtAudio API unknown";
+            if (mBackendApiLabel == "RtAudio API unknown")
+                return mBackendApiLabel;
+            return "RtAudio / " + mBackendApiLabel;
+        }
+        if (mBackendApiLabel.empty() || mBackendApiLabel == "Unknown")
+            return mBackendFamilyLabel;
+        return mBackendFamilyLabel + " / " + mBackendApiLabel;
+    }
+    const std::string& selectedDeviceName() const { return mSelectedDeviceName; }
+    double selectedDevicePreferredSampleRate() const { return mSelectedDevicePreferredSampleRate; }
+    bool selectedDevicePreferredSampleRateKnown() const { return mSelectedDevicePreferredSampleRateKnown; }
+    double effectiveStreamSampleRate() const { return mEffectiveStreamSampleRate; }
+    bool effectiveStreamSampleRateKnown() const { return mEffectiveStreamSampleRateKnown; }
+    const std::string& getLastError() const { return mLastError; }
 
     // ── Access to underlying AudioIO (for future agent chaining) ─────────
 
@@ -333,6 +399,40 @@ public:
 
 
 private:
+    void setLastError(const std::string& err) { mLastError = err; }
+
+    void cacheSelectedDevice(const std::string& name, double preferredSampleRate) {
+        mSelectedDeviceName = name;
+        mSelectedDevicePreferredSampleRate = preferredSampleRate;
+        mSelectedDevicePreferredSampleRateKnown = preferredSampleRate > 0.0;
+    }
+
+    void captureEffectiveStreamRate() {
+        mEffectiveStreamSampleRate = mAudioIO.streamSampleRate();
+        mEffectiveStreamSampleRateKnown = mEffectiveStreamSampleRate > 0.0;
+    }
+
+    std::string backendContextSummary() const {
+        std::ostringstream os;
+        os << "Backend: " << backendDisplayLabel()
+           << ". Device: " << (mSelectedDeviceName.empty() ? "(system default)" : mSelectedDeviceName)
+           << ". Requested sample rate: " << mConfig.sampleRate << " Hz";
+        if (mSelectedDevicePreferredSampleRateKnown) {
+            os << ". Preferred/default sample rate: "
+               << static_cast<int>(std::round(mSelectedDevicePreferredSampleRate))
+               << " Hz";
+        } else {
+            os << ". Preferred/default sample rate: unknown";
+        }
+        if (mEffectiveStreamSampleRateKnown) {
+            os << ". Effective stream sample rate: "
+               << static_cast<int>(std::round(mEffectiveStreamSampleRate))
+               << " Hz";
+        } else {
+            os << ". Effective stream sample rate: unknown";
+        }
+        return os.str();
+    }
 
     // ── Static audio callback (C-style, required by AlloLib) ─────────────
     //
@@ -579,6 +679,14 @@ private:
     EngineState&    mState;     // Reference to shared engine state
     al::AudioIO     mAudioIO;   // AlloLib audio device wrapper
     bool            mInitialized = false;
+    std::string     mBackendFamilyLabel;
+    std::string     mBackendApiLabel;
+    std::string     mSelectedDeviceName;
+    double          mSelectedDevicePreferredSampleRate = 0.0;
+    bool            mSelectedDevicePreferredSampleRateKnown = false;
+    double          mEffectiveStreamSampleRate = 0.0;
+    bool            mEffectiveStreamSampleRateKnown = false;
+    std::string     mLastError;
 
     // ── Agent pointers (set once before start(), never changed) ──────────
     // THREADING: Set on the MAIN thread before start(). After start() these
@@ -677,4 +785,3 @@ private:
     // THREADING: audio thread only.
     std::chrono::steady_clock::time_point mCallbackStart;
 };
-

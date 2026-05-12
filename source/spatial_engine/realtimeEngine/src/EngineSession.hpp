@@ -28,6 +28,13 @@ struct EngineStatus {
     uint64_t speakerProximityCount;
     bool paused;
     bool isExitRequested; // Added for main thread polling
+    std::string audioBackendLabel;
+    int requestedSampleRate = 48000;
+    double effectiveStreamSampleRate = 0.0;
+    bool effectiveStreamSampleRateKnown = false;
+    std::string outputDeviceName;
+    double outputDevicePreferredSampleRate = 0.0;
+    bool outputDevicePreferredSampleRateKnown = false;
 };
 
 struct DiagnosticEvents {
