@@ -4,11 +4,10 @@
 
 ## next tasks
 
-- finih audio set up pannel and check for any audio driver diagnostic or sample rate issues
+- validate back end audio behavior
 
 - fix bugs in transcoder tab: 360ra -> lusid path
-
-- -packaging bugs
+- -packaging bugs + potential path bugs
 
 ## audit
 
@@ -40,20 +39,4 @@ OS AND COMPATIBILITY
 OS AND COMPATIBILITY TESTING
 PACKAGING
 
-# Future Work - move to future work md
-
-- code signing
-
-## Spatial root:
-
-- move spatial transformation math into seperate file potentially
-- make im gui look nicer, add visualizer
-- queue multiple files
-- configure dbap to have more presense in large spaces
-- allow for setting dbap focus metadata in layout or lusid
-- add binueral mixdown using ear
-
-## transcoding:
-
-- ambisonic encoding with - https://www.matthiaskronlachner.com/?p=2015
-  (standalone app + jack)
+PACKAGE and test on OS
