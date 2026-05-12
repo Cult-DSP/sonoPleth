@@ -103,6 +103,56 @@
 
 ---
 
+## Release-Hardening Audit — Sony 360RA package-adm-wav RF64 Fix (May 11, 2026)
+
+**Status:** Complete. Small CULT backend fix plus prior GUI invocation hardening; no LUSID schema, ADM parsing-model, or engine changes.
+
+**Root cause:**
+
+- The remaining Sony 360RA package failure was no longer GUI-specific once the GUI subprocess path was fixed to launch a real argv vector on POSIX.
+- `data/sourceData/360RA_test.wav` is an `RF64` ADM WAV with a `ds64` chunk.
+- `internal/cult_transcoder/src/packaging/packagingHelper.hpp` accepted `RF64`/`BW64` containers, but the lightweight package splitter header reader still trusted the 32-bit `data` chunk size and ignored `ds64`.
+- On this file, that produced a truncated `frameCount`/`dataSize` view for `package-adm-wav`, which then failed mid-split with:
+  - `package-adm-wav: Short read while splitting source WAV`
+
+**What changed:**
+
+- `source/gui/imgui/src/SubprocessRunner.cpp`
+  - POSIX subprocess launch now uses a real argv path via `posix_spawnp()` instead of flattening args into one shell string for `popen()`
+  - this preserves spaces and shell metacharacters in GUI-supplied paths and keeps GUI invocation parity with direct CLI runs
+- `source/gui/imgui/src/App.cpp`
+  - GUI transcode logging now records working directory, executable path, and `argv[i]` entries separately
+  - failure summaries now include exit code, expected output paths, and recent subprocess output tail
+- `internal/cult_transcoder/src/packaging/packagingHelper.hpp`
+  - package input inspection now reads `ds64` and uses the true 64-bit `data` size for `RF64`/`BW64` package splitting
+  - odd-byte padding now follows the effective 64-bit chunk payload size on this path
+- `internal/cult_transcoder/tests/test_packaging_helper.cpp`
+  - added an RF64 regression fixture proving `readWavSourceInfo()` honors `ds64` for package input
+
+**Validation:**
+
+- Direct scene-only CLI still passed on the Sony source:
+  - `cult-transcoder transcode --in data/sourceData/360RA_test.wav --in-format adm_wav ...`
+- Direct package CLI now passed on the Sony source:
+  - `cult-transcoder package-adm-wav --in data/sourceData/360RA_test.wav --out-package /private/tmp/sr_360ra_cli_pkg --report /private/tmp/sr_360ra_cli_pkg_report.json --stdout-report --lfe-mode hardcoded`
+- Output package contained:
+  - `scene.lusid.json`
+  - `scene_report.json`
+  - `channel_order.txt`
+  - 13 mono float32 stems (`1.1.wav` ... `13.1.wav`, with `4.1` emitted as `LFE.wav`)
+- GUI subprocess helper parity check also passed with the same `package-adm-wav` command path and output shape
+- `cmake --build build --target cult-transcoder --parallel 8` passed
+- `cmake --build build --target spatialroot_gui --parallel 8` passed
+
+**Conclusion:**
+
+- There were two separate issues on this workflow:
+  - a GUI subprocess invocation bug on POSIX
+  - a CULT `RF64`/`ds64` package-splitting bug for Sony 360RA source material
+- With both fixes in place, the GUI package path now matches the successful direct CLI behavior for `360RA_test.wav`.
+
+---
+
 ## Release-Hardening Audit — CULT package-adm-wav Backend Bug Pass (May 11, 2026)
 
 **Status:** Complete. Small backend fix only; no GUI redesign, no EngineSession/CULT ownership changes.
