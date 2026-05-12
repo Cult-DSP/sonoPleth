@@ -26,7 +26,9 @@ Three spatializers supported:
 
 Pipeline: Source WAVs + LUSID scene + Layout JSON -> compact internal bus -> layout-derived device-indexed N-channel WAV
 
-Offline output routing now preserves layout channel assignments. The renderer spatializes into a compact internal bus (`main speakers + subwoofers`), then scatters those internal channels into the final WAV using `OfflineOutputRouteMap`. Final WAV width is `max(channel) + 1`; unmapped channels are included and silent. See [REMAP.md](REMAP.md) for the shared two-space routing model.
+Offline output routing now preserves layout channel assignments. The renderer spatializes into a compact internal bus (`main speakers + subwoofers`), then scatters those internal channels into the final WAV using `OfflineOutputRouteMap`. Final WAV width is `max(channel) + 1`; unmapped channels are included and silent. See [REALTIME_ENGINE.md § Output Routing Architecture](REALTIME_ENGINE.md#output-routing-architecture) for the shared two-space routing model.
+
+**Current scope note:** the offline CLI is maintained, but the GUI's Offline Render controls remain intentionally hidden until parity and workflow validation are complete. Treat `source/spatial_engine/spatialRender/` as the offline-owned implementation surface.
 
 ### CLI Usage
 
@@ -128,9 +130,16 @@ End-of-render diagnostics (`--debug_dir` writes `render_stats.json`, `block_stat
 ### Key Source Files
 
 - `source/spatial_engine/spatialRender/SpatialRenderer.cpp/.hpp` — core renderer
+- `source/spatial_engine/spatialRender/OfflineOutputRouteMap.cpp/.hpp` — offline compact-bus to sparse-output routing
 - `source/spatial_engine/src/JSONLoader.cpp/.hpp` — LUSID scene parser
 - `source/spatial_engine/src/LayoutLoader.cpp/.hpp` — speaker layout parser
 - `source/spatial_engine/src/WavUtils.cpp/.hpp` — WAV/RF64 I/O
+
+**Ownership boundary:**
+
+- `source/spatial_engine/realtimeEngine/` owns the live playback engine
+- `source/spatial_engine/spatialRender/` owns offline rendering
+- `source/spatial_engine/src/` owns shared loaders/utilities used by both
 
 ### Algorithm Details
 

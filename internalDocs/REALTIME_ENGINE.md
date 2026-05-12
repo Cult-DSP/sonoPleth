@@ -1,13 +1,13 @@
 # Realtime Engine — Internal Reference
 
-**Last Updated:** May 11, 2026  
+**Last Updated:** May 12, 2026  
 **Source:** `source/spatial_engine/realtimeEngine/`  
 **Primary entry points:** `spatialroot_realtime` CLI binary, `source/gui/imgui/` (embeds `EngineSessionCore` in-process)
 
 All phases complete: Phases 1–10 + OSC timing fix + Phase 11 bug-fix pass.  
 See [API_internal.md](API_internal.md) for the `EngineSession` public API contract.
 
-Historical note: sections below that mention focus auto-compensation describe a removed pre-normalization subsystem. Current DBAP math and API behavior live in `dbapMath.md`, `API.md`, and `API_internal.md`.
+Historical note: the old focus auto-compensation experiment has been removed. Current DBAP math and API behavior live in `internalDocs/DBAP/dbapMath.md`, [SPATIALIZATION.md](SPATIALIZATION.md), and [API_internal.md](API_internal.md).
 
 ---
 
@@ -23,8 +23,8 @@ The engine follows a sequential agent model. Each agent owns one stage of the pr
 | 4     | Spatializer (DBAP)    | ✅ Complete | `Spatializer.hpp`                  |
 | —     | ADM Direct Streaming  | ✅ Complete | `MultichannelReader.hpp`           |
 | 5     | LFE Router            | ⏭️ Skipped  | handled inside Spatializer         |
-| 6     | Compensation and Gain | ✅ Complete | `main.cpp` + `RealtimeTypes.hpp`   |
-| 7     | Output Remap          | ✅ Complete | `OutputRemap.hpp`                  |
+| 6     | Runtime Control and Gain | ✅ Complete | `main.cpp` + `RealtimeTypes.hpp` |
+| 7     | Output Routing Architecture | ✅ Complete | `OutputRemap.hpp`            |
 | 8     | Threading and Safety  | ✅ Complete | `RealtimeTypes.hpp` (audit + docs) |
 | 9     | Init / Config         | ✅ Complete | `init.sh`, build scripts           |
 | 10    | GUI                   | ✅ Complete | `source/gui/imgui/` (ImGui + GLFW) |
@@ -293,8 +293,6 @@ Threading model: audio thread (RT, AlloLib), loader thread (background disk I/O)
 5. **Smoother feedback fix** — smoother was using its own smoothed output as input (eating itself); fixed by storing raw atomics separately
 6. **Master gain range** — expanded to 0.1–3.0 (superseded: see Bug 11.x additions below)
 
-**Phase 11 addition:** `ctrl.autoComp` wired from `mSmooth.smoothed.autoComp` in Step 3 so focus auto-compensation flag reaches `renderBlock()` correctly.
-
 **Bug 11.x additions to `processBlock()` and `stop()` (May 7, 2026):**
 
 - **Fast-path early-return (steady pause):** New block before Step 1. If fully paused (fade complete, `mPauseFade <= 0`), memset + return immediately — Spatializer is not called. Prevents anchor caching (Bug 11.5).
@@ -393,12 +391,11 @@ Threading model: audio thread (RT, AlloLib), loader thread (background disk I/O)
 
 **Phase 11 additions:**
 
-1. Focus compensation override — `autoComp` flag routes gain to `mAutoCompValue` (written by `computeFocusCompensation()`) instead of `loudspeakerMix`
-2. Minimum-distance guard (0.05 m) before DBAP — prevents Inf/NaN from coincident source-speaker positions
-3. Post-render clamp pass (±4.0f, NaN→0.0f) with `nanGuardCount` increment
-4. `mPrevFocus` member — reserved for future threshold-gated skip of `renderBuffer` when focus is static (not yet active)
+1. Minimum-distance guard (0.05 m) before DBAP — prevents Inf/NaN from coincident source-speaker positions
+2. Post-render clamp pass (±4.0f, NaN→0.0f) with `nanGuardCount` increment
+3. `mPrevFocus` member — reserved for future threshold-gated skip of `renderBuffer` when focus is static (not yet active)
 
-**DBAP normalization:** Sum of squared gains = 1. `--dbap_focus` controls distance rolloff (default 1.5).
+**DBAP focus behavior:** the current AlloLib DBAP path is not power-normalized. `--dbap_focus` changes the exponent on inverse-distance weights, which sharpens localization but also attenuates all speakers as focus rises.
 
 ---
 
@@ -406,21 +403,22 @@ Threading model: audio thread (RT, AlloLib), loader thread (background disk I/O)
 
 > Consolidated from prior agent docs (subfolders removed).
 
-**Problem:** Increasing DBAP focus concentrates energy on fewer speakers → perceived loudness drops. LFE routing uses `masterGain × 0.95 / numSubs` independently, creating sub-to-mains imbalance.
+**Current supported controls:** manual dB trims for mains and subs.
 
-**Solution:** Two mix sliders + auto-compensation toggle.
+| Control | Range | Default | Effect |
+| ------- | ----- | ------- | ------ |
+| Loudspeaker Mix (`--speaker_mix`) | -60–+12 dB | 0.0 | Post-DBAP main-channel trim |
+| Sub Mix (`--sub_mix`) | -60–+12 dB | 0.0 | Post-LFE-routing sub trim |
 
-| Control                                         | Range      | Default | Effect                                        |
-| ----------------------------------------------- | ---------- | ------- | --------------------------------------------- |
-| Loudspeaker Mix (`--speaker_mix`)               | -60–+12 dB | 0.0     | Post-DBAP main-channel trim                   |
-| Sub Mix (`--sub_mix`)                           | -60–+12 dB | 0.0     | Post-LFE-routing sub trim                     |
-| Focus Auto-Compensation (`--auto_compensation`) | on/off     | off     | Auto-updates loudspeaker mix as focus changes |
+**Signal chain:** Source → master gain → DBAP → speaker mix trim → output; LFE → sub mix trim → output.
 
-**Signal chain:** Source → masterGain → DBAP → spkMix trim → output; LFE → lfeMix trim → output.
+**Current DBAP reality:**
 
-**Real-time safety:** Relaxed atomic loads, per-channel multiply (O(N)), unity guards, `computeFocusCompensation()` on main thread only (via `update()` tick).
+- The AlloLib DBAP implementation in this repo does **not** normalize total power after applying focus.
+- Raising focus narrows energy distribution, but it also lowers absolute output level for every speaker whose base weight is below `1.0`.
+- LFE bypasses DBAP entirely, so higher focus can make subs feel louder relative to mains unless the operator compensates with `speakerMixDb` / `subMixDb`.
 
-**New `RealtimeConfig` fields:** `loudspeakerMix`, `subMix`, `focusAutoCompensation` (atomics).
+**Removed experiment:** the earlier automatic focus-compensation path was retired because it assumed normalized DBAP math and used an invalid reference geometry. Keep it out unless a future pass reintroduces it with a documented reference focus and a clear metric such as nearest-speaker amplitude or total power.
 
 ---
 
@@ -434,19 +432,67 @@ Threading model: audio thread (RT, AlloLib), loader thread (background disk I/O)
 
 ---
 
-## Output Remap
+## Output Routing Architecture
 
 > Consolidated from prior agent docs (subfolders removed).
 
-**Purpose:** Map internal "layout channel order" → physical device channel order at the end of `processBlock()`.
+**Purpose:** Map the compact internal render bus to the physical output device channels at the end of `processBlock()`.
 
-**CSV format:** Headers `layout,device` (0-based indices). Multiple `layout` → same `device` entries accumulate. Out-of-range indices ignored with logging. Comments via `#`. Case-insensitive headers.
+### Two-Space Model
 
-**Example:** `source/spatial_engine/remapping/exampleRemap.csv`
+- **Internal render space:** consecutive indices `0..numSpeakers-1` for main speakers, then `numSpeakers..numSpeakers+numSubs-1` for compact subwoofer channels.
+- **Output device space:** sparse physical channel numbers from the layout JSON `deviceChannel` fields.
+- `mConfig.outputChannels` is the final hardware width: `max(deviceChannel) + 1`.
+- Gaps are valid. Unmapped output channels are explicitly silent.
 
-**Runtime:** Identity fast-path when no remap is loaded. Accumulation loop in callback. No allocations, read-only table during playback (RT-safe).
+### Routing Table
 
-**CLI:** `--remap <path.csv>`.
+Each internal channel owns exactly one output destination derived from the active layout:
+
+- speaker `i` routes to `layout.speakers[i].deviceChannel`
+- subwoofer `j` routes to `layout.subwoofers[j].deviceChannel`
+- duplicate, missing, or negative `deviceChannel` values fail validation before playback starts
+
+### Runtime Stage
+
+Two callback paths are supported:
+
+- **Identity fast-path:** if every internal channel already matches its output index, the callback copies channel buffers directly.
+- **Scatter path:** if layout channels are sparse or reordered, the callback zeros the output bus and scatters internal channels to their assigned device slots.
+
+The routing table is immutable during playback. The callback does not allocate or rebuild mappings.
+
+### Validation Gate
+
+Layout application is rejected when:
+
+- speaker or subwoofer `deviceChannel` values are duplicated
+- any `deviceChannel` is negative
+- the resulting output width would be zero or otherwise invalid
+- the loaded layout and scene leave the engine without a usable render/output mapping
+
+### CSV Legacy Status
+
+The old CSV remap surface (`--remap <path.csv>`, `layout,device` headers) remains documented only as a compatibility path. New work should treat layout JSON `deviceChannel` values as the canonical routing source.
+
+### Routing Audit Notes
+
+Useful invariants from the routing consolidation:
+
+- internal render width is always `numSpeakers + numSubwoofers`
+- `mConfig.outputChannels` is output-space only and must never be reused as internal-bus width
+- `mRemap` / routing state must exist before playback starts
+- compact internal subwoofer indices are always `numSpeakers + j`
+- scatter mode owns output-bus clearing so unmapped sparse channels stay silent
+- identity mode is valid only when output width equals internal width and all mappings are diagonal/full-coverage
+
+High-value verification checks when routing changes:
+
+- contiguous layouts should hit identity copy and produce no silent gap channels
+- sparse layouts should hit scatter routing and preserve explicit `deviceChannel` placement
+- duplicate or negative `deviceChannel` values must hard-fail before engine start
+- speaker/subwoofer channel sharing must hard-fail before engine start
+- legacy `--remap` use should be treated as compatibility-only and warned accordingly
 
 ---
 
@@ -470,7 +516,7 @@ All `RealtimeConfig` atomics use `std::memory_order_relaxed` for reads on the au
 
 1. Audio thread never blocks (no mutex waits, no allocation)
 2. Loader thread only holds `SourceStream` mutex during `sf_seek()`/`sf_read_float()`
-3. Main thread only calls `computeFocusCompensation()` (via `update()`)
+3. Main thread owns non-RT update and diagnostics work; the audio callback never recomputes routing plans or blocking analysis
 4. `activeBuffer` swap is fully atomic — no torn reads
 5. `shouldExit` is checked at the top of `processBlock()` — no state pollution after shutdown signal
 6. `nanGuardCount` uses relaxed increment — monitoring tool only, not a synchronization signal
@@ -507,11 +553,10 @@ OSC is the **secondary** control surface (primary is direct `EngineSession` sett
 | DBAP Focus        | `/realtime/focus`          | float        | 0.1–5.0 | 1.5     | DBAP rolloff exponent                          |
 | Speaker Mix dB    | `/realtime/speaker_mix_db` | float (dB)   | -60–+12 | 0.0     | Post-DBAP main trim                            |
 | Sub Mix dB        | `/realtime/sub_mix_db`     | float (dB)   | -60–+12 | 0.0     | Post-DBAP sub trim                             |
-| Auto-Compensation | `/realtime/auto_comp`      | float (bool) | 0/1     | 0       | Focus auto-compensation                        |
 | Pause/Play        | `/realtime/paused`         | float (bool) | 0/1     | 0       | Pause/resume transport                         |
 | Elevation Mode    | `/realtime/elevation_mode` | float (int)  | 0/1/2   | 0       | 0=RescaleAtmosUp, 1=RescaleFullSphere, 2=Clamp |
 
-**Wiring:** Parameter callbacks write to `RealtimeConfig` atomics via `std::memory_order_relaxed`. `pendingAutoComp` flag: for main-thread-only `computeFocusCompensation()`.
+**Wiring:** Parameter callbacks write to `RealtimeConfig` atomics via `std::memory_order_relaxed`.
 
 **AlloLib parameter types:**
 
@@ -614,7 +659,7 @@ t=42.5s  CPU=23%  rDom=0xffff  dDom=0xffff  rBus=0x3ffff  dev=0x3ffff  mainRms=0
 
 ## What Not To Do
 
-- Do not redesign auto-compensation (returns 1.0f — plumbing exists, math was wrong; deferred).
+- Do not reintroduce automatic focus compensation without a new documented metric and validation plan.
 - Do not reopen broad device/output mismatch analysis — Bug 3.2 + Bug 8.1 resolved the structural issue.
 - Do not reopen guard-pop investigation — Bug 9.1 confirmed closed (translab 2026-04-01). Reopen only if pops recur consistently in later testing.
 - Do not implement the fast-mover guard patch — deferred; no consistent audible evidence after Bug 9.1.

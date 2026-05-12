@@ -12,27 +12,29 @@
 
 ## Quick Navigation
 
-| Topic                                                                 | File                                                               | Key Sections                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
-| --------------------------------------------------------------------- | ------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| EngineSession API contract, structs, lifecycle, hard constraints      | [API_internal.md](API_internal.md)                                 | [Contract](API_internal.md#contract) · [Hard Constraints](API_internal.md#hard-constraints) · [Validation & Gotchas](API_internal.md#validation--known-gotchas)                                                                                                                                                                                                                                                                                              |
-| CI config, vendored deps, Windows fixes, CMake wiring                 | [BUILD_AND_CI.md](BUILD_AND_CI.md)                                 | [CI Overview](BUILD_AND_CI.md#ci-overview) · [Dep Audit](BUILD_AND_CI.md#dependency-audit) · [Build Notes](BUILD_AND_CI.md#build-system-notes)                                                                                                                                                                                                                                                                                                               |
-| Current DBAP state, locked decisions, onboarding investigation prompt | [cult_dbap.md](cult_dbap.md)                                       | [Current State](cult_dbap.md#current-state) · [Locked Decisions](cult_dbap.md#locked-decisions) · [Onboarding Prompt Task](cult_dbap.md#onboarding-prompt-task)                                                                                                                                                                                                                                                                                              |
-| **DBAP pops/artifacts/fast-mover bugs — start here**                  | [engine_testing/4_1_bug_audit.md](engine_testing/4_1_bug_audit.md) | [DBAP render path summary](engine_testing/4_1_bug_audit.md#dbap-render-path-summary-one-source-one-block) · [Proximity guard structure](engine_testing/4_1_bug_audit.md#proximity-guard-structure-as-of-2026-04-01) · [Bug 10 (normalized DBAP)](engine_testing/4_1_bug_audit.md#bug-10--normalized-dbap-breaks-fast-mover-continuity-anchor) · [Bug 9.1](engine_testing/4_1_bug_audit.md#bug-91--cross-block-guard-transition-blending--patched-2026-04-01) |
-| LUSID scene format, speaker layout JSON, LUSID package import         | [DEPENDENCIES.md](DEPENDENCIES.md)                                 | [LUSID Scene](DEPENDENCIES.md#lusid-scene-json-format) · [Speaker Layout](DEPENDENCIES.md#speaker-layout-json-format) · [Package Import](DEPENDENCIES.md#lusid-package-import-contract-spatialseed)                                                                                                                                                                                                                                                          |
-| Output routing architecture, two-space model, CSV deprecation         | [REMAP.md](REMAP.md)                                               | [Two-Space Model](REMAP.md#two-space-model) · [Phase 7](REMAP.md#phase-7-routing-stage) · [Validation Gate](REMAP.md#validation-gate) · [Files Changed](REMAP.md#files-changed) · [Verification](REMAP.md#verification-checklist)                                                                                                                                                                                                                            |
-| Realtime engine agents, bug audit, OSC params, threading              | [REALTIME_ENGINE.md](REALTIME_ENGINE.md)                           | [Agent Table](REALTIME_ENGINE.md#agent-architecture-overview) · [Bug Audit](REALTIME_ENGINE.md#bug-audit-april-1-2026) · [OSC Params](REALTIME_ENGINE.md#osc-parameter-reference) · [Threading](REALTIME_ENGINE.md#threading-and-safety)                                                                                                                                                                                                                     |
-| Repo cleanup, AlloLib lightweighting                                  | [REPO_AUDITING.md](REPO_AUDITING.md)                               | [Cleanup Audit](REPO_AUDITING.md#repository-cleanup-audit) · [AlloLib Audit](REPO_AUDITING.md#allolib-dependency-audit)                                                                                                                                                                                                                                                                                                                                      |
-| Spatializers, DBAP/VBAP/LBAP, elevation, rendering CLI                | [SPATIALIZATION.md](SPATIALIZATION.md)                             | [Rendering System](SPATIALIZATION.md#rendering-system) · [DBAP Testing](SPATIALIZATION.md#dbap-field-testing-notes)                                                                                                                                                                                                                                                                                                                                          |
-| C++ refactor history, Python pipeline, old GUI, old build system      | [devHistory.md](devHistory.md)                                     | [Phase 6 Refactor](devHistory.md#phase-6--c-refactor-complete-march-29-31-2026) · [Python GUI](devHistory.md#python-gui-pyside6--phase-10-february-2026) · [Old Pipeline](devHistory.md#python-offline-pipeline-v39-march-9-2026)                                                                                                                                                                                                                            |
-| macOS .app bundle, staging, asset/binary discovery, Linux X11 decision | [PACKAGING.md](PACKAGING.md)                                       | [Staged Tree](PACKAGING.md#staged-tree-macos) · [Discovery Order](PACKAGING.md#discovery-order) · [Validation](PACKAGING.md#validation-results) · [Remaining Blockers](PACKAGING.md#remaining-package-blockers)                                                                                                                                                                                                                                              |
+This table is the authoritative map of the actively maintained top-level internal docs.
+
+| Topic | File | Key Sections |
+| ----- | ---- | ------------ |
+| Navigation and project orientation | [AGENTS.md](AGENTS.md) | [Project Overview](#project-overview) · [Architecture & Data Flow](#architecture--data-flow) · [Development Workflow](#development-workflow) |
+| EngineSession contract, lifecycle, diagnostics | [API_internal.md](API_internal.md) | [Contract](API_internal.md#contract) · [Error Model](API_internal.md#error-model) · [Validation & Known Gotchas](API_internal.md#validation--known-gotchas) |
+| Realtime engine architecture, routing, OSC, bug history | [REALTIME_ENGINE.md](REALTIME_ENGINE.md) | [Agent Architecture Overview](REALTIME_ENGINE.md#agent-architecture-overview) · [Output Routing Architecture](REALTIME_ENGINE.md#output-routing-architecture) · [OSC Parameter Reference](REALTIME_ENGINE.md#osc-parameter-reference) |
+| Offline rendering behavior and spatialization details | [SPATIALIZATION.md](SPATIALIZATION.md) | [Rendering System](SPATIALIZATION.md#rendering-system) · [DBAP Field Testing Notes](SPATIALIZATION.md#dbap-field-testing-notes) |
+| LUSID, layout, and package format contracts | [DEPENDENCIES.md](DEPENDENCIES.md) | [LUSID Scene JSON Format](DEPENDENCIES.md#lusid-scene-json-format) · [Speaker Layout JSON Format](DEPENDENCIES.md#speaker-layout-json-format) |
+| Build scripts, CI, bootstrap, dependency wiring | [BUILD_AND_CI.md](BUILD_AND_CI.md) | [CI Overview](BUILD_AND_CI.md#ci-overview) · [Dependency Audit](BUILD_AND_CI.md#dependency-audit) · [Build System Notes](BUILD_AND_CI.md#build-system-notes) |
+| Packaging, bundle layout, runtime discovery, release-signing notes | [PACKAGING.md](PACKAGING.md) | [Staged Tree](PACKAGING.md#staged-tree-macos) · [Discovery Order](PACKAGING.md#discovery-order) · [Release Signing](PACKAGING.md#release-signing-deferred) |
+| Repo cleanup and vendored-dependency audits | [REPO_AUDITING.md](REPO_AUDITING.md) | [Repository Cleanup Audit](REPO_AUDITING.md#repository-cleanup-audit) · [AlloLib Dependency Audit](REPO_AUDITING.md#allolib-dependency-audit) |
+| Active backlog and forward work | [FUTURE_WORK.md](FUTURE_WORK.md) | [Spatialization & Rendering](FUTURE_WORK.md#spatialization--rendering) · [Release & Packaging](FUTURE_WORK.md#release--packaging) |
+| Release-facing internal summary | [alphaRleaseNotes.md](alphaRleaseNotes.md) | [May 2026 Alpha Hardening](alphaRleaseNotes.md#may-2026-alpha-hardening) · [Known Limits](alphaRleaseNotes.md#known-limits) |
+| Historical change log and prior architecture | [devHistory.md](devHistory.md) | [Realtime Audio Backend/API Visibility](devHistory.md#realtime-audio-backendapi-visibility--48-khz-truthfulness-may-11-2026) · [Phase 6 — C++ Refactor Complete](devHistory.md#phase-6--c-refactor-complete-march-29-31-2026) |
 
 ---
 
-## Documentation consolidation planning (May 12, 2026)
+## Documentation Policy
 
-- Investigation and planning pass only; no documentation files moved yet.
-- The next agent should execute the consolidation using the handoff prompt.
-- README updates in this pass are limited to a small documentation map.
+- The maintained top-level internal set is: `AGENTS.md`, `API_internal.md`, `REALTIME_ENGINE.md`, `SPATIALIZATION.md`, `DEPENDENCIES.md`, `BUILD_AND_CI.md`, `PACKAGING.md`, `REPO_AUDITING.md`, `FUTURE_WORK.md`, `alphaRleaseNotes.md`, and `devHistory.md`.
+- Public docs remain `README.md` and `PUBLIC_DOCS/API.md`.
+- Subfolder docs under paths like `internalDocs/engine_testing/`, `internalDocs/API/`, and `internalDocs/DBAP/` are intentionally outside this consolidation pass.
 
 ## Project Overview
 
@@ -72,7 +74,7 @@ ADM BWF WAV File
 
 **LUSID `scene.lusid.json` is the source of truth** for spatial data. The C++ renderer reads LUSID directly — no intermediate format conversion. See [DEPENDENCIES.md § LUSID Scene JSON Format](DEPENDENCIES.md#lusid-scene-json-format).
 
-**The speaker layout JSON is the sole routing source.** The engine renders to a compact internal bus (numSpeakers + numSubwoofers channels) and routes to a layout-defined output bus via a one-to-one routing table built from the layout's `deviceChannel` fields. CSV-based routing is deprecated. See [REMAP.md](REMAP.md).
+**The speaker layout JSON is the sole routing source.** The engine renders to a compact internal bus (numSpeakers + numSubwoofers channels) and routes to a layout-defined output bus via a one-to-one routing table built from the layout's `deviceChannel` fields. CSV-based routing is legacy-only. See [REALTIME_ENGINE.md § Output Routing Architecture](REALTIME_ENGINE.md#output-routing-architecture).
 
 **Offline parity guardrail:** offline render parity work under `source/spatial_engine/spatialRender/` must remain offline-owned unless a future task explicitly authorizes realtime-engine changes. Do not modify `Spatializer.hpp`, `RealtimeBackend.hpp`, `Streaming.hpp`, `Pose.hpp`, or `EngineSession.*` just to advance offline parity.
 
@@ -249,6 +251,20 @@ Contents:
 These files are **not** deleted on app close. The engine never reads these directly — the GUI reads and validates them on startup, then passes the layout path into `EngineSession::applyLayout()` explicitly.  
 Override: `SPATIALROOT_SETTINGS_ROOT` env var.  
 Implementation: `SpatialRootPaths::appSettingsRoot()` / `DefaultLayoutManager`.
+
+**Default layout behavior notes:**
+
+- on startup, the GUI reads `default_layout.json`; if valid, it preloads that layout path
+- if the file is missing, startup continues silently
+- if the file exists but is invalid/unreadable, startup continues with a non-fatal warning
+- `Set as Default` copies the currently selected validated layout into the settings dir; it does not move or rewrite the original user file
+- `Clear Default` removes only the saved settings copy and metadata
+
+**Testing notes worth preserving:**
+
+- `SPATIALROOT_SETTINGS_ROOT` makes `DefaultLayoutManager` testable in a temp directory without touching a real user profile
+- a focused test pass should cover save, load, clear, and invalid-JSON behavior
+- the Windows `%APPDATA%` settings-path branch still deserves a real-platform validation pass
 
 ---
 

@@ -89,6 +89,18 @@ GLFW is forced to X11 on Linux (`GLFW_BUILD_X11=ON`, `GLFW_BUILD_WAYLAND=OFF`). 
 
 ---
 
+## Release Signing (Deferred)
+
+Packaging is ahead of signing. The current practical guidance is:
+
+- Sigstore / `cosign` is useful for artifact provenance and Linux-style verification, but it does **not** satisfy macOS Gatekeeper or Windows SmartScreen by itself.
+- macOS distribution that avoids Gatekeeper warnings still requires Apple-trusted signing and notarization, which in practice means an Apple Developer account.
+- Windows OSS-friendly signing options may be worth evaluating separately, for example SignPath Foundation or comparable Authenticode sponsorship paths.
+
+Treat signing/notarization as a release-engineering phase on top of the current bundle/install work, not as part of the core runtime-path audit.
+
+---
+
 ## Validation Results
 
 | Command | Result |

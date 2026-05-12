@@ -1,6 +1,6 @@
 # Repository Auditing — Internal Reference
 
-**Last Updated:** February 22–23, 2026
+**Last Updated:** May 12, 2026
 
 ---
 
@@ -90,6 +90,17 @@ Note: Python virtual environment was removed in Phase 6 (2026-03-31) as part of 
 - `external/oscpack/` — OSC protocol impl
 - `ui/al_Parameter.hpp` etc. — AlloLib parameter system for OSC
 
+### Verified Active Spatial Root Usage
+
+Direct Spatial Root include/link evidence from the May 2026 audit:
+
+- `RealtimeBackend.hpp`, `main.cpp`, and `Spatializer.hpp` use `al/io/al_AudioIO.hpp`
+- `EngineSession.cpp` uses `al/ui/al_Parameter.hpp` and `al/ui/al_ParameterServer.hpp`
+- `Pose.hpp` uses `al/math/al_Vec.hpp`
+- `LayoutLoader.hpp` uses `al/sound/al_Speaker.hpp`
+- `Spatializer.hpp` and `SpatialRenderer.hpp` use the DBAP/VBAP/LBAP speaker/spatializer stack
+- realtime and offline CMake targets both link the compatibility target `al` plus `Gamma` and `SndFile::sndfile`
+
 **Disabled in the supported minimal build:**
 - `graphics/` sources and targets — no OpenGL dependency in the engine/offline path
 - `app/` sources and targets — not built by default in the slim `cult-allolib` profile
@@ -102,6 +113,58 @@ Note: Python virtual environment was removed in Phase 6 (2026-03-31) as part of 
 - `external/glad/` — OpenGL loader
 - `external/serial/` — removed from the verified minimal build path
 - `external/cpptoml/` — removed from the verified minimal build path
+
+### Minimal Module Split Status
+
+The May 2026 lightweighting pass formalized a Spatial Root-oriented module split in `internal/cult-allolib/CMakeLists.txt`:
+
+- `cult_allolib_core`
+- `cult_allolib_file`
+- `cult_allolib_audio`
+- `cult_allolib_osc`
+- `cult_allolib_spatial`
+- `cult_allolib_params`
+- compatibility target `al`
+
+Default supported profile:
+
+- ON: audio, osc, parameters, spatial, file, timing, types
+- OFF: graphics, app, VR, MIDI, examples, tests, docs, serial, cpptoml-backed config helpers
+
+Result: the minimal Spatial Root engine/offline build no longer configures AlloLib graphics/app stacks or pulls `serial` / `cpptoml` into the verified build path.
+
+### Quarantined or Removed Content
+
+Removed outright in the audited pass:
+
+- `internal/cult-allolib/.github/workflows/`
+- `internal/cult-allolib/doc/`
+- `internal/cult-allolib/examples/`
+- `internal/cult-allolib/test/`
+- stray placeholder files under `internal/cult-allolib/include/al/sphere/` and `src/sphere/`
+
+Still intentionally quarantined behind OFF-by-default options:
+
+- graphics/windowing code
+- app/domain infrastructure
+- VR helpers
+- vendored example/test trees that are outside the verified minimal build path
+
+### Verification
+
+Verification runs from the May 2026 audit:
+
+```bash
+cmake -S . -B /private/tmp/spatialroot-audit-build2 -DSPATIALROOT_BUILD_GUI=OFF -DSPATIALROOT_BUILD_CULT=OFF
+cmake --build /private/tmp/spatialroot-audit-build2 --target spatialroot_realtime spatialroot_spatial_render -j4
+```
+
+Observed result:
+
+- clean configure succeeded
+- `spatialroot_realtime` built successfully
+- `spatialroot_spatial_render` built successfully
+- no OpenGL/GLFW/AlloLib graphics requirement remained in the minimal engine/offline path
 
 ### Lightweighting Plan
 
