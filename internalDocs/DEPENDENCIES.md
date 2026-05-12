@@ -1,6 +1,8 @@
 # Dependencies & Data Formats — Internal Reference
 
-**Last Updated:** February 2026
+**Last Updated:** May 12, 2026
+
+This file is the maintainer-level format reference. Public integration-facing summaries now live in `PUBLIC_DOCS/API.md`; keep detailed validation rules, schema notes, and historical format caveats here.
 
 ---
 
@@ -94,7 +96,7 @@ Old `src_N` naming convention is deprecated.
 ```json
 {
   "speakers": [
-    { "azimuth": 0.0, "elevation": 0.0, "radius": 5.0, "deviceChannel": 1 }
+    { "azimuth": 0.0, "elevation": 0.0, "radius": 5.0, "channel": 1 }
   ],
   "subwoofers": [
     { "channel": 16 },
@@ -108,9 +110,9 @@ Old `src_N` naming convention is deprecated.
 | `azimuth` | number | **radians** | 0 = front, positive = right |
 | `elevation` | number | **radians** | 0 = horizon, positive = up |
 | `radius` | number | meters | Typically 5.0 for AlloSphere |
-| `deviceChannel` | integer | — | Offline and realtime output routing use this as the final device-indexed output channel |
+| `channel` | integer | — | Public JSON field. Internally loaded as `deviceChannel`, then used by offline and realtime routing as the final device-indexed output slot |
 
-Renderers use a compact internal channel bus for spatialization, then route to the final output bus using layout `deviceChannel` assignments. Final output width is `max(deviceChannel) + 1` across speakers and subwoofers. Non-contiguous device channels are valid; unmapped output channels remain silent.
+Renderers use a compact internal channel bus for spatialization, then route to the final output bus using layout `channel` assignments (stored internally as `deviceChannel`). Final output width is `max(channel) + 1` across speakers and subwoofers. Non-contiguous channel assignments are valid; unmapped output channels remain silent.
 
 ---
 

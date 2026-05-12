@@ -1,9 +1,15 @@
 # EngineSession API — Internal Reference
 
-**Last Updated:** May 2026  
-**Source files:** `source/spatial_engine/realtimeEngine/src/EngineSession.hpp/.cpp`, `PUBLIC_DOCS/API.md`
+**Last Updated:** May 12, 2026  
+**Canonical code source:** `source/spatial_engine/realtimeEngine/src/EngineSession.hpp/.cpp`  
+**Derived public guide:** `PUBLIC_DOCS/API.md`
 
 ---
+
+## Documentation Boundary
+
+- `PUBLIC_DOCS/API.md` is the public embedding guide. Keep it focused on stable host-facing types, lifecycle usage, and input contracts.
+- This file is the maintainer reference. Keep lifecycle invariants, threading rules, shutdown sequencing, failure-model details, OSC behavior, and internal gotchas here.
 
 ## Contract
 

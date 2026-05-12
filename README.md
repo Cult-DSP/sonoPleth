@@ -206,6 +206,17 @@ Example ADM files: https://zenodo.org/records/15268471
 
 The realtime engine exposes a C++ embedding API (`EngineSessionCore` static library). See [PUBLIC_DOCS/API.md](PUBLIC_DOCS/API.md) for full documentation.
 
+## Documentation Map
+
+- Public API and embedding: [PUBLIC_DOCS/API.md](PUBLIC_DOCS/API.md)
+- Internal developer docs (maintainer notes, may describe in-progress work):
+  - [internalDocs/AGENTS.md](internalDocs/AGENTS.md) (navigation index)
+  - [internalDocs/DEPENDENCIES.md](internalDocs/DEPENDENCIES.md) (LUSID + layout formats)
+  - [internalDocs/REALTIME_ENGINE.md](internalDocs/REALTIME_ENGINE.md) (engine architecture and bug audit)
+  - [internalDocs/PACKAGING.md](internalDocs/PACKAGING.md) (packaging and install notes)
+  - [internalDocs/offlineRenderStatus.md](internalDocs/offlineRenderStatus.md) (offline render status)
+  - [internalDocs/devHistory.md](internalDocs/devHistory.md) (historical changes)
+
 ---
 
 ## C++ GUI

@@ -1,13 +1,13 @@
 # Output Routing Architecture — Layout-Derived Routing
 
-**Status:** Implemented (April 2026)  
-**Scope:** Realtime engine only. Offline renderer (`spatialroot_spatial_render`) is explicitly out of scope — it uses consecutive 0-based speaker channels and has no routing table.
+**Status:** Implemented (May 2026)  
+**Scope:** Canonical routing model shared across realtime and offline paths. Realtime implementation details dominate this document; offline uses the same compact-internal to layout-derived-output model via `OfflineOutputRouteMap`.
 
 ---
 
 ## Summary
 
-> The engine renders to a compact internal bus and routes to a layout-defined output bus; the layout JSON is the only supported public routing source.
+> Spatial Root renders to a compact internal bus and routes to a layout-defined output bus; the layout JSON is the supported public routing source.
 
 ---
 
@@ -20,18 +20,20 @@
 
 `mConfig.outputChannels` stores the output bus width. It is written by `Spatializer::init()` and read by `RealtimeBackend` to open AudioIO. It is **never** the internal bus width.
 
+Public layout JSON uses `channel`; the codebase stores the resolved output slot as `deviceChannel`.
+
 ---
 
 ## Routing Table
 
-`mOutputRouting` (type `OutputRemap`, owned by `Spatializer`) maps each internal channel to exactly one output channel. Built once in `init()` from the layout JSON's `deviceChannel` fields. One-to-one — no fan-in.
+Realtime uses `mOutputRouting` (type `OutputRemap`, owned by `Spatializer`) to map each internal channel to exactly one output channel. Offline uses `OfflineOutputRouteMap` with the same compact-to-output plan. Both are built from the layout JSON's resolved `deviceChannel` values. One-to-one — no fan-in.
 
 ```
 Speaker i   → internal channel i             → output channel layout.speakers[i].deviceChannel
 Sub j       → internal channel numSpeakers+j → output channel layout.subwoofers[j].deviceChannel
 ```
 
-`mRemap` is a non-owning `const OutputRemap*` set to `&mOutputRouting` after `init()`. Legacy CSV can override it via `EngineSession::configureRuntime()` (deprecated path only).
+`mRemap` is a non-owning `const OutputRemap*` set to `&mOutputRouting` after `init()`. Legacy CSV can still override the realtime route via `EngineSession::configureRuntime()` as a deprecated internal path only.
 
 ---
 
@@ -161,7 +163,7 @@ No internal DSP code reads `mConfig.outputChannels` as internal-bus width.
 10. `init()` returns `false` on any validation failure.
 11. `buildAuto()` after passing validation produces exactly `internalChannelCount` entries; out-of-range entries are a hard internal error.
 12. Scatter path owns its output-bus clear; identity path relies on backend pre-zero.
-13. Offline renderer (`SpatialRenderer`) out of scope — separate channel model.
+13. Offline renderer (`SpatialRenderer`) follows the same compact-internal to sparse-output routing model, but with `OfflineOutputRouteMap` instead of realtime `OutputRemap`.
 
 ---
 

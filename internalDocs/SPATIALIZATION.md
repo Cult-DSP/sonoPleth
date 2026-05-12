@@ -1,9 +1,9 @@
 # Spatialization & Rendering — Internal Reference
 
-**Last Updated:** May 10, 2026  
-**Source:** `source/spatial_engine/spatialRender/SpatialRenderer.cpp`, `source/spatial_engine/src/JSONLoader.cpp`
+**Last Updated:** May 12, 2026  
+**Source:** `source/spatial_engine/spatialRender/SpatialRenderer.cpp`, `source/spatial_engine/spatialRender/OfflineOutputRouteMap.cpp`, `source/spatial_engine/src/JSONLoader.cpp`
 
-See [DEPENDENCIES.md](DEPENDENCIES.md) for LUSID scene and speaker layout JSON format specs.
+See [PUBLIC_DOCS/API.md](../PUBLIC_DOCS/API.md) for the public input-contract summary and [DEPENDENCIES.md](DEPENDENCIES.md) for the maintainer-level LUSID and layout format spec.
 
 ---
 
@@ -24,9 +24,9 @@ Three spatializers supported:
 | **Best For** | Unknown/irregular layouts | AlloSphere, TransLAB |
 | **Params** | `--dbap_focus` (0.1–5.0) | `--lbap_dispersion` (0–1.0) |
 
-Pipeline: Source WAVs + LUSID scene + Layout JSON -> compact internal bus -> device-indexed N-channel WAV
+Pipeline: Source WAVs + LUSID scene + Layout JSON -> compact internal bus -> layout-derived device-indexed N-channel WAV
 
-Offline output routing now preserves layout `deviceChannel` indices. The renderer spatializes into a compact internal bus (`main speakers + subwoofers`), then scatters those internal channels into the final WAV using `OfflineOutputRouteMap`. Final WAV width is `max(deviceChannel) + 1`; unmapped channels are included and silent.
+Offline output routing now preserves layout channel assignments. The renderer spatializes into a compact internal bus (`main speakers + subwoofers`), then scatters those internal channels into the final WAV using `OfflineOutputRouteMap`. Final WAV width is `max(channel) + 1`; unmapped channels are included and silent. See [REMAP.md](REMAP.md) for the shared two-space routing model.
 
 ### CLI Usage
 
@@ -156,13 +156,15 @@ End-of-render diagnostics (`--debug_dir` writes `render_stats.json`, `block_stat
 | Focus | Observation |
 |---|---|
 | 1.0 | Best level balance, not very localized |
-| **1.5** | Sweet spot — localized but slightly dispersed. **Chosen as default.** |
+| **1.5** | Sweet spot — localized but slightly dispersed. Preferred listening target from field tests. |
 | 2.0 | Strong localization but level adjustment needed |
 | 2.5 | Mix becomes muddy |
 
 ### Takeaways
 
-- Default focus: **1.5**
+- Realtime `EngineSession` default focus is **1.5** via `RuntimeParams::defaults()`
+- Offline renderer CLI default `--dbap_focus` is currently **1.0** in code
+- Use an explicit `--dbap_focus` value when parity between tools matters
 - Conduct further testing for range 1.1–1.5
 - Subs need energy distribution based on number of subs — currently routed equally to both
 - Sub level at focus 2.0 is 30–40% too loud (DBAP focus increases energy concentration → mains drop, but LFE bypass means subs don't compensate)
@@ -170,4 +172,4 @@ End-of-render diagnostics (`--debug_dir` writes `render_stats.json`, `block_stat
 
 ### Master Gain Default
 
-`masterGain` default is consistently `0.5` across all code and docs. (`spatialRender/SpatialRenderer.hpp`, `spatialRender/main.cpp`, all documentation.)
+Offline renderer master gain defaults to `0.0 dB` unity gain (`RenderConfig::masterGainDb = 0.0f` in `spatialRender/SpatialRenderer.hpp`; `--master_gain` help in `spatialRender/main.cpp`). Realtime `RuntimeParams::masterGainDb` also defaults to `0.0f`.

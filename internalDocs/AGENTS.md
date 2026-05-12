@@ -1,6 +1,6 @@
 # spatialroot — Agent Context
 
-**Last Updated:** May 11, 2026  
+**Last Updated:** May 12, 2026  
 **Project:** spatialroot — Open Spatial Audio Infrastructure  
 **Lead Developer:** Lucian Parisi
 
@@ -27,6 +27,12 @@
 | macOS .app bundle, staging, asset/binary discovery, Linux X11 decision | [PACKAGING.md](PACKAGING.md)                                       | [Staged Tree](PACKAGING.md#staged-tree-macos) · [Discovery Order](PACKAGING.md#discovery-order) · [Validation](PACKAGING.md#validation-results) · [Remaining Blockers](PACKAGING.md#remaining-package-blockers)                                                                                                                                                                                                                                              |
 
 ---
+
+## Documentation consolidation planning (May 12, 2026)
+
+- Investigation and planning pass only; no documentation files moved yet.
+- The next agent should execute the consolidation using the handoff prompt.
+- README updates in this pass are limited to a small documentation map.
 
 ## Project Overview
 
