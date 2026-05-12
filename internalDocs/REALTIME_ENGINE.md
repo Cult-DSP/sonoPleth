@@ -282,6 +282,7 @@ Threading model: audio thread (RT, AlloLib), loader thread (background disk I/O)
 - RtAudio builds report backend family `RtAudio` plus the best available active API label from RtAudio itself.
 - Known labels include `RtAudio / CoreAudio`, `RtAudio / JACK`, `RtAudio / ALSA`, `RtAudio / PulseAudio`, and `RtAudio / WASAPI`.
 - If the active RtAudio API cannot be proven, report `RtAudio API unknown` rather than guessing from the platform.
+- Pre-stream-open note (May 11, 2026 follow-up): `RealtimeBackend::init()` now avoids `defaultBackendApiDisplayName()` for RtAudio and uses a conservative provisional label instead. This prevents Linux/JACK-first compiled-api ordering from being presented as confirmed stream truth before a stream exists.
 
 **Phase 10 additions to `processBlock()`:**
 

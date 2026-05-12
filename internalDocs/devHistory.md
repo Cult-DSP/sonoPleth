@@ -5,6 +5,41 @@
 
 ---
 
+## Realtime Audio Backend/API Truthfulness Follow-up — RtAudio Provisional Label Fix (May 11, 2026)
+
+**Status:** Complete. Small backend truthfulness fix only; no GUI redesign, no transport or DSP changes.
+
+**What changed:**
+
+- `source/spatial_engine/realtimeEngine/src/RealtimeBackend.hpp`
+  - `RealtimeBackend::init()` no longer calls `defaultBackendApiDisplayName()` in the pre-stream-open path when the compiled backend family is `RtAudio`
+  - provisional pre-open label is now `RtAudio API unknown`
+  - non-RtAudio backends still use `defaultBackendApiDisplayName()` for the pre-open label
+  - the existing post-`mAudioIO.init(...)` refresh remains unchanged:
+    - `mBackendFamilyLabel = mAudioIO.backendName()`
+    - `mBackendApiLabel = mAudioIO.backendApiDisplayName()`
+
+**Why:**
+
+- On Linux, constructing a temporary `RtAudio()` can choose the first compiled API with devices in RtAudio's internal priority order, which may prefer JACK before any stream is actually opened.
+- That made a pre-open static API probe too strong: it could present `RtAudio / JACK` as if it were confirmed, when the active stream API was not yet known.
+
+**Behavioral impact:**
+
+- Pre-open backend labeling is now intentionally conservative for RtAudio.
+- Init-time logging and any pre-open diagnostics now prefer `RtAudio API unknown` over a speculative backend/API guess.
+- Post-open and post-start status remains unchanged and continues to use live backend values from the actual stream/backend object.
+
+**Validation:**
+
+- `cmake --build build --target spatialroot_gui --parallel 8` passed after the fix.
+- Follow-up audit confirmed:
+  - `EngineSession::queryStatus()` pre-backend RtAudio path is conservative
+  - GUI `Sample Rate OK` still depends only on `effectiveStreamSampleRateKnown && effectiveStreamSampleRate == 48000`
+  - startup still fails when the effective running stream rate is known and differs from `48000 Hz`
+
+---
+
 ## Realtime Audio Backend/API Visibility + 48 kHz Truthfulness (May 11, 2026)
 
 **Status:** Complete. Focused backend/API reporting and sample-rate correctness pass; no new backend families, no sample-rate selection, no transport redesign.

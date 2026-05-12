@@ -1,3 +1,39 @@
+# Realtime Audio Backend/API Truthfulness Follow-up Audit
+
+Files / Areas Reviewed
+source/spatial_engine/realtimeEngine/src/EngineSession.cpp — `queryStatus()` pre-backend and post-backend branches
+source/spatial_engine/realtimeEngine/src/EngineSession.hpp — `EngineStatus` audio/backend fields
+source/spatial_engine/realtimeEngine/src/RealtimeBackend.hpp — `init()`, `start()`, `captureEffectiveStreamRate()`, `backendDisplayLabel()`, `backendContextSummary()`
+source/gui/imgui/src/App.cpp — Audio Setup sample-rate display and `selectedDeviceSampleRate` comment
+internal/cult-allolib/src/io/al_AudioIO.cpp — RtAudio backend/API and stream-rate accessors
+internal/cult-allolib/external/rtaudio/RtAudio.cpp — compiled API selection order
+
+Verdict
+Correct with notes.
+
+What was confirmed
+- `EngineSession::queryStatus()` no longer probes `defaultBackendApiDisplayName()` in the pre-backend RtAudio path. It now reports `RtAudio API unknown` until the backend exists.
+- Non-RtAudio pre-backend families still use the static `defaultBackendApiDisplayName()` path.
+- The GUI `Sample Rate OK` gate remains strict: it depends only on the effective running stream rate being known and equal to `48000`.
+- `RealtimeBackend::start()` still aborts startup if the effective running stream rate is known and rounds to anything other than `48000`.
+- No overreach was found into DSP, transport, layout loading, sample-rate selection, transcoder flow, offline render, or CMake/backend policy.
+
+Follow-up fix applied immediately after audit
+- `RealtimeBackend::init()` previously still called `defaultBackendApiDisplayName()` before stream open, even after the `EngineSession::queryStatus()` fix.
+- That residual pre-open probe was removed for RtAudio.
+- Current behavior:
+  - if compiled backend family is `RtAudio`, provisional label is `RtAudio API unknown`
+  - otherwise pre-open label still uses `defaultBackendApiDisplayName()`
+  - after `mAudioIO.init(...)`, the live refresh remains unchanged and still uses `backendName()` / `backendApiDisplayName()`
+
+Why this follow-up mattered
+- On Linux, RtAudio's compiled API search order can prefer JACK before a real stream is opened.
+- A temporary/static probe can therefore look more authoritative than it really is.
+- The follow-up keeps pre-open labeling conservative and leaves post-open labeling truthful.
+
+Build / Verification
+- `cmake --build build --target spatialroot_gui --parallel 8` passed after the follow-up fix.
+
 # Packaging / Runtime Path Audit
 
 Files / Areas Reviewed
