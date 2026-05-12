@@ -502,14 +502,36 @@ void App::renderEngineTab() {
     ImGui::Spacing();
 
     if (mShowAudioSetupPanel) {
-        if (ImGui::BeginChild("##audiosetupcard", {0.f, 344.f}, true)) {
-            ImGui::TextDisabled("AUDIO SETUP");
-            ImGui::Spacing();
-
-            ImGui::TextDisabled("STATUS");
+        if (ImGui::BeginChild("##audiosetupcard", {0.f, 340.f}, true)) {
+            ImGui::TextDisabled("AUDIO SETUP   STATUS");
             ImGui::Text("Realtime Audio: %s", audioReady ? "Ready" : (audioNotReady ? "Not Ready" : "Unknown"));
             ImGui::Text("Backend: %s", backendLabel.c_str());
             ImGui::TextWrapped("Last Error: %s", mLastError.empty() ? "none" : mLastError.c_str());
+            ImGui::SameLine();
+            ImGui::SetCursorPosX(ImGui::GetWindowWidth()
+                               - ImGui::GetStyle().WindowPadding.x
+                               - ImGui::CalcTextSize("Copy Diagnostics##audio").x
+                               - ImGui::GetStyle().ItemSpacing.x);
+            if (ImGui::Button("Copy Diagnostics##audio")) {
+                std::ostringstream os;
+                os << "Realtime Audio: "
+                   << (audioReady ? "Ready" : (audioNotReady ? "Not Ready" : "Unknown")) << "\n"
+                   << "Backend: " << backendLabel << "\n"
+                   << "Device: " << activeDeviceName << "\n"
+                   << "Output Channels: "
+                   << (selectedOutputChannels > 0 ? std::to_string(selectedOutputChannels) : "unknown") << "\n"
+                   << "Required sample rate: " << requiredSampleRate << " Hz\n"
+                   << "Requested engine sample rate: " << requestedSampleRate << " Hz\n"
+                   << "Selected device preferred/default sample rate: "
+                   << (selectedDeviceSampleRate > 0.0
+                       ? std::to_string(static_cast<int>(std::round(selectedDeviceSampleRate))) + " Hz"
+                       : "unknown") << "\n"
+                   << "Actual stream sample rate: "
+                   << (actualStreamRateKnown ? std::to_string(actualStreamRate) + " Hz" : "unknown") << "\n"
+                   << "Buffer: " << bufferSize << "\n"
+                   << "Last Error: " << (mLastError.empty() ? "none" : mLastError);
+                ImGui::SetClipboardText(os.str().c_str());
+            }
             ImGui::Spacing();
 
             if (isRunning) ImGui::BeginDisabled(true);
@@ -547,33 +569,6 @@ void App::renderEngineTab() {
                     "Changing buffer size may require restarting the engine or playback session.\n"
                     "Safest workflow: stop playback before changing this setting."
                 );
-            }
-            const float actionBtnW = 132.f;
-            const float actionGap = 8.f;
-            const float actionsX = ImGui::GetWindowWidth()
-                                 - ImGui::GetStyle().WindowPadding.x
-                                 - actionBtnW;
-            ImGui::SameLine();
-            ImGui::SetCursorPosX(std::max(ImGui::GetCursorPosX(), actionsX));
-            if (ImGui::Button("Copy Diagnostics##audio", {actionBtnW, 0.f})) {
-                std::ostringstream os;
-                os << "Realtime Audio: "
-                   << (audioReady ? "Ready" : (audioNotReady ? "Not Ready" : "Unknown")) << "\n"
-                   << "Backend: " << backendLabel << "\n"
-                   << "Device: " << activeDeviceName << "\n"
-                   << "Output Channels: "
-                   << (selectedOutputChannels > 0 ? std::to_string(selectedOutputChannels) : "unknown") << "\n"
-                   << "Required sample rate: " << requiredSampleRate << " Hz\n"
-                   << "Requested engine sample rate: " << requestedSampleRate << " Hz\n"
-                   << "Selected device preferred/default sample rate: "
-                   << (selectedDeviceSampleRate > 0.0
-                       ? std::to_string(static_cast<int>(std::round(selectedDeviceSampleRate))) + " Hz"
-                       : "unknown") << "\n"
-                   << "Actual stream sample rate: "
-                   << (actualStreamRateKnown ? std::to_string(actualStreamRate) + " Hz" : "unknown") << "\n"
-                   << "Buffer: " << bufferSize << "\n"
-                   << "Last Error: " << (mLastError.empty() ? "none" : mLastError);
-                ImGui::SetClipboardText(os.str().c_str());
             }
             ImGui::TextDisabled("Buffer changes apply after restarting audio.");
 
@@ -617,12 +612,12 @@ void App::renderEngineTab() {
 
                 ImGui::PushStyleColor(ImGuiCol_ChildBg,
                     ImVec4(srColor.x * 0.10f, srColor.y * 0.10f, srColor.z * 0.10f, 1.f));
-                if (ImGui::BeginChild("##srbox", {0.f, 94.f}, true,
+                if (ImGui::BeginChild("##srbox", {0.f, 84.f}, true,
                                      ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse)) {
                     ImGui::TextColored(srColor, "%s", srTitle);
                     if (srOk) {
                         ImGui::SameLine();
-                        ImGui::TextWrapped("Spatial Root confirmed a 48 kHz realtime stream.");
+                        ImGui::TextColored(kGreen, "Spatial Root confirmed a 48 kHz realtime stream.");
                     }
                     ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.f, 1.f, 1.f, 1.f));
                     ImGui::Text("Required sample rate: %d Hz  ->  Requested engine sample rate: %d Hz",
