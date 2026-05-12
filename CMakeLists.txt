@@ -8,9 +8,18 @@ project(spatialroot
     LANGUAGES CXX
 )
 
+include(GNUInstallDirs)
+
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
+
+set(SPATIALROOT_INSTALL_RESOURCE_ROOT "${CMAKE_INSTALL_DATADIR}/spatialroot")
+if(APPLE)
+    set(SPATIALROOT_MACOS_APP_BUNDLE_NAME "Spatial Root.app")
+    set(SPATIALROOT_MACOS_APP_RESOURCES_DESTINATION
+        "${SPATIALROOT_MACOS_APP_BUNDLE_NAME}/Contents/Resources")
+endif()
 
 find_program(GIT_EXECUTABLE git)
 
@@ -109,10 +118,13 @@ set(BUILD_EXAMPLES       OFF CACHE BOOL "Don't build libsndfile examples")
 set(BUILD_TESTING        OFF CACHE BOOL "Don't build libsndfile tests")
 set(ENABLE_EXTERNAL_LIBS OFF CACHE BOOL "No FLAC/Ogg/Vorbis/Opus in libsndfile")
 set(ENABLE_MPEG          OFF CACHE BOOL "No MPEG in libsndfile")
+set(_spatialroot_skip_install_rules_saved "${CMAKE_SKIP_INSTALL_RULES}")
+set(CMAKE_SKIP_INSTALL_RULES ON)
 add_subdirectory(
     ${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/libsndfile
     ${CMAKE_CURRENT_BINARY_DIR}/libsndfile-build
 )
+set(CMAKE_SKIP_INSTALL_RULES "${_spatialroot_skip_install_rules_saved}")
 # Pre-populate the find variables so Gamma resolves to our vendored target.
 set(SNDFILE_INCLUDE_DIR
     "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/libsndfile/include"
@@ -149,10 +161,13 @@ if(SPATIALROOT_BUILD_ENGINE OR SPATIALROOT_BUILD_OFFLINE)
     set(CULT_ALLOLIB_ENABLE_DOCS       OFF CACHE BOOL "Disable cult-allolib docs by default")
     # Workaround for AlloLib's old internal cmake_minimum_required usage
     set(CMAKE_POLICY_VERSION_MINIMUM 3.5)
+    set(_spatialroot_skip_install_rules_saved "${CMAKE_SKIP_INSTALL_RULES}")
+    set(CMAKE_SKIP_INSTALL_RULES ON)
     add_subdirectory(
         ${CMAKE_CURRENT_SOURCE_DIR}/internal/cult-allolib
         ${CMAKE_CURRENT_BINARY_DIR}/allolib-build
     )
+    set(CMAKE_SKIP_INSTALL_RULES "${_spatialroot_skip_install_rules_saved}")
 endif()
 
 # ── Components ────────────────────────────────────────────────────────────────

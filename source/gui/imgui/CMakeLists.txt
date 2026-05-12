@@ -16,6 +16,12 @@ if(NOT TARGET glfw)
     set(GLFW_BUILD_TESTS    OFF CACHE BOOL "" FORCE)
     set(GLFW_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
     set(GLFW_INSTALL        OFF CACHE BOOL "" FORCE)
+    # Initial Linux packaging target is X11/XWayland. Keep Wayland off until we
+    # intentionally add the scanner/tooling and validate a Wayland release path.
+    if(UNIX AND NOT APPLE)
+        set(GLFW_BUILD_X11     ON  CACHE BOOL "" FORCE)
+        set(GLFW_BUILD_WAYLAND OFF CACHE BOOL "" FORCE)
+    endif()
     add_subdirectory(${GLFW_DIR} ${CMAKE_CURRENT_BINARY_DIR}/glfw-build)
 endif()
 
@@ -70,6 +76,17 @@ add_executable(spatialroot_gui
 
 set_target_properties(spatialroot_gui PROPERTIES OUTPUT_NAME "Spatial Root")
 
+if(APPLE)
+    set_target_properties(spatialroot_gui PROPERTIES
+        MACOSX_BUNDLE TRUE
+        MACOSX_BUNDLE_BUNDLE_NAME "Spatial Root"
+        MACOSX_BUNDLE_BUNDLE_VERSION "${PROJECT_VERSION}"
+        MACOSX_BUNDLE_SHORT_VERSION_STRING "${PROJECT_VERSION}"
+        MACOSX_BUNDLE_INFO_PLIST
+            "${CMAKE_CURRENT_SOURCE_DIR}/cmake/Info.plist.in"
+    )
+endif()
+
 add_dependencies(spatialroot_gui miniLogo_embed)
 
 # macOS: OpenGL is deprecated (but fully functional on all current hardware).
@@ -103,4 +120,30 @@ target_link_libraries(spatialroot_gui PRIVATE
 # Windows: GetOpenFileName lives in Comdlg32 (FileDialog.cpp)
 if(WIN32)
     target_link_libraries(spatialroot_gui PRIVATE Comdlg32 Shell32)
+endif()
+
+if(APPLE)
+    install(TARGETS spatialroot_gui
+        BUNDLE DESTINATION .
+        COMPONENT SpatialRootRuntime
+    )
+else()
+    install(TARGETS spatialroot_gui
+        RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+        COMPONENT SpatialRootRuntime
+    )
+endif()
+
+if(APPLE)
+    install(
+        DIRECTORY "${CMAKE_SOURCE_DIR}/source/speaker_layouts"
+        DESTINATION "${SPATIALROOT_MACOS_APP_RESOURCES_DESTINATION}"
+        COMPONENT SpatialRootRuntime
+    )
+else()
+    install(
+        DIRECTORY "${CMAKE_SOURCE_DIR}/source/speaker_layouts"
+        DESTINATION "${SPATIALROOT_INSTALL_RESOURCE_ROOT}"
+        COMPONENT SpatialRootRuntime
+    )
 endif()

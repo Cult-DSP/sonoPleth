@@ -11,7 +11,7 @@
 //   Linux   — Links -lGL. Requires a desktop OpenGL 3.3 driver.
 //
 // Usage:
-//   ./spatialroot_gui                   # project root = "." (run from repo root)
+//   ./spatialroot_gui                   # package-relative lookup, repo-root fallback
 //   ./spatialroot_gui --root /path/to/spatialroot
 //   ./spatialroot_gui --help
 
@@ -45,10 +45,9 @@ static void glfwErrorCallback(int error, const char* description) {
 static void printUsage(const char* prog) {
     printf("Usage: %s [--root <project_root>] [--keep-temp-sessions] [--temp-root <path>] [--help]\n", prog);
     printf("\n");
-    printf("  --root <path>   Path to the spatialroot project root.\n");
-    printf("                  Defaults to '.' (current directory).\n");
-    printf("                  Run from the project root for layouts and\n");
-    printf("                  cult-transcoder to resolve correctly.\n");
+    printf("  --root <path>   Developer override for the spatialroot project root.\n");
+    printf("                  Defaults to '.' and is only used after packaged\n");
+    printf("                  bundle/install-tree lookups are exhausted.\n");
     printf("  --keep-temp-sessions\n");
     printf("                  Preserve generated temp sessions for debugging.\n");
     printf("                  By default they are deleted on app close.\n");

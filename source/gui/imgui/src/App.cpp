@@ -15,13 +15,25 @@
 #include <cmath>
 #include <cstring>
 #include <fstream>
+#include <cstdlib>
 #include <sstream>
 #include <utility>
 #include <string>
 
+#ifdef _WIN32
+#include <windows.h>
+#elif defined(__APPLE__)
+#include <mach-o/dyld.h>
+#else
+#include <unistd.h>
+#endif
+
 namespace fs = std::filesystem;
 
 namespace {
+constexpr const char* kDevLayoutRoot = "source/speaker_layouts";
+constexpr const char* kPackagedLayoutRoot = "speaker_layouts";
+
 std::string toLowerCopy(std::string value) {
     std::transform(value.begin(), value.end(), value.begin(), [](unsigned char c) {
         return static_cast<char>(std::tolower(c));
@@ -109,6 +121,98 @@ std::vector<std::string> tailLogText(const std::deque<LogEntry>& log, size_t max
     return lines;
 }
 
+fs::path currentExecutablePath() {
+#ifdef _WIN32
+    std::wstring buffer(MAX_PATH, L'\0');
+    for (;;) {
+        const DWORD len = GetModuleFileNameW(nullptr, buffer.data(),
+                                             static_cast<DWORD>(buffer.size()));
+        if (len == 0) return {};
+        if (len < buffer.size() - 1) {
+            buffer.resize(len);
+            return fs::path(buffer);
+        }
+        buffer.resize(buffer.size() * 2);
+    }
+#elif defined(__APPLE__)
+    uint32_t size = 1024;
+    std::vector<char> buffer(size, '\0');
+    if (_NSGetExecutablePath(buffer.data(), &size) != 0) {
+        buffer.assign(size, '\0');
+        if (_NSGetExecutablePath(buffer.data(), &size) != 0) return {};
+    }
+    return fs::weakly_canonical(fs::path(buffer.data()));
+#else
+    std::vector<char> buffer(1024, '\0');
+    for (;;) {
+        const ssize_t len = readlink("/proc/self/exe", buffer.data(), buffer.size() - 1);
+        if (len < 0) return {};
+        if (static_cast<size_t>(len) < buffer.size() - 1) {
+            buffer[static_cast<size_t>(len)] = '\0';
+            return fs::path(buffer.data());
+        }
+        buffer.resize(buffer.size() * 2, '\0');
+    }
+#endif
+}
+
+fs::path executableDirectory() {
+    const fs::path exe = currentExecutablePath();
+    return exe.empty() ? fs::path{} : exe.parent_path();
+}
+
+fs::path macBundleResourcesDirectory() {
+#ifdef __APPLE__
+    const fs::path exeDir = executableDirectory();
+    if (exeDir.empty()) return {};
+    const fs::path contentsDir = exeDir.parent_path();
+    if (contentsDir.filename() != "Contents") return {};
+    const fs::path resourcesDir = contentsDir / "Resources";
+    std::error_code ec;
+    if (fs::exists(resourcesDir, ec)) return resourcesDir;
+#endif
+    return {};
+}
+
+fs::path installPrefixFromExecutable() {
+    const fs::path exeDir = executableDirectory();
+    if (exeDir.empty() || exeDir.filename() != "bin") return {};
+    return exeDir.parent_path();
+}
+
+std::string withExecutableSuffix(std::string name) {
+#ifdef _WIN32
+    name += ".exe";
+#endif
+    return name;
+}
+
+std::string toGenericString(const fs::path& path) {
+    return path.generic_string();
+}
+
+std::string layoutPackagedSubpath(const std::string& relPath) {
+    const std::string normalized = toGenericString(fs::path(relPath).lexically_normal());
+    const std::string prefix = std::string(kDevLayoutRoot) + "/";
+    if (normalized == kDevLayoutRoot) return {};
+    if (normalized.rfind(prefix, 0) == 0) return normalized.substr(prefix.size());
+    return normalized;
+}
+
+void appendCandidate(std::vector<fs::path>& candidates,
+                     const fs::path& path) {
+    if (path.empty()) return;
+    if (std::find(candidates.begin(), candidates.end(), path) == candidates.end()) {
+        candidates.push_back(path);
+    }
+}
+
+std::string cultTranscoderNotFoundMessage() {
+    return "cult-transcoder not found in the staged package, install tree, or developer build paths. "
+           "Install the packaged bundle completely, set SPATIALROOT_CULT_TRANSCODER=/path/to/cult-transcoder, "
+           "or build the repo with ./build.sh.";
+}
+
 template <class AppendFn>
 void appendArgvDiagnostics(AppendFn&& append,
                            const std::vector<std::string>& args,
@@ -155,6 +259,9 @@ App::App(std::string projectRoot, bool keepTempSessions, std::string tempRootOve
 
     appendEngineLog("[GUI] Spatial Root — ImGui + GLFW GUI started.");
     appendEngineLog("[GUI] Project root: " + mProjectRoot);
+    if (const fs::path exePath = currentExecutablePath(); !exePath.empty()) {
+        appendEngineLog("[GUI] Executable path: " + exePath.string());
+    }
     if (const char* assetRoot = std::getenv("SPATIALROOT_ASSET_ROOT"); assetRoot && *assetRoot)
         appendEngineLog(std::string("[GUI] Asset root override: ") + assetRoot, {0.7f, 0.9f, 0.7f, 1.f});
     appendEngineLog("[GUI] Temp session root: " + pathString(tempSessionsRoot()));
@@ -941,7 +1048,7 @@ void App::renderTranscodeTab() {
     const std::string cultPreviewBin = cultAvailable ? cultBin : "<cult-transcoder>";
     const std::string cultLookupError = envCultInvalid
         ? "SPATIALROOT_CULT_TRANSCODER points to a missing binary: " + std::string(envCult)
-        : "cult-transcoder not found. Build with ./build.sh or set SPATIALROOT_CULT_TRANSCODER=/path/to/cult-transcoder.";
+        : cultTranscoderNotFoundMessage();
 
     if (mTcWorkflow == 0) {
         if (ImGui::BeginChild("##tc0panel", {0.f, 220.f}, true)) {
@@ -1417,7 +1524,7 @@ void App::onStart() {
     if (mSourceIsAdm) {
         const std::string cultBin = findCultTranscoder();
         if (cultBin.empty()) {
-            mLastError = "cult-transcoder binary not found. Build with ./build.sh or set SPATIALROOT_CULT_TRANSCODER.";
+            mLastError = cultTranscoderNotFoundMessage();
             mState = AppState::Error;
             appendEngineLog("[GUI] " + mLastError, {1.f, 0.4f, 0.4f, 1.f});
             return;
@@ -1735,9 +1842,41 @@ void App::detectSource() {
 
 std::string App::resolveProjectPath(const std::string& relPath) const {
     if (relPath.empty()) return "";
-    if (const char* assetRoot = std::getenv("SPATIALROOT_ASSET_ROOT"); assetRoot && *assetRoot)
-        return (fs::path(assetRoot) / relPath).string();
-    return (fs::path(mProjectRoot) / relPath).string();
+
+    const std::string packagedSubpath = layoutPackagedSubpath(relPath);
+    std::vector<fs::path> candidates;
+
+    if (const char* assetRoot = std::getenv("SPATIALROOT_ASSET_ROOT"); assetRoot && *assetRoot) {
+        const fs::path root(assetRoot);
+        appendCandidate(candidates, root / relPath);
+        appendCandidate(candidates, root / kPackagedLayoutRoot / packagedSubpath);
+        appendCandidate(candidates, root / packagedSubpath);
+    }
+
+    if (const fs::path resourcesDir = macBundleResourcesDirectory(); !resourcesDir.empty()) {
+        appendCandidate(candidates, resourcesDir / kPackagedLayoutRoot / packagedSubpath);
+    }
+
+    if (const fs::path installPrefix = installPrefixFromExecutable(); !installPrefix.empty()) {
+        appendCandidate(candidates, installPrefix / "share" / "spatialroot" /
+                                    kPackagedLayoutRoot / packagedSubpath);
+    }
+
+    if (const fs::path exeDir = executableDirectory(); !exeDir.empty()) {
+        appendCandidate(candidates, exeDir / kPackagedLayoutRoot / packagedSubpath);
+        appendCandidate(candidates, exeDir.parent_path() / "share" / "spatialroot" /
+                                    kPackagedLayoutRoot / packagedSubpath);
+    }
+
+    const fs::path devFallback = fs::path(mProjectRoot) / relPath;
+    appendCandidate(candidates, devFallback);
+
+    std::error_code ec;
+    for (const auto& candidate : candidates) {
+        if (fs::exists(candidate, ec)) return candidate.string();
+        ec.clear();
+    }
+    return devFallback.string();
 }
 
 std::string App::findCultTranscoder() const {
@@ -1746,16 +1885,28 @@ std::string App::findCultTranscoder() const {
         if (fs::exists(env)) return env;
         return "";  // env var set but binary not found; caller surfaces the error
     }
-    // Developer build-tree fallback.
-    std::vector<std::string> candidates = {
-        resolveProjectPath("build/internal/cult_transcoder/cult-transcoder"),
-        resolveProjectPath("internal/cult_transcoder/build/cult-transcoder"),
-    };
-#ifdef _WIN32
-    for (auto& c : candidates) c += ".exe";
-#endif
-    for (const auto& c : candidates) {
-        if (fs::exists(c)) return c;
+
+    std::vector<fs::path> candidates;
+
+    if (const fs::path exeDir = executableDirectory(); !exeDir.empty()) {
+        appendCandidate(candidates, exeDir / withExecutableSuffix("cult-transcoder"));
+        appendCandidate(candidates, exeDir.parent_path() / "libexec" / "spatialroot" /
+                                    withExecutableSuffix("cult-transcoder"));
+    }
+
+    if (const fs::path resourcesDir = macBundleResourcesDirectory(); !resourcesDir.empty()) {
+        appendCandidate(candidates, resourcesDir / "bin" / withExecutableSuffix("cult-transcoder"));
+    }
+
+    appendCandidate(candidates, fs::path(mProjectRoot) / "build/internal/cult_transcoder" /
+                                withExecutableSuffix("cult-transcoder"));
+    appendCandidate(candidates, fs::path(mProjectRoot) / "internal/cult_transcoder/build" /
+                                withExecutableSuffix("cult-transcoder"));
+
+    std::error_code ec;
+    for (const auto& candidate : candidates) {
+        if (fs::exists(candidate, ec)) return candidate.string();
+        ec.clear();
     }
     return "";
 }
