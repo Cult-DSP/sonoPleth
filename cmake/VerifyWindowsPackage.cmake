@@ -40,16 +40,26 @@ file(GET_RUNTIME_DEPENDENCIES
     PRE_EXCLUDE_REGEXES
         "api-ms-win-.*"
         "ext-ms-.*"
-        "HvsiFileTrust\\.dll"
-        "wpaxholder\\.dll"
     POST_EXCLUDE_REGEXES
         ".*/Windows/System32/.*"
         ".*/Windows/SystemApps/.*"
         ".*/Windows/WinSxS/.*"
 )
 
-if(_unresolved)
-    list(JOIN _unresolved "\n  " _unresolved_text)
+set(_filtered_unresolved)
+foreach(_dep IN LISTS _unresolved)
+    string(TOLOWER "${_dep}" _dep_lower)
+    if(_dep_lower STREQUAL "hvsifiletrust.dll")
+        continue()
+    endif()
+    if(_dep_lower STREQUAL "wpaxholder.dll")
+        continue()
+    endif()
+    list(APPEND _filtered_unresolved "${_dep}")
+endforeach()
+
+if(_filtered_unresolved)
+    list(JOIN _filtered_unresolved "\n  " _unresolved_text)
     message(FATAL_ERROR "Unresolved runtime dependencies:\n  ${_unresolved_text}")
 endif()
 
