@@ -7,6 +7,13 @@
 #include <al/io/al_AudioIO.hpp>
 
 #include <GLFW/glfw3.h>
+
+// GL_CLAMP_TO_EDGE is OpenGL 1.2+. Windows <GL/gl.h> only provides 1.1.
+// Define the value here if the header hasn't supplied it.
+#ifndef GL_CLAMP_TO_EDGE
+#  define GL_CLAMP_TO_EDGE 0x812F
+#endif
+
 #include "miniLogo_data.h"
 #include "stb_image.h"
 

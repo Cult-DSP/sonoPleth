@@ -59,7 +59,7 @@ std::string pickFileOrDirectory(const std::string& title) {
     pDialog->SetTitle(titleW);
     DWORD opts = 0;
     pDialog->GetOptions(&opts);
-    pDialog->SetOptions(opts | FOS_PICKFOLDERS | FOS_ALLFILESYSTEMED);
+    pDialog->SetOptions(opts | FOS_PICKFOLDERS | FOS_FORCEFILESYSTEM);
 
     if (pDialog->Show(nullptr) == S_OK) {
         IShellItem* pItem = nullptr;
